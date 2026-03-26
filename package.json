@@ -5,8 +5,8 @@
   "description": "Atlas Employee Portal — backend services",
   "scripts": {
     "dev": "cd services/api && npx tsx watch src/index.ts",
-    "build": "cd services/api && npx tsc",
-    "start": "cd services/api && node dist/index.js",
+    "build": "npx prisma generate && npx tsc",
+    "start": "node dist/services/api/src/index.js",
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
     "db:migrate": "npx prisma migrate dev",
