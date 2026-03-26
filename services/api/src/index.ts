@@ -29,6 +29,12 @@ app.use("/api/drafts", draftsRouter);
 app.use("/api/analytics", analyticsRouter);
 app.use("/api/alerts", alertsRouter);
 
+// Global error handler
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("Unhandled error:", err.message, err.stack);
+  res.status(500).json({ error: "Internal server error", message: err.message });
+});
+
 app.listen(PORT, () => {
   console.log(`Atlas API running on port ${PORT}`);
 });
