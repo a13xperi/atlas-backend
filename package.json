@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "cd services/api && npx tsx watch src/index.ts",
     "build": "npx prisma generate && npx tsc",
-    "start": "node dist/services/api/src/index.js",
+    "start": "npx prisma db push && node dist/services/api/src/index.js",
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
     "db:migrate": "npx prisma migrate dev",
