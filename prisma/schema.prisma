@@ -1,0 +1,230 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  handle        String   @unique
+  email         String?  @unique
+  passwordHash  String?
+  displayName   String?
+  avatarUrl     String?
+  role          Role     @default(ANALYST)
+  onboardingTrack OnboardingTrack?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  voiceProfile      VoiceProfile?
+  referenceVoices   ReferenceVoice[]
+  savedBlends       SavedBlend[]
+  tweetDrafts       TweetDraft[]
+  analyticsEvents   AnalyticsEvent[]
+  alertSubscriptions AlertSubscription[]
+  sessions          Session[]
+
+  @@map("users")
+}
+
+enum Role {
+  ANALYST
+  MANAGER
+  ADMIN
+}
+
+enum OnboardingTrack {
+  TRACK_A
+  TRACK_B
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VoiceProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  humor           Int      @default(50)
+  formality       Int      @default(50)
+  brevity         Int      @default(50)
+  contrarianTone  Int      @default(50)
+  maturity        VoiceMaturity @default(BEGINNER)
+  tweetsAnalyzed  Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("voice_profiles")
+}
+
+enum VoiceMaturity {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+model ReferenceVoice {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  handle      String?
+  avatarUrl   String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  blendVoices BlendVoice[]
+
+  @@map("reference_voices")
+}
+
+model SavedBlend {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  voices BlendVoice[]
+
+  @@map("saved_blends")
+}
+
+model BlendVoice {
+  id              String @id @default(cuid())
+  blendId         String
+  referenceVoiceId String?
+  label           String
+  percentage      Int
+
+  blend          SavedBlend      @relation(fields: [blendId], references: [id], onDelete: Cascade)
+  referenceVoice ReferenceVoice? @relation(fields: [referenceVoiceId], references: [id], onDelete: SetNull)
+
+  @@map("blend_voices")
+}
+
+model TweetDraft {
+  id            String      @id @default(cuid())
+  userId        String
+  content       String
+  version       Int         @default(1)
+  status        DraftStatus @default(DRAFT)
+  confidence    Float?
+  predictedEngagement Int?
+  actualEngagement    Int?
+  sourceType    SourceType?
+  sourceContent String?
+  blendId       String?
+  feedback      String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("tweet_drafts")
+}
+
+enum DraftStatus {
+  DRAFT
+  APPROVED
+  POSTED
+  ARCHIVED
+}
+
+enum SourceType {
+  REPORT
+  ARTICLE
+  TWEET
+  TRENDING_TOPIC
+  VOICE_NOTE
+  MANUAL
+}
+
+model AnalyticsEvent {
+  id        String        @id @default(cuid())
+  userId    String
+  type      AnalyticsType
+  value     Float?
+  metadata  Json?
+  createdAt DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, createdAt])
+  @@map("analytics_events")
+}
+
+enum AnalyticsType {
+  DRAFT_CREATED
+  DRAFT_POSTED
+  FEEDBACK_GIVEN
+  VOICE_REFINEMENT
+  REPORT_INGESTED
+  ENGAGEMENT_RECORDED
+  SESSION_START
+}
+
+model AlertSubscription {
+  id        String    @id @default(cuid())
+  userId    String
+  type      AlertType
+  value     String
+  isActive  Boolean   @default(true)
+  delivery  AlertDelivery[] @default([PORTAL])
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, value])
+  @@map("alert_subscriptions")
+}
+
+enum AlertType {
+  CATEGORY
+  ACCOUNT
+  REPORT_TYPE
+}
+
+enum AlertDelivery {
+  PORTAL
+  TELEGRAM
+}
+
+model Alert {
+  id          String      @id @default(cuid())
+  type        String
+  title       String
+  context     String?
+  draftReply  String?
+  sourceUrl   String?
+  createdAt   DateTime    @default(now())
+
+  @@index([createdAt])
+  @@map("alerts")
+}
+
+model LearningLogEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  event     String
+  impact    String
+  positive  Boolean
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("learning_log")
+}
