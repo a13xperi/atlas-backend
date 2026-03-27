@@ -9,6 +9,7 @@ import { alertsRouter } from "./routes/alerts";
 import { usersRouter } from "./routes/users";
 import { researchRouter } from "./routes/research";
 import { trendingRouter } from "./routes/trending";
+import { imagesRouter } from "./routes/images";
 
 dotenv.config();
 
@@ -32,6 +33,7 @@ app.use("/api/analytics", analyticsRouter);
 app.use("/api/alerts", alertsRouter);
 app.use("/api/research", researchRouter);
 app.use("/api/trending", trendingRouter);
+app.use("/api/images", imagesRouter);
 
 // Global error handler
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
