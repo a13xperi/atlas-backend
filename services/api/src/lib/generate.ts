@@ -1,4 +1,4 @@
-import { getAnthropicClient } from "./anthropic";
+import { getOpenAIClient } from "./openai";
 import { buildTweetPrompt } from "./prompt";
 
 interface VoiceDimensions {
@@ -33,19 +33,20 @@ interface GenerateResult {
  * Generate a tweet using Claude, styled to the user's voice profile.
  */
 export async function generateTweet(params: GenerateParams): Promise<GenerateResult> {
-  const client = getAnthropicClient();
+  const client = getOpenAIClient();
   const { system, userMessage } = buildTweetPrompt(params);
 
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+  const response = await client.chat.completions.create({
+    model: "gpt-4o",
     max_tokens: 300,
-    system,
-    messages: [{ role: "user", content: userMessage }],
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: userMessage },
+    ],
   });
 
   // Extract text from response
-  const textBlock = response.content.find((block) => block.type === "text");
-  const content = textBlock ? textBlock.text.trim() : "";
+  const content = response.choices[0]?.message?.content?.trim() || "";
 
   // Compute confidence heuristic (0.0 - 1.0)
   const confidence = computeConfidence(content, params);
