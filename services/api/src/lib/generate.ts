@@ -20,6 +20,7 @@ interface GenerateParams {
   sourceType: string;
   blendVoices?: BlendVoice[];
   feedback?: string;
+  researchContext?: string;
 }
 
 interface GenerateResult {

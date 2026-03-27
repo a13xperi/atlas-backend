@@ -21,6 +21,7 @@ interface PromptParams {
   sourceType: string;
   blendVoices?: BlendVoice[];
   feedback?: string;
+  researchContext?: string;
 }
 
 function describeHumor(v: number): string {
@@ -102,6 +103,11 @@ ${voiceDescription}
       .map((v) => `${v.percentage}% ${v.label}`)
       .join(" + ");
     system += `\n\n## Voice Blend\nYour writing style is a blend of: ${blendDesc}. Channel the tonal qualities of each reference proportionally.`;
+  }
+
+  // Add research context if available (from OpenAI deep research)
+  if (params.researchContext) {
+    system += `\n\n## Research Context\n${params.researchContext}\nUse these facts to make your tweet more insightful and data-driven. Don't cite sources — just weave the knowledge in naturally.`;
   }
 
   // Add feedback if this is a refinement

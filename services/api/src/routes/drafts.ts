@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateTweet } from "../lib/generate";
+import { conductResearch } from "../lib/research";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
@@ -47,6 +48,18 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
       }
     }
 
+    // Pre-tweet research enrichment (non-blocking — tweet still generates if research fails)
+    let researchContext: string | undefined;
+    try {
+      const research = await conductResearch({
+        query: body.sourceContent,
+        context: body.sourceType,
+      });
+      researchContext = `Summary: ${research.summary}\nKey facts: ${research.keyFacts.join("; ")}\nSentiment: ${research.sentiment}`;
+    } catch (e) {
+      console.warn("Research enrichment skipped:", (e as Error).message);
+    }
+
     // Generate the tweet
     const result = await generateTweet({
       voiceProfile: {
@@ -59,6 +72,7 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
       sourceContent: body.sourceContent,
       sourceType: body.sourceType,
       blendVoices,
+      researchContext,
     });
 
     // Save as draft
