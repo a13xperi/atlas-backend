@@ -3,7 +3,7 @@
 ## High Priority
 - [x] Set up Jest + ts-jest infrastructure (jest.config, tsconfig for tests)
 - [x] Add test suite for auth routes (register, login, me) — mock Prisma + bcrypt + JWT
-- [ ] Add test suite for drafts routes (CRUD + generate/regenerate) — mock Prisma + OpenAI
+- [x] Add test suite for drafts routes (CRUD + generate/regenerate) — mock Prisma + OpenAI
 - [ ] Add test suite for voice routes (profile CRUD, references, blends) — mock Prisma
 - [x] Add test suite for auth middleware (JWT verification, req.userId injection)
 
