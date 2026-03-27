@@ -8,6 +8,7 @@ import { analyticsRouter } from "./routes/analytics";
 import { alertsRouter } from "./routes/alerts";
 import { usersRouter } from "./routes/users";
 import { researchRouter } from "./routes/research";
+import { trendingRouter } from "./routes/trending";
 
 dotenv.config();
 
@@ -30,6 +31,7 @@ app.use("/api/drafts", draftsRouter);
 app.use("/api/analytics", analyticsRouter);
 app.use("/api/alerts", alertsRouter);
 app.use("/api/research", researchRouter);
+app.use("/api/trending", trendingRouter);
 
 // Global error handler
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
