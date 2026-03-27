@@ -4,21 +4,21 @@
 - [x] Set up Jest + ts-jest infrastructure (jest.config, tsconfig for tests)
 - [x] Add test suite for auth routes (register, login, me) — mock Prisma + bcrypt + JWT
 - [x] Add test suite for drafts routes (CRUD + generate/regenerate) — mock Prisma + OpenAI
-- [ ] Add test suite for voice routes (profile CRUD, references, blends) — mock Prisma
+- [x] Add test suite for voice routes (profile CRUD, references, blends) — mock Prisma
 - [x] Add test suite for auth middleware (JWT verification, req.userId injection)
 
 ## Medium Priority
-- [ ] Add test suite for analytics routes (summary, learning-log, engagement, team) — mock Prisma
-- [ ] Add test suite for alerts routes (subscriptions CRUD, feed) — mock Prisma
-- [ ] Add test suite for research routes — mock OpenAI + Redis cache
-- [ ] Add test suite for trending routes — mock Grok + Redis cache
-- [ ] Add test suite for images routes — mock Gemini
-- [ ] Add test suite for users routes (profile, team) — mock Prisma
+- [x] Add test suite for analytics routes (summary, learning-log, engagement, team) — mock Prisma
+- [x] Add test suite for alerts routes (subscriptions CRUD, feed) — mock Prisma
+- [x] Add test suite for research routes — mock OpenAI + Redis cache
+- [x] Add test suite for trending routes — mock Grok + Redis cache
+- [x] Add test suite for images routes — mock Gemini
+- [x] Add test suite for users routes (profile, team) — mock Prisma
 
 ## Low Priority
-- [ ] Add test suite for lib/generate.ts (tweet generation logic, prompt building)
-- [ ] Add test suite for lib/research.ts (research conductor)
-- [ ] Add test suite for lib/redis.ts (cache utilities)
+- [x] Add test suite for lib/generate.ts (tweet generation logic, prompt building)
+- [x] Add test suite for lib/research.ts (research conductor)
+- [x] Add test suite for lib/redis.ts (cache utilities — fixed TypeScript cast)
 - [ ] Validate Zod schemas on all input endpoints
 
 ## Completed
