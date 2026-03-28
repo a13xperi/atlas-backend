@@ -17,14 +17,27 @@ Backend services for Atlas by Delphi Digital — a content-to-tweet crafting pla
 - Frontend: https://github.com/a13xperi/atlas-portal
 
 ## Deployed URLs
-- API (Railway): https://api-production-9bef.up.railway.app
+### Production
+- API: https://api-production-9bef.up.railway.app
 - Health check: https://api-production-9bef.up.railway.app/health
-- Frontend (Vercel): https://atlas-portal-pi.vercel.app
+- Frontend: https://delphi-atlas.vercel.app
+
+### Staging
+- API: auto-provisioned on Railway staging environment
+- Frontend: https://staging-delphi-atlas.vercel.app
+
+## Environments
+- **Branches:** `main` (production), `staging` (staging)
+- **Branch protection:** Both branches have GitHub rulesets — main requires PR + 1 approval + status checks; staging requires status checks + allows admin direct push
+- **CI:** GitHub Actions workflow (`ci.yml`) runs type-check + tests on push/PR to main and staging
+- **CORS:** Multi-origin support via comma-separated `FRONTEND_URL` with wildcard pattern matching
 
 ## Railway
 - Project ID: 2c9ea379-6c4b-4e39-a31b-357b43ddeb11
-- Services: Postgres (managed), Redis, API (from GitHub)
+- **Production:** Postgres + Redis + API (from GitHub main branch)
+- **Staging:** Separate Postgres + Redis + API instances (from GitHub staging branch)
 - Prisma db push runs on startup to sync schema
+- `GEMINI_MODEL` env var controls which Gemini model is used (not hardcoded)
 
 ## Architecture
 ```
