@@ -1,0 +1,5 @@
+[phases.build]
+cmds = ["rm -rf dist", "npx prisma generate", "npx tsc"]
+
+[start]
+cmd = "npx prisma db push && node dist/services/api/src/index.js"

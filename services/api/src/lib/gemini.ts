@@ -43,7 +43,7 @@ export async function generateImage(params: ImageGenParams): Promise<ImageGenRes
   const client = getGeminiClient();
 
   // Use Gemini's image generation model
-  const model = client.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+  const model = client.getGenerativeModel({ model: process.env.GEMINI_MODEL || "gemini-2.5-flash" });
 
   const result = await model.generateContent({
     contents: [{ role: "user", parts: [{ text: `Generate an image: ${fullPrompt}. Aspect ratio: ${aspectRatio}.` }] }],
@@ -78,7 +78,7 @@ export async function generateVisualConcept(tweetContent: string, style: ImageSt
   elements: string[];
 }> {
   const client = getGeminiClient();
-  const model = client.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+  const model = client.getGenerativeModel({ model: process.env.GEMINI_MODEL || "gemini-2.5-flash" });
 
   const result = await model.generateContent({
     contents: [{
