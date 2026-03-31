@@ -40,6 +40,27 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
   });
 });
 
+// Create learning log entry
+analyticsRouter.post("/learning-log", async (req: AuthRequest, res) => {
+  try {
+    const { event, impact, positive } = req.body;
+    if (!event) return res.status(400).json({ error: "Event description is required" });
+
+    const entry = await prisma.learningLogEntry.create({
+      data: {
+        userId: req.userId!,
+        event,
+        impact: impact || null,
+        positive: positive !== undefined ? positive : true,
+      },
+    });
+
+    res.json({ entry });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to create learning log entry", message: err.message });
+  }
+});
+
 // Get learning log
 analyticsRouter.get("/learning-log", async (req: AuthRequest, res) => {
   const entries = await prisma.learningLogEntry.findMany({
@@ -87,5 +108,7 @@ analyticsRouter.get("/team", async (req: AuthRequest, res) => {
     },
   });
 
-  res.json({ analysts });
+  res.json({
+    analysts: analysts.map(({ passwordHash, ...a }) => a),
+  });
 });

@@ -64,6 +64,36 @@ authRouter.post("/login", async (req, res) => {
   }
 });
 
+// List active sessions
+authRouter.get("/sessions", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const sessions = await prisma.session.findMany({
+      where: { userId: req.userId, expiresAt: { gt: new Date() } },
+      select: { id: true, createdAt: true, expiresAt: true },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json({ sessions });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to list sessions", message: err.message });
+  }
+});
+
+// Revoke a session
+authRouter.delete("/sessions/:id", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const sessionId = req.params.id as string;
+    const session = await prisma.session.findFirst({
+      where: { id: sessionId, userId: req.userId },
+    });
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    await prisma.session.delete({ where: { id: sessionId } });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to revoke session", message: err.message });
+  }
+});
+
 // Get current user
 authRouter.get("/me", authenticate, async (req: AuthRequest, res) => {
   try {
