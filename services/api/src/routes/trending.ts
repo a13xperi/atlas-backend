@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { searchTrending } from "../lib/grok";
@@ -6,9 +7,14 @@ import { searchTrending } from "../lib/grok";
 export const trendingRouter = Router();
 trendingRouter.use(authenticate);
 
+const scanSchema = z.object({}).passthrough();
+const topicsQuerySchema = z.object({}).passthrough();
+
 // Scan Twitter for trending topics based on user's subscriptions
 trendingRouter.post("/scan", async (req: AuthRequest, res) => {
   try {
+    scanSchema.parse(req.body);
+
     // Get user's alert subscriptions to know what topics to scan
     const subscriptions = await prisma.alertSubscription.findMany({
       where: { userId: req.userId, isActive: true },
@@ -47,6 +53,9 @@ trendingRouter.post("/scan", async (req: AuthRequest, res) => {
 
     res.json({ alerts });
   } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: "Invalid request", details: err.errors });
+    }
     console.error("Trending scan failed:", err.message);
     res.status(502).json({ error: "Twitter scan failed", message: err.message });
   }
@@ -55,6 +64,8 @@ trendingRouter.post("/scan", async (req: AuthRequest, res) => {
 // Get cached trending topics for the crafting station
 trendingRouter.get("/topics", async (req: AuthRequest, res) => {
   try {
+    topicsQuerySchema.parse(req.query);
+
     // Return recent alerts as trending topics (last 24h, user-specific)
     const alerts = await prisma.alert.findMany({
       where: {
@@ -77,6 +88,9 @@ trendingRouter.get("/topics", async (req: AuthRequest, res) => {
 
     res.json({ topics });
   } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: "Invalid request", details: err.errors });
+    }
     console.error("Failed to get topics:", err.message);
     res.status(500).json({ error: "Failed to load trending topics" });
   }

@@ -147,4 +147,20 @@ describe("GET /api/alerts/feed", () => {
       expect.objectContaining({ take: 5 })
     );
   });
+
+  it("respects limit and offset query params", async () => {
+    const alerts = [
+      { id: "a-3", title: "Alert 3", createdAt: new Date() },
+      { id: "a-4", title: "Alert 4", createdAt: new Date() },
+    ];
+    (mockPrisma.alert.findMany as jest.Mock).mockResolvedValueOnce(alerts);
+
+    const res = await request(app).get("/api/alerts/feed?limit=5&offset=2").set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(res.body.alerts).toEqual(alerts);
+    expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 5, skip: 2 })
+    );
+  });
 });

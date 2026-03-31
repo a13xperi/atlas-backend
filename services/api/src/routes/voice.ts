@@ -1,9 +1,64 @@
 import { Router } from "express";
+import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 
 export const voiceRouter = Router();
 voiceRouter.use(authenticate);
+
+const profileSchema = z.object({
+  humor: z.number().min(0).max(100).optional(),
+  formality: z.number().min(0).max(100).optional(),
+  brevity: z.number().min(0).max(100).optional(),
+  contrarianTone: z.number().min(0).max(100).optional(),
+});
+
+const referenceSchema = z.object({
+  name: z.string().min(1),
+  handle: z.string().optional(),
+});
+
+const blendVoiceSchema = z.union([
+  z.object({
+    referenceId: z.string().min(1),
+    weight: z.number().min(0).max(100),
+  }),
+  z.object({
+    label: z.string().min(1),
+    percentage: z.number().min(0).max(100),
+    referenceVoiceId: z.string().min(1).optional(),
+  }),
+]).transform((voice) => {
+  if ("label" in voice) {
+    const legacyVoice = voice as {
+      label: string;
+      percentage: number;
+      referenceVoiceId?: string;
+    };
+
+    return {
+      label: legacyVoice.label,
+      percentage: legacyVoice.percentage,
+      referenceVoiceId: legacyVoice.referenceVoiceId,
+    };
+  }
+
+  const weightedVoice = voice as {
+    referenceId: string;
+    weight: number;
+  };
+
+  return {
+    label: weightedVoice.referenceId,
+    percentage: weightedVoice.weight,
+    referenceVoiceId: weightedVoice.referenceId,
+  };
+});
+
+const blendSchema = z.object({
+  name: z.string().min(1),
+  voices: z.array(blendVoiceSchema).min(1),
+});
 
 // Get voice profile
 voiceRouter.get("/profile", async (req: AuthRequest, res) => {
@@ -16,19 +71,26 @@ voiceRouter.get("/profile", async (req: AuthRequest, res) => {
 
 // Update voice dimensions
 voiceRouter.patch("/profile", async (req: AuthRequest, res) => {
-  const { humor, formality, brevity, contrarianTone } = req.body;
+  try {
+    const body = profileSchema.parse(req.body);
 
-  const profile = await prisma.voiceProfile.update({
-    where: { userId: req.userId },
-    data: {
-      ...(humor !== undefined && { humor }),
-      ...(formality !== undefined && { formality }),
-      ...(brevity !== undefined && { brevity }),
-      ...(contrarianTone !== undefined && { contrarianTone }),
-    },
-  });
+    const profile = await prisma.voiceProfile.update({
+      where: { userId: req.userId },
+      data: {
+        ...(body.humor !== undefined && { humor: body.humor }),
+        ...(body.formality !== undefined && { formality: body.formality }),
+        ...(body.brevity !== undefined && { brevity: body.brevity }),
+        ...(body.contrarianTone !== undefined && { contrarianTone: body.contrarianTone }),
+      },
+    });
 
-  res.json({ profile });
+    res.json({ profile });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: "Invalid request", details: err.errors });
+    }
+    res.status(500).json({ error: "Failed to update voice profile", message: err.message });
+  }
 });
 
 // List reference voices
@@ -41,13 +103,22 @@ voiceRouter.get("/references", async (req: AuthRequest, res) => {
 
 // Add reference voice
 voiceRouter.post("/references", async (req: AuthRequest, res) => {
-  const { name, handle } = req.body;
-  if (!name) return res.status(400).json({ error: "Name is required" });
+  try {
+    const body = referenceSchema.parse(req.body);
 
-  const voice = await prisma.referenceVoice.create({
-    data: { userId: req.userId!, name, handle },
-  });
-  res.json({ voice });
+    const voice = await prisma.referenceVoice.create({
+      data: { userId: req.userId!, name: body.name, handle: body.handle },
+    });
+    res.json({ voice });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      if (req.body?.name === undefined) {
+        return res.status(400).json({ error: "Name is required" });
+      }
+      return res.status(400).json({ error: "Invalid request", details: err.errors });
+    }
+    res.status(500).json({ error: "Failed to create reference voice", message: err.message });
+  }
 });
 
 // List saved blends
@@ -61,23 +132,32 @@ voiceRouter.get("/blends", async (req: AuthRequest, res) => {
 
 // Create blend
 voiceRouter.post("/blends", async (req: AuthRequest, res) => {
-  const { name, voices } = req.body;
-  if (!name || !voices?.length) return res.status(400).json({ error: "Name and voices required" });
+  try {
+    const body = blendSchema.parse(req.body);
 
-  const blend = await prisma.savedBlend.create({
-    data: {
-      userId: req.userId!,
-      name,
-      voices: {
-        create: voices.map((v: { label: string; percentage: number; referenceVoiceId?: string }) => ({
-          label: v.label,
-          percentage: v.percentage,
-          referenceVoiceId: v.referenceVoiceId,
-        })),
+    const blend = await prisma.savedBlend.create({
+      data: {
+        userId: req.userId!,
+        name: body.name,
+        voices: {
+          create: body.voices.map((voice) => ({
+            label: voice.label,
+            percentage: voice.percentage,
+            referenceVoiceId: voice.referenceVoiceId,
+          })),
+        },
       },
-    },
-    include: { voices: true },
-  });
+      include: { voices: true },
+    });
 
-  res.json({ blend });
+    res.json({ blend });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      if (req.body?.name === undefined || !Array.isArray(req.body?.voices) || req.body.voices.length === 0) {
+        return res.status(400).json({ error: "Name and voices required" });
+      }
+      return res.status(400).json({ error: "Invalid request", details: err.errors });
+    }
+    res.status(500).json({ error: "Failed to create blend", message: err.message });
+  }
 });
