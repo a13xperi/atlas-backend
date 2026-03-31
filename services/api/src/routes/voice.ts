@@ -81,3 +81,59 @@ voiceRouter.post("/blends", async (req: AuthRequest, res) => {
 
   res.json({ blend });
 });
+
+// Update a voice in a blend
+voiceRouter.patch("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, res) => {
+  try {
+    const blendId = req.params.blendId as string;
+    const voiceId = req.params.voiceId as string;
+    const { label, percentage, referenceVoiceId } = req.body;
+
+    const blend = await prisma.savedBlend.findFirst({
+      where: { id: blendId, userId: req.userId },
+    });
+    if (!blend) return res.status(404).json({ error: "Blend not found" });
+
+    const voice = await prisma.blendVoice.findFirst({
+      where: { id: voiceId, blendId },
+    });
+    if (!voice) return res.status(404).json({ error: "Voice not found in blend" });
+
+    const updated = await prisma.blendVoice.update({
+      where: { id: voiceId },
+      data: {
+        ...(label !== undefined && { label }),
+        ...(percentage !== undefined && { percentage }),
+        ...(referenceVoiceId !== undefined && { referenceVoiceId }),
+      },
+      include: { referenceVoice: true },
+    });
+
+    res.json({ voice: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to update blend voice", message: err.message });
+  }
+});
+
+// Remove a voice from a blend
+voiceRouter.delete("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, res) => {
+  try {
+    const blendId = req.params.blendId as string;
+    const voiceId = req.params.voiceId as string;
+
+    const blend = await prisma.savedBlend.findFirst({
+      where: { id: blendId, userId: req.userId },
+    });
+    if (!blend) return res.status(404).json({ error: "Blend not found" });
+
+    const voice = await prisma.blendVoice.findFirst({
+      where: { id: voiceId, blendId },
+    });
+    if (!voice) return res.status(404).json({ error: "Voice not found in blend" });
+
+    await prisma.blendVoice.delete({ where: { id: voiceId } });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to delete blend voice", message: err.message });
+  }
+});
