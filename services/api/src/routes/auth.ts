@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { buildErrorResponse } from "../middleware/requestId";
 
 export const authRouter = Router();
 
@@ -25,7 +26,9 @@ authRouter.post("/register", async (req, res) => {
     const body = registerSchema.parse(req.body);
 
     const existing = await prisma.user.findUnique({ where: { handle: body.handle } });
-    if (existing) return res.status(409).json({ error: "Handle already taken" });
+    if (existing) {
+      return res.status(409).json(buildErrorResponse(req, "Handle already taken"));
+    }
 
     const passwordHash = body.password ? await bcrypt.hash(body.password, 10) : undefined;
 
@@ -53,12 +56,16 @@ authRouter.post("/register", async (req, res) => {
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       if (req.body?.handle === undefined) {
-        return res.status(400).json({ error: "Handle is required" });
+        return res.status(400).json(buildErrorResponse(req, "Handle is required"));
       }
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Register error:", err.message);
-    res.status(500).json({ error: "Registration failed", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Registration failed", { message: err.message }));
   }
 });
 
@@ -68,11 +75,15 @@ authRouter.post("/login", async (req, res) => {
     const body = loginSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({ where: { handle: body.handle } });
-    if (!user) return res.status(401).json({ error: "Invalid credentials" });
+    if (!user) {
+      return res.status(401).json(buildErrorResponse(req, "Invalid credentials"));
+    }
 
     if (user.passwordHash && body.password) {
       const valid = await bcrypt.compare(body.password, user.passwordHash);
-      if (!valid) return res.status(401).json({ error: "Invalid credentials" });
+      if (!valid) {
+        return res.status(401).json(buildErrorResponse(req, "Invalid credentials"));
+      }
     }
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET || "dev-secret", {
@@ -82,10 +93,12 @@ authRouter.post("/login", async (req, res) => {
     res.json({ user: { id: user.id, handle: user.handle, role: user.role }, token });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Login error:", err.message);
-    res.status(500).json({ error: "Login failed", message: err.message });
+    res.status(500).json(buildErrorResponse(req, "Login failed", { message: err.message }));
   }
 });
 
@@ -99,7 +112,9 @@ authRouter.get("/sessions", authenticate, async (req: AuthRequest, res) => {
     });
     res.json({ sessions });
   } catch (err: any) {
-    res.status(500).json({ error: "Failed to list sessions", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to list sessions", { message: err.message }));
   }
 });
 
@@ -110,12 +125,16 @@ authRouter.delete("/sessions/:id", authenticate, async (req: AuthRequest, res) =
     const session = await prisma.session.findFirst({
       where: { id: sessionId, userId: req.userId },
     });
-    if (!session) return res.status(404).json({ error: "Session not found" });
+    if (!session) {
+      return res.status(404).json(buildErrorResponse(req, "Session not found"));
+    }
 
     await prisma.session.delete({ where: { id: sessionId } });
     res.json({ success: true });
   } catch (err: any) {
-    res.status(500).json({ error: "Failed to revoke session", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to revoke session", { message: err.message }));
   }
 });
 
@@ -126,11 +145,11 @@ authRouter.get("/me", authenticate, async (req: AuthRequest, res) => {
       where: { id: req.userId },
       include: { voiceProfile: true },
     });
-    if (!user) return res.status(404).json({ error: "User not found" });
+    if (!user) return res.status(404).json(buildErrorResponse(req, "User not found"));
 
     res.json({ user: { id: user.id, handle: user.handle, role: user.role, voiceProfile: user.voiceProfile } });
   } catch (err: any) {
     console.error("Me error:", err.message);
-    res.status(500).json({ error: "Failed to get user", message: err.message });
+    res.status(500).json(buildErrorResponse(req, "Failed to get user", { message: err.message }));
   }
 });

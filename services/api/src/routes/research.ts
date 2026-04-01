@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { conductResearch } from "../lib/research";
+import { buildErrorResponse } from "../middleware/requestId";
 
 export const researchRouter = Router();
 researchRouter.use(authenticate);
@@ -40,19 +41,27 @@ researchRouter.post("/", async (req: AuthRequest, res) => {
     res.json({ result: { ...result, id: saved.id } });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Research failed:", err.message);
-    res.status(502).json({ error: "Research failed", message: err.message });
+    res.status(502).json(buildErrorResponse(req, "Research failed", { message: err.message }));
   }
 });
 
 // Get recent research results
 researchRouter.get("/history", async (req: AuthRequest, res) => {
-  const results = await prisma.researchResult.findMany({
-    where: { userId: req.userId },
-    orderBy: { createdAt: "desc" },
-    take: 20,
-  });
-  res.json({ results });
+  try {
+    const results = await prisma.researchResult.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+    res.json({ results });
+  } catch (err: any) {
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load research history", { message: err.message }));
+  }
 });
