@@ -132,6 +132,73 @@ analyticsRouter.get("/engagement", async (req: AuthRequest, res) => {
   }
 });
 
+// Daily engagement comparison (predicted vs actual, last 7 days)
+analyticsRouter.get("/engagement-daily", async (req: AuthRequest, res) => {
+  try {
+    emptyQuerySchema.parse(req.query);
+
+    const now = new Date();
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    const drafts = await prisma.tweetDraft.findMany({
+      where: {
+        userId: req.userId,
+        predictedEngagement: { not: null },
+        createdAt: { gte: sevenDaysAgo },
+      },
+      select: {
+        createdAt: true,
+        predictedEngagement: true,
+        actualEngagement: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const buckets = new Map<string, { predicted: number; actual: number | null; hasActual: boolean }>();
+
+    // Pre-populate all 7 days
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(sevenDaysAgo);
+      d.setDate(d.getDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      buckets.set(key, { predicted: 0, actual: 0, hasActual: false });
+    }
+
+    // Aggregate drafts into day buckets
+    for (const draft of drafts) {
+      const key = draft.createdAt.toISOString().slice(0, 10);
+      const bucket = buckets.get(key);
+      if (!bucket) continue;
+      bucket.predicted += draft.predictedEngagement ?? 0;
+      if (draft.actualEngagement !== null) {
+        bucket.actual = (bucket.actual ?? 0) + draft.actualEngagement;
+        bucket.hasActual = true;
+      }
+    }
+
+    const result = Array.from(buckets.entries()).map(([date, bucket]) => ({
+      date,
+      dayLabel: dayNames[new Date(date + "T00:00:00").getDay()],
+      predicted: bucket.predicted,
+      actual: bucket.hasActual ? bucket.actual : null,
+    }));
+
+    res.json(result);
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load daily engagement", { message: err.message }));
+  }
+});
+
 // Team analytics (manager only)
 analyticsRouter.get("/team", async (req: AuthRequest, res) => {
   try {

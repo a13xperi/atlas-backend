@@ -7,8 +7,21 @@
 import request from "supertest";
 import express from "express";
 import { draftsRouter } from "../../routes/drafts";
+import { requestIdMiddleware } from "../../middleware/requestId";
 
 // --- Mocks ---
+
+jest.mock("../../middleware/auth", () => ({
+  authenticate: jest.fn((req: any, res: any, next: any) => {
+    const header = req.headers.authorization;
+    if (!header?.startsWith("Bearer ")) return res.status(401).json({ error: "Missing authorization token" });
+    req.userId = "user-123";
+    next();
+  }),
+  AuthRequest: {},
+}));
+
+jest.mock("../../lib/supabase", () => ({ supabaseAdmin: null }));
 
 jest.mock("../../lib/prisma", () => ({
   prisma: {
@@ -39,11 +52,7 @@ jest.mock("../../lib/research", () => ({
   conductResearch: jest.fn(),
 }));
 
-// JWT mock: verify always succeeds, returning userId = "user-123"
-jest.mock("jsonwebtoken", () => ({
-  verify: jest.fn().mockReturnValue({ userId: "user-123" }),
-  sign: jest.fn().mockReturnValue("mock_token"),
-}));
+// JWT mock removed — authenticate middleware is mocked directly
 
 import { prisma } from "../../lib/prisma";
 import { generateTweet } from "../../lib/generate";
@@ -57,6 +66,7 @@ const mockConductResearch = conductResearch as jest.Mock;
 
 const app = express();
 app.use(express.json());
+app.use(requestIdMiddleware);
 app.use("/api/drafts", draftsRouter);
 
 const AUTH = "Bearer mock_token";
@@ -88,6 +98,14 @@ const mockVoiceProfile = {
 };
 
 // --- GET / ---
+
+beforeAll(() => {
+  process.env.JWT_SECRET = "test-secret";
+});
+
+afterAll(() => {
+  delete process.env.JWT_SECRET;
+});
 
 describe("GET /api/drafts", () => {
   it("returns 401 without auth token", async () => {

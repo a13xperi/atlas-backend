@@ -4,8 +4,13 @@ import { prisma } from "../lib/prisma";
 import { supabaseAdmin } from "../lib/supabase";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
+import { rateLimit } from "../middleware/rateLimit";
 
 export const authRouter = Router();
+
+// Rate limits: 5 login attempts/min, 3 registrations/min per IP
+const loginLimiter = rateLimit(5, 60 * 1000);
+const registerLimiter = rateLimit(3, 60 * 1000);
 
 // --- Schemas ---
 
@@ -34,7 +39,7 @@ const linkAccountSchema = z.object({
 // --- Routes ---
 
 // Register — create Supabase auth user + Prisma user, return session
-authRouter.post("/register", async (req, res) => {
+authRouter.post("/register", registerLimiter, async (req, res) => {
   try {
     const body = registerSchema.parse(req.body);
 
@@ -109,7 +114,7 @@ authRouter.post("/register", async (req, res) => {
 });
 
 // Login — authenticate via Supabase, return session
-authRouter.post("/login", async (req, res) => {
+authRouter.post("/login", loginLimiter, async (req, res) => {
   try {
     const body = loginSchema.parse(req.body);
 

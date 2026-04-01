@@ -1,26 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { authRouter } from "../../routes/auth";
-import { requestIdMiddleware } from "../../middleware/requestId";
-
-jest.mock("../../lib/prisma", () => ({
-  prisma: {
-    user: {
-      findUnique: jest.fn(),
-      create: jest.fn(),
-    },
-  },
-}));
-
-jest.mock("bcryptjs", () => ({
-  hash: jest.fn().mockResolvedValue("hashed_password"),
-  compare: jest.fn().mockResolvedValue(true),
-}));
-
-jest.mock("jsonwebtoken", () => ({
-  sign: jest.fn().mockReturnValue("mock_token"),
-  verify: jest.fn().mockReturnValue({ userId: "user-123" }),
-}));
+import { requestIdMiddleware, buildErrorResponse } from "../../middleware/requestId";
 
 describe("requestId middleware", () => {
   const app = express();
@@ -30,7 +10,9 @@ describe("requestId middleware", () => {
   app.get("/ping", (_req, res) => {
     res.json({ ok: true });
   });
-  app.use("/api/auth", authRouter);
+  app.post("/error-test", (req, res) => {
+    res.status(400).json(buildErrorResponse(req, "Test error"));
+  });
 
   it("adds an X-Request-ID header to successful responses", async () => {
     const res = await request(app).get("/ping");
@@ -40,11 +22,11 @@ describe("requestId middleware", () => {
   });
 
   it("includes requestId in error response bodies", async () => {
-    const res = await request(app).post("/api/auth/register").send({});
+    const res = await request(app).post("/error-test").send({});
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Handle is required");
-    expect(res.body.message).toBe("Handle is required");
+    expect(res.body.error).toBe("Test error");
+    expect(res.body.message).toBe("Test error");
     expect(res.body.requestId).toBe(res.headers["x-request-id"]);
   });
 

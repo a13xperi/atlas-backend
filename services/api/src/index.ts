@@ -1,3 +1,5 @@
+import "./lib/sentry"; // Must be first — initializes Sentry before other imports
+import { Sentry } from "./lib/sentry";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -53,6 +55,9 @@ app.use("/api/alerts", alertsRouter);
 app.use("/api/research", researchRouter);
 app.use("/api/trending", trendingRouter);
 app.use("/api/images", imagesRouter);
+
+// Sentry error handler — must be before any other error middleware
+Sentry.setupExpressErrorHandler(app);
 
 // Global error handler
 app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
