@@ -1,29 +1,45 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 
 export const authRouter = Router();
 
+const registerSchema = z.object({
+  handle: z.string().min(1),
+  email: z.string().email().optional(),
+  password: z.string().min(6).optional(),
+  onboardingTrack: z.enum(["A", "B"]).optional(),
+});
+
+const loginSchema = z.object({
+  handle: z.string().min(1),
+  password: z.string().optional(),
+});
+
 // Register / onboard
 authRouter.post("/register", async (req, res) => {
   try {
-    const { handle, email, password, onboardingTrack } = req.body;
+    const body = registerSchema.parse(req.body);
 
-    if (!handle) return res.status(400).json({ error: "Handle is required" });
-
-    const existing = await prisma.user.findUnique({ where: { handle } });
+    const existing = await prisma.user.findUnique({ where: { handle: body.handle } });
     if (existing) return res.status(409).json({ error: "Handle already taken" });
 
-    const passwordHash = password ? await bcrypt.hash(password, 10) : undefined;
+    const passwordHash = body.password ? await bcrypt.hash(body.password, 10) : undefined;
 
     const user = await prisma.user.create({
       data: {
-        handle,
-        email,
+        handle: body.handle,
+        email: body.email,
         passwordHash,
-        onboardingTrack: onboardingTrack || undefined,
+        onboardingTrack:
+          body.onboardingTrack === "A"
+            ? "TRACK_A"
+            : body.onboardingTrack === "B"
+              ? "TRACK_B"
+              : undefined,
         voiceProfile: { create: {} },
       },
       include: { voiceProfile: true },
@@ -35,6 +51,12 @@ authRouter.post("/register", async (req, res) => {
 
     res.json({ user: { id: user.id, handle: user.handle, role: user.role }, token });
   } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      if (req.body?.handle === undefined) {
+        return res.status(400).json({ error: "Handle is required" });
+      }
+      return res.status(400).json({ error: "Invalid request", details: err.errors });
+    }
     console.error("Register error:", err.message);
     res.status(500).json({ error: "Registration failed", message: err.message });
   }
@@ -43,13 +65,13 @@ authRouter.post("/register", async (req, res) => {
 // Login
 authRouter.post("/login", async (req, res) => {
   try {
-    const { handle, password } = req.body;
+    const body = loginSchema.parse(req.body);
 
-    const user = await prisma.user.findUnique({ where: { handle } });
+    const user = await prisma.user.findUnique({ where: { handle: body.handle } });
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
-    if (user.passwordHash && password) {
-      const valid = await bcrypt.compare(password, user.passwordHash);
+    if (user.passwordHash && body.password) {
+      const valid = await bcrypt.compare(body.password, user.passwordHash);
       if (!valid) return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -59,6 +81,9 @@ authRouter.post("/login", async (req, res) => {
 
     res.json({ user: { id: user.id, handle: user.handle, role: user.role }, token });
   } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: "Invalid request", details: err.errors });
+    }
     console.error("Login error:", err.message);
     res.status(500).json({ error: "Login failed", message: err.message });
   }
