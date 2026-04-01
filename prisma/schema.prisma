@@ -17,6 +17,7 @@ model User {
   avatarUrl     String?
   role          Role     @default(ANALYST)
   onboardingTrack OnboardingTrack?
+  telegramChatId  String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

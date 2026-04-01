@@ -13,6 +13,7 @@ import { researchRouter } from "./routes/research";
 import { trendingRouter } from "./routes/trending";
 import { imagesRouter } from "./routes/images";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
+import { initBot } from "./lib/telegram";
 
 dotenv.config();
 
