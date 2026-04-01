@@ -318,6 +318,72 @@ analyticsRouter.get("/team-engagement-daily", async (req: AuthRequest, res) => {
   }
 });
 
+// Days-to-peak engagement per analyst (manager only)
+analyticsRouter.get("/days-to-peak", async (req: AuthRequest, res) => {
+  try {
+    emptyQuerySchema.parse(req.query);
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || user.role === "ANALYST") {
+      return res.status(403).json(buildErrorResponse(req, "Manager access required"));
+    }
+
+    const analysts = await prisma.user.findMany({
+      where: { role: "ANALYST" },
+      select: {
+        id: true,
+        displayName: true,
+        handle: true,
+        tweetDrafts: {
+          select: { createdAt: true, actualEngagement: true },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+
+    const peaks = analysts.map((a) => {
+      const name = a.displayName || a.handle;
+      const drafts = a.tweetDrafts;
+
+      if (drafts.length === 0) {
+        return { name, days: 0, hasDrafts: false };
+      }
+
+      const firstDraftDate = drafts[0].createdAt;
+
+      // Find draft with highest actual engagement
+      let peakDate = firstDraftDate;
+      let peakEngagement = -1;
+      for (const d of drafts) {
+        if (d.actualEngagement != null && d.actualEngagement > peakEngagement) {
+          peakEngagement = d.actualEngagement;
+          peakDate = d.createdAt;
+        }
+      }
+
+      const days = Math.max(
+        1,
+        Math.round(
+          (peakDate.getTime() - firstDraftDate.getTime()) / (1000 * 60 * 60 * 24)
+        )
+      );
+
+      return { name, days, hasDrafts: true };
+    });
+
+    res.json({ peaks });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load days-to-peak", { message: err.message }));
+  }
+});
+
 // Team analytics (manager only)
 analyticsRouter.get("/team", async (req: AuthRequest, res) => {
   try {
