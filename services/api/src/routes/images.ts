@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateVisualConcept, ImageStyle } from "../lib/gemini";
+import { buildErrorResponse } from "../middleware/requestId";
 
 export const imagesRouter = Router();
 imagesRouter.use(authenticate);
@@ -43,10 +44,14 @@ imagesRouter.post("/generate", async (req: AuthRequest, res) => {
     res.json({ image: { ...image, concept } });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Image generation failed:", err.message);
-    res.status(502).json({ error: "Image generation failed", message: err.message });
+    res
+      .status(502)
+      .json(buildErrorResponse(req, "Image generation failed", { message: err.message }));
   }
 });
 
@@ -59,7 +64,7 @@ imagesRouter.post("/generate-for-draft", async (req: AuthRequest, res) => {
     const draft = await prisma.tweetDraft.findFirst({
       where: { id: body.draftId, userId: req.userId },
     });
-    if (!draft) return res.status(404).json({ error: "Draft not found" });
+    if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
 
     const concept = await generateVisualConcept(draft.content, body.style as ImageStyle);
 
@@ -83,18 +88,26 @@ imagesRouter.post("/generate-for-draft", async (req: AuthRequest, res) => {
     res.json({ image: { ...image, concept } });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Image generation failed:", err.message);
-    res.status(502).json({ error: "Image generation failed", message: err.message });
+    res
+      .status(502)
+      .json(buildErrorResponse(req, "Image generation failed", { message: err.message }));
   }
 });
 
 // Get images for a draft
 imagesRouter.get("/for-draft/:draftId", async (req: AuthRequest, res) => {
-  const images = await prisma.generatedImage.findMany({
-    where: { draftId: req.params.draftId as string, userId: req.userId! },
-    orderBy: { createdAt: "desc" },
-  });
-  res.json({ images });
+  try {
+    const images = await prisma.generatedImage.findMany({
+      where: { draftId: req.params.draftId as string, userId: req.userId! },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json({ images });
+  } catch (err: any) {
+    res.status(500).json(buildErrorResponse(req, "Failed to load images", { message: err.message }));
+  }
 });

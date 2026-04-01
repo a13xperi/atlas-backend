@@ -10,6 +10,7 @@ import { usersRouter } from "./routes/users";
 import { researchRouter } from "./routes/research";
 import { trendingRouter } from "./routes/trending";
 import { imagesRouter } from "./routes/images";
+import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 
 dotenv.config();
 
@@ -35,6 +36,7 @@ app.use(
   })
 );
 app.use(express.json({ limit: "10mb" }));
+app.use(requestIdMiddleware);
 
 // Health check
 app.get("/health", (_req, res) => {
@@ -53,9 +55,13 @@ app.use("/api/trending", trendingRouter);
 app.use("/api/images", imagesRouter);
 
 // Global error handler
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("Unhandled error:", err.message, err.stack);
-  res.status(500).json({ error: "Internal server error", message: err.message });
+  res.status(500).json(
+    buildErrorResponse(req, "Internal server error", {
+      message: err.message,
+    })
+  );
 });
 
 app.listen(PORT, () => {

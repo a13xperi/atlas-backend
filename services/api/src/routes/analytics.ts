@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { buildErrorResponse } from "../middleware/requestId";
 
 export const analyticsRouter = Router();
 analyticsRouter.use(authenticate);
@@ -46,9 +47,11 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
     });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json({ error: "Failed to load summary", message: err.message });
+    res.status(500).json(buildErrorResponse(req, "Failed to load summary", { message: err.message }));
   }
 });
 
@@ -56,7 +59,9 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
 analyticsRouter.post("/learning-log", async (req: AuthRequest, res) => {
   try {
     const { event, impact, positive } = req.body;
-    if (!event) return res.status(400).json({ error: "Event description is required" });
+    if (!event) {
+      return res.status(400).json(buildErrorResponse(req, "Event description is required"));
+    }
 
     const entry = await prisma.learningLogEntry.create({
       data: {
@@ -69,7 +74,9 @@ analyticsRouter.post("/learning-log", async (req: AuthRequest, res) => {
 
     res.json({ entry });
   } catch (err: any) {
-    res.status(500).json({ error: "Failed to create learning log entry", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to create learning log entry", { message: err.message }));
   }
 });
 
@@ -86,9 +93,13 @@ analyticsRouter.get("/learning-log", async (req: AuthRequest, res) => {
     res.json({ entries });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json({ error: "Failed to load learning log", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load learning log", { message: err.message }));
   }
 });
 
@@ -111,9 +122,13 @@ analyticsRouter.get("/engagement", async (req: AuthRequest, res) => {
     res.json({ events });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json({ error: "Failed to load engagement history", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load engagement history", { message: err.message }));
   }
 });
 
@@ -124,7 +139,7 @@ analyticsRouter.get("/team", async (req: AuthRequest, res) => {
 
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user || user.role === "ANALYST") {
-      return res.status(403).json({ error: "Manager access required" });
+      return res.status(403).json(buildErrorResponse(req, "Manager access required"));
     }
 
     const analysts = await prisma.user.findMany({
@@ -146,8 +161,12 @@ analyticsRouter.get("/team", async (req: AuthRequest, res) => {
     });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json({ error: "Failed to load team analytics", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load team analytics", { message: err.message }));
   }
 });
