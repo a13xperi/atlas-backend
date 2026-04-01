@@ -7,6 +7,7 @@
  * - deliverAlertToUser(): looks up user's chatId and delivers
  */
 
+import { config } from "./config";
 import { Telegraf } from "telegraf";
 import { prisma } from "./prisma";
 
@@ -17,7 +18,7 @@ let bot: Telegraf | null = null;
  * Gracefully no-ops when TELEGRAM_BOT_TOKEN is not set.
  */
 export function initBot(): Telegraf | null {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = config.TELEGRAM_BOT_TOKEN;
   if (!token) {
     console.warn("[telegram] TELEGRAM_BOT_TOKEN not set — Telegram bot disabled");
     return null;

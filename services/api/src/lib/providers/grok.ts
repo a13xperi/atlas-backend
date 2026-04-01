@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { config as envConfig } from "../config";
 import type { Provider, ProviderConfig, CompletionRequest, CompletionResponse } from "./types";
 
 let client: OpenAI | null = null;
@@ -6,7 +7,7 @@ let client: OpenAI | null = null;
 function getClient(): OpenAI {
   if (!client) {
     client = new OpenAI({
-      apiKey: process.env.XAI_API_KEY,
+      apiKey: envConfig.XAI_API_KEY,
       baseURL: "https://api.x.ai/v1",
     });
   }
@@ -16,7 +17,7 @@ function getClient(): OpenAI {
 const config: ProviderConfig = {
   id: "grok",
   defaultModel: "grok-3",
-  available: !!process.env.XAI_API_KEY,
+  available: !!envConfig.XAI_API_KEY,
   inputCostPer1M: 3.0,
   outputCostPer1M: 15.0,
 };

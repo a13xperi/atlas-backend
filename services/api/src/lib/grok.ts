@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { config } from "./config";
 import { getCached, setCache } from "./redis";
 
 // Grok uses OpenAI-compatible API with different base URL
@@ -7,7 +8,7 @@ let client: OpenAI | null = null;
 export function getGrokClient(): OpenAI {
   if (!client) {
     client = new OpenAI({
-      apiKey: process.env.XAI_API_KEY,
+      apiKey: config.XAI_API_KEY,
       baseURL: "https://api.x.ai/v1",
     });
   }

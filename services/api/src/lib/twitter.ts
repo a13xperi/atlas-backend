@@ -1,3 +1,5 @@
+import { config } from "./config";
+
 /**
  * Twitter/X API v2 client for fetching user tweets.
  * Uses Bearer Token authentication (app-only).
@@ -18,7 +20,7 @@ interface UserLookupResult {
 }
 
 function getBearerToken(): string {
-  const token = process.env.TWITTER_BEARER_TOKEN;
+  const token = config.TWITTER_BEARER_TOKEN;
   if (!token) throw new Error("TWITTER_BEARER_TOKEN not configured");
   return token;
 }
