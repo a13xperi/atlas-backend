@@ -130,6 +130,7 @@ model TweetDraft {
   confidence    Float?
   predictedEngagement Int?
   actualEngagement    Int?
+  engagementMetrics   Json?
   sourceType    SourceType?
   sourceContent String?
   blendId       String?
