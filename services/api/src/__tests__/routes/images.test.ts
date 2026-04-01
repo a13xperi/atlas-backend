@@ -7,6 +7,19 @@
 import request from "supertest";
 import express from "express";
 import { imagesRouter } from "../../routes/images";
+import { requestIdMiddleware } from "../../middleware/requestId";
+
+jest.mock("../../middleware/auth", () => ({
+  authenticate: jest.fn((req: any, res: any, next: any) => {
+    const header = req.headers.authorization;
+    if (!header?.startsWith("Bearer ")) return res.status(401).json({ error: "Missing authorization token" });
+    req.userId = "user-123";
+    next();
+  }),
+  AuthRequest: {},
+}));
+
+jest.mock("../../lib/supabase", () => ({ supabaseAdmin: null }));
 
 jest.mock("../../lib/prisma", () => ({
   prisma: {
@@ -27,10 +40,6 @@ jest.mock("../../lib/gemini", () => ({
   generateVisualConcept: jest.fn(),
 }));
 
-jest.mock("jsonwebtoken", () => ({
-  verify: jest.fn().mockReturnValue({ userId: "user-123" }),
-}));
-
 import { prisma } from "../../lib/prisma";
 import { generateVisualConcept } from "../../lib/gemini";
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
@@ -38,6 +47,7 @@ const mockGenerateVisualConcept = generateVisualConcept as jest.Mock;
 
 const app = express();
 app.use(express.json());
+app.use(requestIdMiddleware);
 app.use("/api/images", imagesRouter);
 
 const AUTH = { Authorization: "Bearer mock_token" };
@@ -56,6 +66,14 @@ const mockImage = {
   imageUrl: JSON.stringify(mockConcept),
   mimeType: "application/json",
 };
+
+beforeAll(() => {
+  process.env.JWT_SECRET = "test-secret";
+});
+
+afterAll(() => {
+  delete process.env.JWT_SECRET;
+});
 
 describe("POST /api/images/generate", () => {
   it("returns 401 without token", async () => {

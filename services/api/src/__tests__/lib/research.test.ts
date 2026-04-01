@@ -1,11 +1,11 @@
 /**
  * Research lib test suite
  * Tests conductResearch function
- * Mocks: OpenAI client, Redis cache
+ * Mocks: provider router (complete), Redis cache
  */
 
-jest.mock("../../lib/openai", () => ({
-  getOpenAIClient: jest.fn(),
+jest.mock("../../lib/providers", () => ({
+  complete: jest.fn(),
 }));
 
 jest.mock("../../lib/redis", () => ({
@@ -14,10 +14,10 @@ jest.mock("../../lib/redis", () => ({
 }));
 
 import { conductResearch } from "../../lib/research";
-import { getOpenAIClient } from "../../lib/openai";
+import { complete } from "../../lib/providers";
 import { getCached, setCache } from "../../lib/redis";
 
-const mockGetClient = getOpenAIClient as jest.Mock;
+const mockComplete = complete as jest.Mock;
 const mockGetCached = getCached as jest.Mock;
 const mockSetCache = setCache as jest.Mock;
 
@@ -30,20 +30,9 @@ const mockResearchResult = {
   confidence: 0.9,
 };
 
-function makeOpenAIClient(content: string) {
-  return {
-    chat: {
-      completions: {
-        create: jest.fn().mockResolvedValue({
-          choices: [{ message: { content } }],
-        }),
-      },
-    },
-  };
-}
-
 describe("conductResearch", () => {
   beforeEach(() => {
+    mockComplete.mockReset();
     mockGetCached.mockResolvedValue(null);
     mockSetCache.mockResolvedValue(undefined);
   });
@@ -53,21 +42,27 @@ describe("conductResearch", () => {
 
     const result = await conductResearch({ query: "BTC analysis" });
     expect(result.summary).toBe("BTC is bullish");
-    expect(mockGetClient).not.toHaveBeenCalled();
+    expect(mockComplete).not.toHaveBeenCalled();
   });
 
-  it("calls OpenAI when no cache hit", async () => {
-    const client = makeOpenAIClient(JSON.stringify(mockResearchResult));
-    mockGetClient.mockReturnValue(client);
+  it("calls provider when no cache hit", async () => {
+    mockComplete.mockResolvedValueOnce({
+      content: JSON.stringify(mockResearchResult),
+      providerId: "anthropic",
+    });
 
     const result = await conductResearch({ query: "BTC analysis" });
     expect(result.summary).toBe("BTC is bullish");
-    expect(client.chat.completions.create).toHaveBeenCalled();
+    expect(mockComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ taskType: "research" })
+    );
   });
 
-  it("caches result after fetching from OpenAI", async () => {
-    const client = makeOpenAIClient(JSON.stringify(mockResearchResult));
-    mockGetClient.mockReturnValue(client);
+  it("caches result after fetching from provider", async () => {
+    mockComplete.mockResolvedValueOnce({
+      content: JSON.stringify(mockResearchResult),
+      providerId: "anthropic",
+    });
 
     await conductResearch({ query: "BTC analysis" });
     expect(mockSetCache).toHaveBeenCalledWith(
@@ -78,20 +73,24 @@ describe("conductResearch", () => {
   });
 
   it("includes context in user message when provided", async () => {
-    const client = makeOpenAIClient(JSON.stringify(mockResearchResult));
-    mockGetClient.mockReturnValue(client);
+    mockComplete.mockResolvedValueOnce({
+      content: JSON.stringify(mockResearchResult),
+      providerId: "anthropic",
+    });
 
     await conductResearch({ query: "BTC analysis", context: "REPORT" });
 
-    const callArgs = client.chat.completions.create.mock.calls[0][0];
+    const callArgs = mockComplete.mock.calls[0][0];
     const userMessage = callArgs.messages.find((m: any) => m.role === "user").content;
     expect(userMessage).toContain("[Source type: REPORT]");
   });
 
   it("normalizes confidence to 0-1 range", async () => {
     const result = { ...mockResearchResult, confidence: 5.0 };
-    const client = makeOpenAIClient(JSON.stringify(result));
-    mockGetClient.mockReturnValue(client);
+    mockComplete.mockResolvedValueOnce({
+      content: JSON.stringify(result),
+      providerId: "anthropic",
+    });
 
     const r = await conductResearch({ query: "test" });
     expect(r.confidence).toBeLessThanOrEqual(1.0);
@@ -99,8 +98,10 @@ describe("conductResearch", () => {
 
   it("handles missing optional fields gracefully", async () => {
     const minimalResult = { summary: "test", sentiment: "neutral", confidence: 0.5 };
-    const client = makeOpenAIClient(JSON.stringify(minimalResult));
-    mockGetClient.mockReturnValue(client);
+    mockComplete.mockResolvedValueOnce({
+      content: JSON.stringify(minimalResult),
+      providerId: "anthropic",
+    });
 
     const r = await conductResearch({ query: "test" });
     expect(Array.isArray(r.keyFacts)).toBe(true);
@@ -108,11 +109,12 @@ describe("conductResearch", () => {
     expect(Array.isArray(r.sources)).toBe(true);
   });
 
-  it("throws when OpenAI returns empty content", async () => {
-    const client = makeOpenAIClient("");
-    client.chat.completions.create.mockResolvedValueOnce({ choices: [{ message: { content: null } }] });
-    mockGetClient.mockReturnValue(client);
+  it("throws when provider returns empty content", async () => {
+    mockComplete.mockResolvedValueOnce({
+      content: null,
+      providerId: "anthropic",
+    });
 
-    await expect(conductResearch({ query: "test" })).rejects.toThrow("Empty response from OpenAI");
+    await expect(conductResearch({ query: "test" })).rejects.toThrow("Empty response from provider");
   });
 });

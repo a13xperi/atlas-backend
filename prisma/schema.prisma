@@ -9,6 +9,7 @@ datasource db {
 
 model User {
   id            String   @id @default(cuid())
+  supabaseId    String?  @unique
   handle        String   @unique
   email         String?  @unique
   passwordHash  String?
@@ -16,6 +17,7 @@ model User {
   avatarUrl     String?
   role          Role     @default(ANALYST)
   onboardingTrack OnboardingTrack?
+  telegramChatId  String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -129,6 +131,7 @@ model TweetDraft {
   confidence    Float?
   predictedEngagement Int?
   actualEngagement    Int?
+  engagementMetrics   Json?
   sourceType    SourceType?
   sourceContent String?
   blendId       String?
