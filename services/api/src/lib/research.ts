@@ -1,4 +1,4 @@
-import { getOpenAIClient } from "./openai";
+import { complete } from "./providers";
 import { getCached, setCache } from "./redis";
 import crypto from "crypto";
 
@@ -47,25 +47,23 @@ export async function conductResearch(params: ResearchParams): Promise<ResearchR
     return JSON.parse(cached) as ResearchResult;
   }
 
-  const client = getOpenAIClient();
-
   const userMessage = context
     ? `[Source type: ${context}]\n\n${query}`
     : query;
 
-  const response = await client.chat.completions.create({
-    model: "gpt-4o",
-    max_tokens: 1000,
+  const response = await complete({
+    taskType: "research",
+    maxTokens: 1000,
     temperature: 0.3,
-    response_format: { type: "json_object" },
+    jsonMode: true,
     messages: [
       { role: "system", content: RESEARCH_SYSTEM_PROMPT },
       { role: "user", content: userMessage },
     ],
   });
 
-  const content = response.choices[0]?.message?.content;
-  if (!content) throw new Error("Empty response from OpenAI");
+  const content = response.content;
+  if (!content) throw new Error("Empty response from provider");
 
   const result = JSON.parse(content) as ResearchResult;
 

@@ -7,6 +7,19 @@
 import request from "supertest";
 import express from "express";
 import { usersRouter } from "../../routes/users";
+import { requestIdMiddleware } from "../../middleware/requestId";
+
+jest.mock("../../middleware/auth", () => ({
+  authenticate: jest.fn((req: any, res: any, next: any) => {
+    const header = req.headers.authorization;
+    if (!header?.startsWith("Bearer ")) return res.status(401).json({ error: "Missing authorization token" });
+    req.userId = "user-123";
+    next();
+  }),
+  AuthRequest: {},
+}));
+
+jest.mock("../../lib/supabase", () => ({ supabaseAdmin: null }));
 
 jest.mock("../../lib/prisma", () => ({
   prisma: {
@@ -18,16 +31,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("jsonwebtoken", () => ({
-  sign: jest.fn().mockReturnValue("mock_token"),
-  verify: jest.fn().mockReturnValue({ userId: "user-123" }),
-}));
-
 import { prisma } from "../../lib/prisma";
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 
 const app = express();
 app.use(express.json());
+app.use(requestIdMiddleware);
 app.use("/api/users", usersRouter);
 
 const AUTH = { Authorization: "Bearer mock_token" };
@@ -43,6 +52,14 @@ const mockUser = {
   createdAt: new Date(),
   voiceProfile: { humor: 50, formality: 50 },
 };
+
+beforeAll(() => {
+  process.env.JWT_SECRET = "test-secret";
+});
+
+afterAll(() => {
+  delete process.env.JWT_SECRET;
+});
 
 describe("GET /api/users/profile", () => {
   it("returns 401 without auth token", async () => {

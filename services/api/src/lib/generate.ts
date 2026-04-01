@@ -1,4 +1,4 @@
-import { getOpenAIClient } from "./openai";
+import { complete } from "./providers";
 import { buildTweetPrompt } from "./prompt";
 
 interface VoiceDimensions {
@@ -33,20 +33,18 @@ interface GenerateResult {
  * Generate a tweet using Claude, styled to the user's voice profile.
  */
 export async function generateTweet(params: GenerateParams): Promise<GenerateResult> {
-  const client = getOpenAIClient();
   const { system, userMessage } = buildTweetPrompt(params);
 
-  const response = await client.chat.completions.create({
-    model: "gpt-4o",
-    max_tokens: 300,
+  const response = await complete({
+    taskType: "tweet_generation",
+    maxTokens: 300,
     messages: [
       { role: "system", content: system },
       { role: "user", content: userMessage },
     ],
   });
 
-  // Extract text from response
-  const content = response.choices[0]?.message?.content?.trim() || "";
+  const content = response.content;
 
   // Compute confidence heuristic (0.0 - 1.0)
   const confidence = computeConfidence(content, params);

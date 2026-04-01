@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { buildErrorResponse } from "../middleware/requestId";
 
 export const analyticsRouter = Router();
 analyticsRouter.use(authenticate);
@@ -46,9 +47,11 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
     });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json({ error: "Failed to load summary", message: err.message });
+    res.status(500).json(buildErrorResponse(req, "Failed to load summary", { message: err.message }));
   }
 });
 
@@ -56,7 +59,9 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
 analyticsRouter.post("/learning-log", async (req: AuthRequest, res) => {
   try {
     const { event, impact, positive } = req.body;
-    if (!event) return res.status(400).json({ error: "Event description is required" });
+    if (!event) {
+      return res.status(400).json(buildErrorResponse(req, "Event description is required"));
+    }
 
     const entry = await prisma.learningLogEntry.create({
       data: {
@@ -69,7 +74,9 @@ analyticsRouter.post("/learning-log", async (req: AuthRequest, res) => {
 
     res.json({ entry });
   } catch (err: any) {
-    res.status(500).json({ error: "Failed to create learning log entry", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to create learning log entry", { message: err.message }));
   }
 });
 
@@ -86,9 +93,13 @@ analyticsRouter.get("/learning-log", async (req: AuthRequest, res) => {
     res.json({ entries });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json({ error: "Failed to load learning log", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load learning log", { message: err.message }));
   }
 });
 
@@ -111,105 +122,80 @@ analyticsRouter.get("/engagement", async (req: AuthRequest, res) => {
     res.json({ events });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json({ error: "Failed to load engagement history", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load engagement history", { message: err.message }));
   }
 });
 
-// Daily engagement aggregation (predicted vs actual from drafts, last 7 days)
+// Daily engagement comparison (predicted vs actual, last 7 days)
 analyticsRouter.get("/engagement-daily", async (req: AuthRequest, res) => {
   try {
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    emptyQuerySchema.parse(req.query);
 
-    const rows: { date: Date; predicted: number; actual: number }[] =
-      await prisma.$queryRaw`
-        SELECT
-          DATE("createdAt") as date,
-          COALESCE(AVG("predictedEngagement"), 0)::float as predicted,
-          COALESCE(AVG("actualEngagement"), 0)::float as actual
-        FROM "TweetDraft"
-        WHERE "userId" = ${req.userId}
-          AND "createdAt" >= ${sevenDaysAgo}
-          AND ("predictedEngagement" IS NOT NULL OR "actualEngagement" IS NOT NULL)
-        GROUP BY DATE("createdAt")
-        ORDER BY date ASC
-      `;
+    const now = new Date();
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const days = rows.map((r) => ({
-      date: r.date.toISOString().slice(0, 10),
-      dayLabel: dayLabels[new Date(r.date).getDay()],
-      predicted: Math.round(r.predicted),
-      actual: Math.round(r.actual),
-    }));
+    const drafts = await prisma.tweetDraft.findMany({
+      where: {
+        userId: req.userId,
+        predictedEngagement: { not: null },
+        createdAt: { gte: sevenDaysAgo },
+      },
+      select: {
+        createdAt: true,
+        predictedEngagement: true,
+        actualEngagement: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
 
-    res.json({ days });
-  } catch (err: any) {
-    res.status(500).json({ error: "Failed to load engagement daily", message: err.message });
-  }
-});
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const buckets = new Map<string, { predicted: number; actual: number | null; hasActual: boolean }>();
 
-// Daily activity counts for sparkline (last 30 days)
-analyticsRouter.get("/activity-daily", async (req: AuthRequest, res) => {
-  try {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
-    const rows: { date: Date; count: bigint }[] =
-      await prisma.$queryRaw`
-        SELECT DATE("createdAt") as date, COUNT(*)::bigint as count
-        FROM "AnalyticsEvent"
-        WHERE "userId" = ${req.userId}
-          AND "createdAt" >= ${thirtyDaysAgo}
-        GROUP BY DATE("createdAt")
-        ORDER BY date ASC
-      `;
-
-    const days = rows.map((r) => ({
-      date: r.date.toISOString().slice(0, 10),
-      count: Number(r.count),
-    }));
-
-    res.json({ days });
-  } catch (err: any) {
-    res.status(500).json({ error: "Failed to load activity daily", message: err.message });
-  }
-});
-
-// Team engagement daily (manager only, aggregates across all analysts)
-analyticsRouter.get("/team-engagement-daily", async (req: AuthRequest, res) => {
-  try {
-    const user = await prisma.user.findUnique({ where: { id: req.userId } });
-    if (!user || user.role === "ANALYST") {
-      return res.status(403).json({ error: "Manager access required" });
+    // Pre-populate all 7 days
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(sevenDaysAgo);
+      d.setDate(d.getDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      buckets.set(key, { predicted: 0, actual: 0, hasActual: false });
     }
 
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    // Aggregate drafts into day buckets
+    for (const draft of drafts) {
+      const key = draft.createdAt.toISOString().slice(0, 10);
+      const bucket = buckets.get(key);
+      if (!bucket) continue;
+      bucket.predicted += draft.predictedEngagement ?? 0;
+      if (draft.actualEngagement !== null) {
+        bucket.actual = (bucket.actual ?? 0) + draft.actualEngagement;
+        bucket.hasActual = true;
+      }
+    }
 
-    const rows: { date: Date; model_target: number; team_actual: number }[] =
-      await prisma.$queryRaw`
-        SELECT
-          DATE("createdAt") as date,
-          COALESCE(AVG("predictedEngagement"), 0)::float as model_target,
-          COALESCE(AVG("actualEngagement"), 0)::float as team_actual
-        FROM "TweetDraft"
-        WHERE "createdAt" >= ${sevenDaysAgo}
-          AND ("predictedEngagement" IS NOT NULL OR "actualEngagement" IS NOT NULL)
-        GROUP BY DATE("createdAt")
-        ORDER BY date ASC
-      `;
-
-    const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const days = rows.map((r) => ({
-      date: r.date.toISOString().slice(0, 10),
-      dayLabel: dayLabels[new Date(r.date).getDay()],
-      modelTarget: Math.round(r.model_target),
-      teamActual: Math.round(r.team_actual),
+    const result = Array.from(buckets.entries()).map(([date, bucket]) => ({
+      date,
+      dayLabel: dayNames[new Date(date + "T00:00:00").getDay()],
+      predicted: bucket.predicted,
+      actual: bucket.hasActual ? bucket.actual : null,
     }));
 
-    res.json({ days });
+    res.json(result);
   } catch (err: any) {
-    res.status(500).json({ error: "Failed to load team engagement daily", message: err.message });
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load daily engagement", { message: err.message }));
   }
 });
 
@@ -220,7 +206,7 @@ analyticsRouter.get("/team", async (req: AuthRequest, res) => {
 
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user || user.role === "ANALYST") {
-      return res.status(403).json({ error: "Manager access required" });
+      return res.status(403).json(buildErrorResponse(req, "Manager access required"));
     }
 
     const analysts = await prisma.user.findMany({
@@ -242,8 +228,12 @@ analyticsRouter.get("/team", async (req: AuthRequest, res) => {
     });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json({ error: "Failed to load team analytics", message: err.message });
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load team analytics", { message: err.message }));
   }
 });

@@ -1,3 +1,5 @@
+import "./lib/sentry"; // Must be first — initializes Sentry before other imports
+import { Sentry } from "./lib/sentry";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -10,6 +12,8 @@ import { usersRouter } from "./routes/users";
 import { researchRouter } from "./routes/research";
 import { trendingRouter } from "./routes/trending";
 import { imagesRouter } from "./routes/images";
+import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
+import { initBot } from "./lib/telegram";
 
 dotenv.config();
 
@@ -35,6 +39,7 @@ app.use(
   })
 );
 app.use(express.json({ limit: "10mb" }));
+app.use(requestIdMiddleware);
 
 // Health check
 app.get("/health", (_req, res) => {
@@ -52,10 +57,17 @@ app.use("/api/research", researchRouter);
 app.use("/api/trending", trendingRouter);
 app.use("/api/images", imagesRouter);
 
+// Sentry error handler — must be before any other error middleware
+Sentry.setupExpressErrorHandler(app);
+
 // Global error handler
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("Unhandled error:", err.message, err.stack);
-  res.status(500).json({ error: "Internal server error", message: err.message });
+  res.status(500).json(
+    buildErrorResponse(req, "Internal server error", {
+      message: err.message,
+    })
+  );
 });
 
 app.listen(PORT, () => {
