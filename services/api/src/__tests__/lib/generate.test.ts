@@ -1,11 +1,11 @@
 /**
  * Generate lib test suite
  * Tests generateTweet function and confidence/engagement heuristics
- * Mocks: OpenAI client
+ * Mocks: provider router (complete), prompt builder
  */
 
-jest.mock("../../lib/openai", () => ({
-  getOpenAIClient: jest.fn(),
+jest.mock("../../lib/providers", () => ({
+  complete: jest.fn(),
 }));
 
 jest.mock("../../lib/prompt", () => ({
@@ -16,20 +16,12 @@ jest.mock("../../lib/prompt", () => ({
 }));
 
 import { generateTweet } from "../../lib/generate";
-import { getOpenAIClient } from "../../lib/openai";
+import { complete } from "../../lib/providers";
 
-const mockGetClient = getOpenAIClient as jest.Mock;
+const mockComplete = complete as jest.Mock;
 
-function makeOpenAIClient(content: string) {
-  return {
-    chat: {
-      completions: {
-        create: jest.fn().mockResolvedValue({
-          choices: [{ message: { content } }],
-        }),
-      },
-    },
-  };
+function mockContent(content: string) {
+  mockComplete.mockResolvedValueOnce({ content, providerId: "openai" });
 }
 
 const baseParams = {
@@ -45,28 +37,29 @@ const baseParams = {
 };
 
 describe("generateTweet", () => {
-  it("calls OpenAI and returns tweet content", async () => {
-    const client = makeOpenAIClient("BTC just hit $100k. We called it.");
-    mockGetClient.mockReturnValue(client);
+  beforeEach(() => {
+    mockComplete.mockReset();
+  });
+
+  it("calls provider router and returns tweet content", async () => {
+    mockContent("BTC just hit $100k. We called it.");
 
     const result = await generateTweet(baseParams);
     expect(result.content).toBe("BTC just hit $100k. We called it.");
-    expect(client.chat.completions.create).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "gpt-4o" })
+    expect(mockComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ taskType: "tweet_generation" })
     );
   });
 
-  it("returns empty string when OpenAI returns no content", async () => {
-    const client = makeOpenAIClient("");
-    mockGetClient.mockReturnValue(client);
+  it("returns empty string when provider returns no content", async () => {
+    mockContent("");
 
     const result = await generateTweet(baseParams);
     expect(result.content).toBe("");
   });
 
   it("returns confidence between 0.1 and 0.99", async () => {
-    const client = makeOpenAIClient("Short tweet");
-    mockGetClient.mockReturnValue(client);
+    mockContent("Short tweet");
 
     const result = await generateTweet(baseParams);
     expect(result.confidence).toBeGreaterThanOrEqual(0.1);
@@ -74,24 +67,19 @@ describe("generateTweet", () => {
   });
 
   it("returns a positive predictedEngagement number", async () => {
-    const client = makeOpenAIClient("BTC tweet");
-    mockGetClient.mockReturnValue(client);
+    mockContent("BTC tweet");
 
     const result = await generateTweet(baseParams);
     expect(result.predictedEngagement).toBeGreaterThan(0);
   });
 
   it("boosts confidence for ADVANCED maturity", async () => {
-    const client = makeOpenAIClient("A good 200-char tweet".padEnd(200, " x"));
-    mockGetClient.mockReturnValue(client);
+    const padded = "A 200-char tweet".padEnd(200, "x");
+    mockContent(padded);
+    mockContent(padded);
 
     const advanced = { ...baseParams, voiceProfile: { ...baseParams.voiceProfile, maturity: "ADVANCED" } };
     const intermediate = { ...baseParams, voiceProfile: { ...baseParams.voiceProfile, maturity: "INTERMEDIATE" } };
-
-    // Reset mock for each call
-    mockGetClient
-      .mockReturnValueOnce(makeOpenAIClient("A 200-char tweet".padEnd(200, "x")))
-      .mockReturnValueOnce(makeOpenAIClient("A 200-char tweet".padEnd(200, "x")));
 
     const advancedResult = await generateTweet(advanced);
     const intermediateResult = await generateTweet(intermediate);
@@ -99,12 +87,8 @@ describe("generateTweet", () => {
   });
 
   it("penalizes confidence for content over 280 chars", async () => {
-    const longContent = "x".repeat(300);
-    const shortContent = "Short tweet";
-
-    mockGetClient
-      .mockReturnValueOnce(makeOpenAIClient(longContent))
-      .mockReturnValueOnce(makeOpenAIClient(shortContent));
+    mockContent("x".repeat(300));
+    mockContent("Short tweet");
 
     const longResult = await generateTweet(baseParams);
     const shortResult = await generateTweet(baseParams);
@@ -112,9 +96,8 @@ describe("generateTweet", () => {
   });
 
   it("boosts engagement for TRENDING_TOPIC source type", async () => {
-    mockGetClient
-      .mockReturnValueOnce(makeOpenAIClient("tweet"))
-      .mockReturnValueOnce(makeOpenAIClient("tweet"));
+    mockContent("tweet");
+    mockContent("tweet");
 
     const trending = { ...baseParams, sourceType: "TRENDING_TOPIC" };
     const manual = { ...baseParams, sourceType: "MANUAL" };
@@ -125,10 +108,8 @@ describe("generateTweet", () => {
   });
 
   it("boosts confidence when feedback is provided", async () => {
-    const client = makeOpenAIClient("Refined tweet");
-    mockGetClient
-      .mockReturnValueOnce(makeOpenAIClient("tweet"))
-      .mockReturnValueOnce(makeOpenAIClient("tweet"));
+    mockContent("tweet");
+    mockContent("tweet");
 
     const withFeedback = { ...baseParams, feedback: "Make it more concise" };
     const withoutFeedback = { ...baseParams };

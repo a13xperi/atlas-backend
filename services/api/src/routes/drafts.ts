@@ -21,6 +21,12 @@ const regenerateSchema = z.object({
   feedback: z.string().max(1000).optional(),
 });
 
+const engagementSchema = z.object({
+  likes: z.number().int().min(0),
+  retweets: z.number().int().min(0),
+  impressions: z.number().int().min(0),
+});
+
 // Generate a tweet from source content using AI
 draftsRouter.post("/generate", async (req: AuthRequest, res) => {
   try {
@@ -223,6 +229,46 @@ draftsRouter.get("/", async (req: AuthRequest, res) => {
   }
 });
 
+// List team drafts (APPROVED + POSTED) — MANAGER/ADMIN only
+draftsRouter.get("/team", async (req: AuthRequest, res) => {
+  const { limit = "50", offset = "0" } = req.query;
+
+  const requestingUser = await prisma.user.findUnique({
+    where: { id: req.userId! },
+    select: { role: true },
+  });
+  if (!requestingUser || requestingUser.role === "ANALYST") {
+    return res.status(403).json({ error: "Manager or Admin role required" });
+  }
+
+  const drafts = await prisma.tweetDraft.findMany({
+    where: { status: { in: ["APPROVED", "POSTED"] } },
+    orderBy: { updatedAt: "desc" },
+    take: parseInt(limit as string),
+    skip: parseInt(offset as string),
+    include: {
+      user: { select: { handle: true, displayName: true, avatarUrl: true } },
+    },
+  });
+
+  // Resolve blend names in one query
+  const blendIds = [...new Set(drafts.map((d) => d.blendId).filter(Boolean))] as string[];
+  const blends = blendIds.length
+    ? await prisma.savedBlend.findMany({
+        where: { id: { in: blendIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const blendMap = Object.fromEntries(blends.map((b) => [b.id, b.name]));
+
+  const result = drafts.map((d) => ({
+    ...d,
+    blendName: d.blendId ? (blendMap[d.blendId] ?? null) : null,
+  }));
+
+  res.json({ drafts: result, total: result.length });
+});
+
 // Get single draft
 draftsRouter.get("/:id", async (req: AuthRequest, res) => {
   try {
@@ -311,5 +357,60 @@ draftsRouter.delete("/:id", async (req: AuthRequest, res) => {
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json(buildErrorResponse(req, "Failed to delete draft", { message: err.message }));
+  }
+});
+
+// Record actual engagement metrics (post-publish feedback loop)
+draftsRouter.post("/:id/engagement", async (req: AuthRequest, res) => {
+  try {
+    const body = engagementSchema.parse(req.body);
+
+    const draft = await prisma.tweetDraft.findFirst({
+      where: { id: req.params.id as string, userId: req.userId },
+    });
+    if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+
+    if (draft.status !== "POSTED") {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Can only record engagement on posted drafts"));
+    }
+
+    const updated = await prisma.tweetDraft.update({
+      where: { id: draft.id },
+      data: {
+        actualEngagement: body.impressions,
+        engagementMetrics: {
+          likes: body.likes,
+          retweets: body.retweets,
+          impressions: body.impressions,
+        },
+      },
+    });
+
+    await prisma.analyticsEvent.create({
+      data: {
+        userId: req.userId!,
+        type: "ENGAGEMENT_RECORDED",
+        value: body.impressions,
+        metadata: {
+          draftId: draft.id,
+          likes: body.likes,
+          retweets: body.retweets,
+          impressions: body.impressions,
+        },
+      },
+    });
+
+    res.json({ draft: updated });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to record engagement", { message: err.message }));
   }
 });
