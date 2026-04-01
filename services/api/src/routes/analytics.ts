@@ -117,6 +117,102 @@ analyticsRouter.get("/engagement", async (req: AuthRequest, res) => {
   }
 });
 
+// Daily engagement aggregation (predicted vs actual from drafts, last 7 days)
+analyticsRouter.get("/engagement-daily", async (req: AuthRequest, res) => {
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const rows: { date: Date; predicted: number; actual: number }[] =
+      await prisma.$queryRaw`
+        SELECT
+          DATE("createdAt") as date,
+          COALESCE(AVG("predictedEngagement"), 0)::float as predicted,
+          COALESCE(AVG("actualEngagement"), 0)::float as actual
+        FROM "TweetDraft"
+        WHERE "userId" = ${req.userId}
+          AND "createdAt" >= ${sevenDaysAgo}
+          AND ("predictedEngagement" IS NOT NULL OR "actualEngagement" IS NOT NULL)
+        GROUP BY DATE("createdAt")
+        ORDER BY date ASC
+      `;
+
+    const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const days = rows.map((r) => ({
+      date: r.date.toISOString().slice(0, 10),
+      dayLabel: dayLabels[new Date(r.date).getDay()],
+      predicted: Math.round(r.predicted),
+      actual: Math.round(r.actual),
+    }));
+
+    res.json({ days });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to load engagement daily", message: err.message });
+  }
+});
+
+// Daily activity counts for sparkline (last 30 days)
+analyticsRouter.get("/activity-daily", async (req: AuthRequest, res) => {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const rows: { date: Date; count: bigint }[] =
+      await prisma.$queryRaw`
+        SELECT DATE("createdAt") as date, COUNT(*)::bigint as count
+        FROM "AnalyticsEvent"
+        WHERE "userId" = ${req.userId}
+          AND "createdAt" >= ${thirtyDaysAgo}
+        GROUP BY DATE("createdAt")
+        ORDER BY date ASC
+      `;
+
+    const days = rows.map((r) => ({
+      date: r.date.toISOString().slice(0, 10),
+      count: Number(r.count),
+    }));
+
+    res.json({ days });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to load activity daily", message: err.message });
+  }
+});
+
+// Team engagement daily (manager only, aggregates across all analysts)
+analyticsRouter.get("/team-engagement-daily", async (req: AuthRequest, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || user.role === "ANALYST") {
+      return res.status(403).json({ error: "Manager access required" });
+    }
+
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const rows: { date: Date; model_target: number; team_actual: number }[] =
+      await prisma.$queryRaw`
+        SELECT
+          DATE("createdAt") as date,
+          COALESCE(AVG("predictedEngagement"), 0)::float as model_target,
+          COALESCE(AVG("actualEngagement"), 0)::float as team_actual
+        FROM "TweetDraft"
+        WHERE "createdAt" >= ${sevenDaysAgo}
+          AND ("predictedEngagement" IS NOT NULL OR "actualEngagement" IS NOT NULL)
+        GROUP BY DATE("createdAt")
+        ORDER BY date ASC
+      `;
+
+    const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const days = rows.map((r) => ({
+      date: r.date.toISOString().slice(0, 10),
+      dayLabel: dayLabels[new Date(r.date).getDay()],
+      modelTarget: Math.round(r.model_target),
+      teamActual: Math.round(r.team_actual),
+    }));
+
+    res.json({ days });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to load team engagement daily", message: err.message });
+  }
+});
+
 // Team analytics (manager only)
 analyticsRouter.get("/team", async (req: AuthRequest, res) => {
   try {

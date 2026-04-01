@@ -210,6 +210,46 @@ draftsRouter.get("/", async (req: AuthRequest, res) => {
   res.json({ drafts });
 });
 
+// List team drafts (APPROVED + POSTED) — MANAGER/ADMIN only
+draftsRouter.get("/team", async (req: AuthRequest, res) => {
+  const { limit = "50", offset = "0" } = req.query;
+
+  const requestingUser = await prisma.user.findUnique({
+    where: { id: req.userId! },
+    select: { role: true },
+  });
+  if (!requestingUser || requestingUser.role === "ANALYST") {
+    return res.status(403).json({ error: "Manager or Admin role required" });
+  }
+
+  const drafts = await prisma.tweetDraft.findMany({
+    where: { status: { in: ["APPROVED", "POSTED"] } },
+    orderBy: { updatedAt: "desc" },
+    take: parseInt(limit as string),
+    skip: parseInt(offset as string),
+    include: {
+      user: { select: { handle: true, displayName: true, avatarUrl: true } },
+    },
+  });
+
+  // Resolve blend names in one query
+  const blendIds = [...new Set(drafts.map((d) => d.blendId).filter(Boolean))] as string[];
+  const blends = blendIds.length
+    ? await prisma.savedBlend.findMany({
+        where: { id: { in: blendIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const blendMap = Object.fromEntries(blends.map((b) => [b.id, b.name]));
+
+  const result = drafts.map((d) => ({
+    ...d,
+    blendName: d.blendId ? (blendMap[d.blendId] ?? null) : null,
+  }));
+
+  res.json({ drafts: result, total: result.length });
+});
+
 // Get single draft
 draftsRouter.get("/:id", async (req: AuthRequest, res) => {
   const draft = await prisma.tweetDraft.findFirst({
