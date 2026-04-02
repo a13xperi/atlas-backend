@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 /**
  * Alert Delivery Dispatcher
  *
@@ -39,9 +40,9 @@ export async function dispatchAlert(alert: AlertPayload): Promise<void> {
 
     // Deliver via Telegram (non-blocking)
     deliverAlertToUser(alert, alert.userId).catch((err) =>
-      console.error(`[alertDelivery] Telegram delivery failed for alert ${alert.id}:`, err)
+      logger.error({ err }, `[alertDelivery] Telegram delivery failed for alert ${alert.id}`)
     );
   } catch (err) {
-    console.error(`[alertDelivery] Dispatch failed for alert ${alert.id}:`, err);
+    logger.error({ err }, `[alertDelivery] Dispatch failed for alert ${alert.id}`);
   }
 }

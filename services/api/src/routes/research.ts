@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { conductResearch } from "../lib/research";
 import { buildErrorResponse } from "../middleware/requestId";
+import { logger } from "../lib/logger";
 
 export const researchRouter = Router();
 researchRouter.use(authenticate);
@@ -45,7 +46,7 @@ researchRouter.post("/", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Research failed:", err.message);
+    logger.error({ err: err.message }, "Research failed");
     res.status(502).json(buildErrorResponse(req, "Research failed"));
   }
 });

@@ -1,7 +1,7 @@
 /**
  * Drafts routes test suite
  * Tests: GET /, GET /:id, POST /, PATCH /:id, DELETE /:id, POST /generate, POST /:id/regenerate
- * Mocks: Prisma, generateTweet (OpenAI under the hood), conductResearch, JWT
+ * Mocks: Prisma, pipeline (runGenerationPipeline), JWT
  */
 
 import request from "supertest";
@@ -32,6 +32,9 @@ jest.mock("../../lib/prisma", () => ({
       update: jest.fn(),
       delete: jest.fn(),
     },
+    user: {
+      findUnique: jest.fn(),
+    },
     voiceProfile: {
       findUnique: jest.fn(),
     },
@@ -44,23 +47,15 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("../../lib/generate", () => ({
-  generateTweet: jest.fn(),
+jest.mock("../../lib/pipeline", () => ({
+  runGenerationPipeline: jest.fn(),
 }));
-
-jest.mock("../../lib/research", () => ({
-  conductResearch: jest.fn(),
-}));
-
-// JWT mock removed — authenticate middleware is mocked directly
 
 import { prisma } from "../../lib/prisma";
-import { generateTweet } from "../../lib/generate";
-import { conductResearch } from "../../lib/research";
+import { runGenerationPipeline } from "../../lib/pipeline";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
-const mockGenerateTweet = generateTweet as jest.Mock;
-const mockConductResearch = conductResearch as jest.Mock;
+const mockRunPipeline = runGenerationPipeline as jest.Mock;
 
 // --- App setup ---
 
@@ -313,7 +308,7 @@ describe("POST /api/drafts/generate", () => {
   });
 
   it("returns 400 when voice profile not found", async () => {
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    mockRunPipeline.mockRejectedValueOnce(new Error("Voice profile not found. Complete onboarding first."));
 
     const res = await request(app)
       .post("/api/drafts/generate")
@@ -325,16 +320,15 @@ describe("POST /api/drafts/generate", () => {
   });
 
   it("generates tweet, saves draft, logs analytics event", async () => {
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockConductResearch.mockResolvedValueOnce({
-      summary: "BTC summary",
-      keyFacts: ["ATH"],
-      sentiment: "bullish",
-    });
-    mockGenerateTweet.mockResolvedValueOnce({
-      content: "BTC just hit ATH!",
-      confidence: 0.85,
-      predictedEngagement: 2000,
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent: "BTC just hit ATH!",
+        confidence: 0.85,
+        predictedEngagement: 2000,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 500,
     });
     (mockPrisma.tweetDraft.create as jest.Mock).mockResolvedValueOnce({
       ...mockDraft,
@@ -349,7 +343,13 @@ describe("POST /api/drafts/generate", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.draft).toBeDefined();
-    expect(mockGenerateTweet).toHaveBeenCalled();
+    expect(mockRunPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-123",
+        sourceContent: "BTC hits ATH",
+        sourceType: "TWEET",
+      })
+    );
     expect(mockPrisma.analyticsEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ type: "DRAFT_CREATED" }),
@@ -357,34 +357,8 @@ describe("POST /api/drafts/generate", () => {
     );
   });
 
-  it("still generates tweet if research fails", async () => {
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockConductResearch.mockRejectedValueOnce(new Error("Research unavailable"));
-    mockGenerateTweet.mockResolvedValueOnce({
-      content: "BTC ATH!",
-      confidence: 0.75,
-      predictedEngagement: 1500,
-    });
-    (mockPrisma.tweetDraft.create as jest.Mock).mockResolvedValueOnce(mockDraft);
-    (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValueOnce({});
-
-    const res = await request(app)
-      .post("/api/drafts/generate")
-      .set("Authorization", AUTH)
-      .send({ sourceContent: "BTC hits ATH", sourceType: "TWEET" });
-
-    expect(res.status).toBe(200);
-    expect(mockGenerateTweet).toHaveBeenCalled();
-  });
-
   it("returns 502 when AI generation fails", async () => {
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockConductResearch.mockResolvedValueOnce({
-      summary: "ok",
-      keyFacts: [],
-      sentiment: "neutral",
-    });
-    mockGenerateTweet.mockRejectedValueOnce(new Error("OpenAI timeout"));
+    mockRunPipeline.mockRejectedValueOnce(new Error("OpenAI timeout"));
 
     const res = await request(app)
       .post("/api/drafts/generate")
@@ -429,11 +403,15 @@ describe("POST /api/drafts/:id/regenerate", () => {
   it("regenerates with new version number", async () => {
     const existingWithSource = { ...mockDraft, sourceContent: "BTC ATH analysis", version: 1 };
     (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(existingWithSource);
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockGenerateTweet.mockResolvedValueOnce({
-      content: "New version!",
-      confidence: 0.9,
-      predictedEngagement: 2200,
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent: "New version!",
+        confidence: 0.9,
+        predictedEngagement: 2200,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 400,
     });
     (mockPrisma.tweetDraft.create as jest.Mock).mockResolvedValueOnce({
       ...mockDraft,
@@ -454,11 +432,15 @@ describe("POST /api/drafts/:id/regenerate", () => {
   it("logs FEEDBACK_GIVEN when feedback is provided on regenerate", async () => {
     const existingWithSource = { ...mockDraft, sourceContent: "BTC ATH", version: 1 };
     (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(existingWithSource);
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockGenerateTweet.mockResolvedValueOnce({
-      content: "Refined tweet",
-      confidence: 0.88,
-      predictedEngagement: 1800,
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent: "Refined tweet",
+        confidence: 0.88,
+        predictedEngagement: 1800,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 300,
     });
     (mockPrisma.tweetDraft.create as jest.Mock).mockResolvedValueOnce({ ...mockDraft, version: 2 });
     (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValue({});
@@ -477,8 +459,7 @@ describe("POST /api/drafts/:id/regenerate", () => {
   it("returns 502 when AI generation fails on regenerate", async () => {
     const existingWithSource = { ...mockDraft, sourceContent: "BTC ATH", version: 1 };
     (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(existingWithSource);
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockGenerateTweet.mockRejectedValueOnce(new Error("API failure"));
+    mockRunPipeline.mockRejectedValueOnce(new Error("API failure"));
 
     const res = await request(app)
       .post("/api/drafts/draft-1/regenerate")

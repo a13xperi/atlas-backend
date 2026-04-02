@@ -2,9 +2,9 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
-import { generateTweet } from "../lib/generate";
-import { conductResearch } from "../lib/research";
+import { runGenerationPipeline } from "../lib/pipeline";
 import { buildErrorResponse } from "../middleware/requestId";
+import { logger } from "../lib/logger";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
@@ -32,68 +32,24 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
   try {
     const body = generateSchema.parse(req.body);
 
-    // Fetch user's voice profile
-    const voiceProfile = await prisma.voiceProfile.findUnique({
-      where: { userId: req.userId! },
-    });
-    if (!voiceProfile) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Voice profile not found. Complete onboarding first."));
-    }
-
-    // Fetch blend if provided
-    let blendVoices: { label: string; percentage: number }[] | undefined;
-    if (body.blendId) {
-      const blend = await prisma.savedBlend.findFirst({
-        where: { id: body.blendId, userId: req.userId! },
-        include: { voices: { include: { referenceVoice: true } } },
-      });
-      if (blend) {
-        blendVoices = blend.voices.map((v) => ({
-          label: v.referenceVoice?.name || v.label,
-          percentage: v.percentage,
-        }));
-      }
-    }
-
-    // Pre-tweet research enrichment (non-blocking — tweet still generates if research fails)
-    let researchContext: string | undefined;
-    try {
-      const research = await conductResearch({
-        query: body.sourceContent,
-        context: body.sourceType,
-      });
-      researchContext = `Summary: ${research.summary}\nKey facts: ${research.keyFacts.join("; ")}\nSentiment: ${research.sentiment}`;
-    } catch (e) {
-      console.warn("Research enrichment skipped:", (e as Error).message);
-    }
-
-    // Generate the tweet
-    const result = await generateTweet({
-      voiceProfile: {
-        humor: voiceProfile.humor,
-        formality: voiceProfile.formality,
-        brevity: voiceProfile.brevity,
-        contrarianTone: voiceProfile.contrarianTone,
-        maturity: voiceProfile.maturity,
-      },
+    // Run generation pipeline (voice fetch + blend + research in parallel, then generate)
+    const result = await runGenerationPipeline({
+      userId: req.userId!,
       sourceContent: body.sourceContent,
       sourceType: body.sourceType,
-      blendVoices,
-      researchContext,
+      blendId: body.blendId,
     });
 
     // Save as draft
     const draft = await prisma.tweetDraft.create({
       data: {
         userId: req.userId!,
-        content: result.content,
+        content: result.ctx.generatedContent!,
         sourceType: body.sourceType,
         sourceContent: body.sourceContent,
         blendId: body.blendId,
-        confidence: result.confidence,
-        predictedEngagement: result.predictedEngagement,
+        confidence: result.ctx.confidence,
+        predictedEngagement: result.ctx.predictedEngagement,
         version: 1,
       },
     });
@@ -110,7 +66,13 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Generate failed:", err.message);
+    // fetchVoice step throws with this message when profile missing
+    if (err.message?.includes("Voice profile not found")) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, err.message));
+    }
+    logger.error({ err: err.message }, "Generate failed");
     res.status(502).json(buildErrorResponse(req, "AI generation failed"));
   }
 });
@@ -131,41 +93,12 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
         .json(buildErrorResponse(req, "Cannot regenerate a manual draft without source content"));
     }
 
-    // Fetch voice profile
-    const voiceProfile = await prisma.voiceProfile.findUnique({
-      where: { userId: req.userId! },
-    });
-    if (!voiceProfile) {
-      return res.status(400).json(buildErrorResponse(req, "Voice profile not found"));
-    }
-
-    // Fetch blend if the original used one
-    let blendVoices: { label: string; percentage: number }[] | undefined;
-    if (existing.blendId) {
-      const blend = await prisma.savedBlend.findFirst({
-        where: { id: existing.blendId, userId: req.userId! },
-        include: { voices: { include: { referenceVoice: true } } },
-      });
-      if (blend) {
-        blendVoices = blend.voices.map((v) => ({
-          label: v.referenceVoice?.name || v.label,
-          percentage: v.percentage,
-        }));
-      }
-    }
-
-    // Generate new version
-    const result = await generateTweet({
-      voiceProfile: {
-        humor: voiceProfile.humor,
-        formality: voiceProfile.formality,
-        brevity: voiceProfile.brevity,
-        contrarianTone: voiceProfile.contrarianTone,
-        maturity: voiceProfile.maturity,
-      },
+    // Run generation pipeline with existing draft's context
+    const result = await runGenerationPipeline({
+      userId: req.userId!,
       sourceContent: existing.sourceContent,
       sourceType: existing.sourceType || "MANUAL",
-      blendVoices,
+      blendId: existing.blendId || undefined,
       feedback: body.feedback || existing.feedback || undefined,
     });
 
@@ -173,12 +106,12 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
     const draft = await prisma.tweetDraft.create({
       data: {
         userId: req.userId!,
-        content: result.content,
+        content: result.ctx.generatedContent!,
         sourceType: existing.sourceType,
         sourceContent: existing.sourceContent,
         blendId: existing.blendId,
-        confidence: result.confidence,
-        predictedEngagement: result.predictedEngagement,
+        confidence: result.ctx.confidence,
+        predictedEngagement: result.ctx.predictedEngagement,
         version: existing.version + 1,
         feedback: body.feedback || existing.feedback,
       },
@@ -201,7 +134,12 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Regenerate failed:", err.message);
+    if (err.message?.includes("Voice profile not found")) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, err.message));
+    }
+    logger.error({ err: err.message }, "Regenerate failed");
     res.status(502).json(buildErrorResponse(req, "AI generation failed"));
   }
 });
