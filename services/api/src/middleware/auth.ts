@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { config } from "../lib/config";
 import { prisma } from "../lib/prisma";
 import { supabaseAdmin } from "../lib/supabase";
+import { getAccessToken } from "../lib/cookies";
 
 export interface AuthRequest extends Request {
   userId?: string;
@@ -10,17 +11,16 @@ export interface AuthRequest extends Request {
 
 /**
  * Dual-mode auth middleware.
+ * Token sources (priority): HttpOnly cookie > Authorization header
  * Path 1: Supabase JWT — verifies via supabaseAdmin.auth.getUser(), resolves Prisma user by supabaseId
  * Path 2: Legacy JWT — verifies via JWT_SECRET, uses payload.userId directly
  * Both paths set req.userId to a Prisma CUID. All downstream routes are unchanged.
  */
 export async function authenticate(req: AuthRequest, res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
+  const token = getAccessToken(req);
+  if (!token) {
     return res.status(401).json({ error: "Missing authorization token" });
   }
-
-  const token = header.slice(7);
 
   // Path 1: Supabase token verification
   if (supabaseAdmin) {

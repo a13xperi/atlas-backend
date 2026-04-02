@@ -5,6 +5,7 @@ import { supabaseAdmin } from "../lib/supabase";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
 import { rateLimit } from "../middleware/rateLimit";
+import { setAuthCookies, clearAuthCookies, getRefreshToken } from "../lib/cookies";
 
 export const authRouter = Router();
 
@@ -99,6 +100,7 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
       });
     }
 
+    setAuthCookies(res, session.session.access_token, session.session.refresh_token);
     res.json({
       user: { id: user.id, handle: user.handle, role: user.role },
       token: session.session.access_token,
@@ -149,6 +151,7 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
       return res.status(404).json(buildErrorResponse(req, "No account found. Please register first."));
     }
 
+    setAuthCookies(res, session.session.access_token, session.session.refresh_token);
     res.json({
       user: { id: user.id, handle: user.handle, role: user.role },
       token: session.session.access_token,
@@ -163,31 +166,36 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
   }
 });
 
-// Refresh token
+// Refresh token — reads from cookie first, falls back to request body
 authRouter.post("/refresh", async (req, res) => {
   try {
-    const body = refreshSchema.parse(req.body);
+    const cookieRefresh = getRefreshToken(req);
+    const bodyRefresh = req.body?.refresh_token;
+    const refreshToken = cookieRefresh || bodyRefresh;
+
+    if (!refreshToken) {
+      return res.status(400).json(buildErrorResponse(req, "Missing refresh token"));
+    }
 
     if (!supabaseAdmin) {
       return res.status(503).json(buildErrorResponse(req, "Auth service unavailable"));
     }
 
     const { data, error } = await supabaseAdmin.auth.refreshSession({
-      refresh_token: body.refresh_token,
+      refresh_token: refreshToken,
     });
 
     if (error || !data.session) {
+      clearAuthCookies(res);
       return res.status(401).json(buildErrorResponse(req, "Invalid refresh token"));
     }
 
+    setAuthCookies(res, data.session.access_token, data.session.refresh_token);
     res.json({
       token: data.session.access_token,
       refresh_token: data.session.refresh_token,
     });
   } catch (err: any) {
-    if (err instanceof z.ZodError) {
-      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
-    }
     res.status(500).json(buildErrorResponse(req, "Token refresh failed"));
   }
 });
@@ -231,8 +239,9 @@ authRouter.post("/link-account", async (req, res) => {
   }
 });
 
-// Logout
+// Logout — clear HttpOnly cookies
 authRouter.post("/logout", authenticate, async (_req: AuthRequest, res) => {
+  clearAuthCookies(res);
   res.json({ success: true });
 });
 

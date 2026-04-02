@@ -1,6 +1,8 @@
 import "./lib/sentry"; // Must be first — initializes Sentry before other imports
 import { Sentry } from "./lib/sentry";
+import { createServer } from "http";
 import express from "express";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import dotenv from "dotenv";
 import { config } from "./lib/config";
@@ -21,6 +23,7 @@ import { formatErrorResponse } from "./lib/errors";
 import { prisma } from "./lib/prisma";
 import { getRedis } from "./lib/redis";
 import { initBot } from "./lib/telegram";
+import { initSocket } from "./lib/socket";
 
 dotenv.config();
 
@@ -46,6 +49,7 @@ app.use(
   })
 );
 app.use(express.json({ limit: "10mb" }));
+app.use(cookieParser());
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(rateLimit(100, 60 * 1000)); // Global: 100 req/min per IP
@@ -114,7 +118,10 @@ app.use((err: Error, req: express.Request, res: express.Response, _next: express
   res.status(statusCode).json(body);
 });
 
-app.listen(PORT, () => {
+const server = createServer(app);
+initSocket(server, allowedOrigins);
+
+server.listen(PORT, () => {
   logger.info({ port: PORT }, `Atlas API running on port ${PORT}`);
 });
 
