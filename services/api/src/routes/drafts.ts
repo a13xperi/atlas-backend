@@ -27,6 +27,19 @@ const engagementSchema = z.object({
   impressions: z.number().int().min(0),
 });
 
+const createDraftSchema = z.object({
+  content: z.string().min(1),
+  sourceType: z.enum(["REPORT", "ARTICLE", "TWEET", "TRENDING_TOPIC", "VOICE_NOTE", "MANUAL"]).optional(),
+  sourceContent: z.string().optional(),
+  blendId: z.string().optional(),
+});
+
+const updateDraftSchema = z.object({
+  content: z.string().optional(),
+  status: z.enum(["DRAFT", "APPROVED", "POSTED", "ARCHIVED"]).optional(),
+  feedback: z.string().optional(),
+});
+
 // Generate a tweet from source content using AI
 draftsRouter.post("/generate", async (req: AuthRequest, res) => {
   try {
@@ -223,8 +236,8 @@ draftsRouter.get("/:id", async (req: AuthRequest, res) => {
 // Create draft (manual or from content source)
 draftsRouter.post("/", async (req: AuthRequest, res) => {
   try {
-    const { content, sourceType, sourceContent, blendId } = req.body;
-    if (!content) return res.status(400).json(buildErrorResponse(req, "Content is required"));
+    const body = createDraftSchema.parse(req.body);
+    const { content, sourceType, sourceContent, blendId } = body;
 
     const draft = await prisma.tweetDraft.create({
       data: {
@@ -249,7 +262,7 @@ draftsRouter.post("/", async (req: AuthRequest, res) => {
 // Update draft (edit content, submit feedback, change status)
 draftsRouter.patch("/:id", async (req: AuthRequest, res) => {
   try {
-    const { content, status, feedback } = req.body;
+    const { content, status, feedback } = updateDraftSchema.parse(req.body);
 
     const existing = await prisma.tweetDraft.findFirst({
       where: { id: req.params.id as string, userId: req.userId },
