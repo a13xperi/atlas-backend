@@ -124,12 +124,10 @@ describe("telegram", () => {
   const getBotInstance = () => telegrafInstances[0];
 
   beforeEach(() => {
-    jest.restoreAllMocks();
-    jest.spyOn(process, "once").mockImplementation(((..._args: unknown[]) => process) as typeof process.once);
-  });
-
-  afterEach(() => {
     jest.clearAllMocks();
+    jest.spyOn(process, "once").mockImplementation(
+      ((..._args: unknown[]) => process) as typeof process.once,
+    );
   });
 
   it("returns null and warns when TELEGRAM_BOT_TOKEN is not set", () => {

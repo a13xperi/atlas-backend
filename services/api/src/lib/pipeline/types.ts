@@ -1,0 +1,55 @@
+/**
+ * Pipeline types — inspired by claw-code's tools crate.
+ * Each generation step is a composable unit with typed I/O,
+ * optional/required semantics, and parallel grouping.
+ */
+
+export interface VoiceDimensions {
+  humor: number;
+  formality: number;
+  brevity: number;
+  contrarianTone: number;
+  maturity?: string;
+}
+
+export interface PipelineContext {
+  // --- Input (set before pipeline runs) ---
+  userId: string;
+  sourceContent: string;
+  sourceType: string;
+  blendId?: string;
+  feedback?: string;
+
+  // --- Accumulated by steps ---
+  voiceProfile?: VoiceDimensions;
+  blendVoices?: { label: string; percentage: number }[];
+  researchContext?: string;
+  generatedContent?: string;
+  confidence?: number;
+  predictedEngagement?: number;
+
+  // --- Observability ---
+  stepResults: StepResult[];
+}
+
+export interface StepResult {
+  name: string;
+  status: "success" | "failed" | "skipped";
+  latencyMs: number;
+  error?: string;
+}
+
+export interface PipelineStep {
+  name: string;
+  /** Steps with the same group run in parallel */
+  group?: string;
+  /** If true, step failure doesn't abort the pipeline */
+  optional?: boolean;
+  execute(ctx: PipelineContext): Promise<void>;
+}
+
+export interface PipelineResult {
+  ctx: PipelineContext;
+  steps: StepResult[];
+  totalMs: number;
+}
