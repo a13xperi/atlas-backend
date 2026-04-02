@@ -27,6 +27,7 @@ jest.mock("../../lib/prisma", () => ({
   prisma: {
     user: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -150,7 +151,7 @@ describe("POST /api/auth/login", () => {
       },
       error: null,
     });
-    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(mockUser);
+    (mockPrisma.user.findFirst as jest.Mock).mockResolvedValueOnce(mockUser);
 
     const res = await request(app)
       .post("/api/auth/login")

@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { config } from "./config";
+import { withRetry } from "./retry";
 
 let client: GoogleGenerativeAI | null = null;
 
@@ -46,12 +47,16 @@ export async function generateImage(params: ImageGenParams): Promise<ImageGenRes
   // Use Gemini's image generation model
   const model = client.getGenerativeModel({ model: config.GEMINI_MODEL });
 
-  const result = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: `Generate an image: ${fullPrompt}. Aspect ratio: ${aspectRatio}.` }] }],
-    generationConfig: {
-      maxOutputTokens: 1000,
-    },
-  });
+  const result = await withRetry(
+    () =>
+      model.generateContent({
+        contents: [{ role: "user", parts: [{ text: `Generate an image: ${fullPrompt}. Aspect ratio: ${aspectRatio}.` }] }],
+        generationConfig: {
+          maxOutputTokens: 1000,
+        },
+      }),
+    "gemini:generateImage",
+  );
 
   const response = result.response;
   const text = response.text();
@@ -81,11 +86,13 @@ export async function generateVisualConcept(tweetContent: string, style: ImageSt
   const client = getGeminiClient();
   const model = client.getGenerativeModel({ model: config.GEMINI_MODEL });
 
-  const result = await model.generateContent({
-    contents: [{
-      role: "user",
-      parts: [{
-        text: `You are a visual design AI for crypto Twitter content. Given this tweet, create a visual concept.
+  const result = await withRetry(
+    () =>
+      model.generateContent({
+        contents: [{
+          role: "user",
+          parts: [{
+            text: `You are a visual design AI for crypto Twitter content. Given this tweet, create a visual concept.
 
 Tweet: "${tweetContent}"
 
@@ -103,7 +110,9 @@ Use the Atlas brand palette: primary #4ecdc4 (teal), bg #1a1a2e, surface #2d3748
     generationConfig: {
       maxOutputTokens: 500,
     },
-  });
+  }),
+    "gemini:generateVisualConcept",
+  );
 
   const text = result.response.text();
   const jsonStr = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
