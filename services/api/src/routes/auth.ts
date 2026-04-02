@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 import { supabaseAdmin } from "../lib/supabase";
 import { config } from "../lib/config";
+import { logger } from "../lib/logger";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
 import { rateLimit } from "../middleware/rateLimit";
@@ -84,7 +85,7 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
           refreshToken = session.session.refresh_token;
         }
       } else {
-        console.warn("Supabase createUser failed, using legacy auth:", createError?.message);
+        logger.warn({ err: createError?.message }, "Supabase createUser failed, using legacy auth");
       }
     }
 
@@ -126,7 +127,7 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Register error:", err.message);
+    logger.error({ err: err.message }, "Register error");
     res.status(500).json(buildErrorResponse(req, "Registration failed"));
   }
 });
@@ -194,7 +195,7 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Login error:", err.message);
+    logger.error({ err: err.message }, "Login error:", err.message);
     res.status(500).json(buildErrorResponse(req, "Login failed", {}));
   }
 });
@@ -264,7 +265,7 @@ authRouter.post("/link-account", async (req, res) => {
     });
 
     if (authError) {
-      console.error("Supabase createUser error:", authError.message);
+      logger.error({ err: authError.message }, "Supabase createUser error:", authError.message);
       return res.status(500).json(buildErrorResponse(req, "Failed to create auth account", { message: authError.message }));
     }
 
@@ -278,7 +279,7 @@ authRouter.post("/link-account", async (req, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Link account error:", err.message);
+    logger.error({ err: err.message }, "Link account error:", err.message);
     res.status(500).json(buildErrorResponse(req, "Account linking failed", {}));
   }
 });
@@ -302,7 +303,7 @@ authRouter.get("/me", authenticate, async (req: AuthRequest, res) => {
       user: { id: user.id, handle: user.handle, role: user.role, voiceProfile: user.voiceProfile },
     });
   } catch (err: any) {
-    console.error("Me error:", err.message);
+    logger.error({ err: err.message }, "Me error:", err.message);
     res.status(500).json(buildErrorResponse(req, "Failed to get user", {}));
   }
 });

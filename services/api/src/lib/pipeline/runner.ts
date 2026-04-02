@@ -4,6 +4,7 @@
  */
 
 import type { PipelineStep, PipelineContext, StepResult, PipelineResult } from "./types";
+import { logger } from "../logger";
 
 async function executeStep(step: PipelineStep, ctx: PipelineContext): Promise<StepResult> {
   const start = Date.now();
@@ -17,7 +18,7 @@ async function executeStep(step: PipelineStep, ctx: PipelineContext): Promise<St
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     if (step.optional) {
-      console.warn(`[pipeline] Optional step "${step.name}" failed: ${error}`);
+      logger.warn({ step: step.name, error }, `Optional pipeline step failed`);
       return {
         name: step.name,
         status: "skipped",
