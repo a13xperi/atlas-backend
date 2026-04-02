@@ -30,7 +30,7 @@ alertsRouter.get("/subscriptions", async (req: AuthRequest, res) => {
   } catch (err: any) {
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load subscriptions", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load subscriptions"));
   }
 });
 
@@ -64,7 +64,7 @@ alertsRouter.post("/subscriptions", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to save subscription", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to save subscription"));
   }
 });
 
@@ -95,7 +95,7 @@ alertsRouter.patch("/subscriptions/:id", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to update subscription", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to update subscription"));
   }
 });
 
@@ -112,7 +112,7 @@ alertsRouter.delete("/subscriptions/:id", async (req: AuthRequest, res) => {
   } catch (err: any) {
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to delete subscription", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to delete subscription"));
   }
 });
 
@@ -135,7 +135,7 @@ alertsRouter.get("/feed", async (req: AuthRequest, res) => {
 
     res.json({ alerts });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load alert feed", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to load alert feed"));
   }
 });
 
@@ -147,7 +147,7 @@ alertsRouter.get("/:id", async (req: AuthRequest, res) => {
     if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
     res.json({ alert });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to get alert", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to get alert"));
   }
 });
 
@@ -164,7 +164,7 @@ alertsRouter.patch("/:id", async (req: AuthRequest, res) => {
     });
     res.json({ alert: updated });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to update alert", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to update alert"));
   }
 });
 
@@ -178,6 +178,6 @@ alertsRouter.delete("/:id", async (req: AuthRequest, res) => {
     await prisma.alert.delete({ where: { id: alertId } });
     res.json({ success: true });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to delete alert", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to delete alert"));
   }
 });

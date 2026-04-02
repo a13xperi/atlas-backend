@@ -51,7 +51,7 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json(buildErrorResponse(req, "Failed to load summary", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to load summary"));
   }
 });
 
@@ -76,7 +76,7 @@ analyticsRouter.post("/learning-log", async (req: AuthRequest, res) => {
   } catch (err: any) {
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to create learning log entry", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to create learning log entry"));
   }
 });
 
@@ -99,7 +99,7 @@ analyticsRouter.get("/learning-log", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load learning log", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load learning log"));
   }
 });
 
@@ -128,7 +128,7 @@ analyticsRouter.get("/engagement", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load engagement history", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load engagement history"));
   }
 });
 
@@ -195,7 +195,7 @@ analyticsRouter.get("/engagement-daily", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load daily engagement", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load daily engagement"));
   }
 });
 
@@ -248,7 +248,7 @@ analyticsRouter.get("/activity-daily", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load daily activity", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load daily activity"));
   }
 });
 
@@ -314,7 +314,7 @@ analyticsRouter.get("/team-engagement-daily", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load team engagement daily", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load team engagement daily"));
   }
 });
 
@@ -380,7 +380,7 @@ analyticsRouter.get("/days-to-peak", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load days-to-peak", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load days-to-peak"));
   }
 });
 
@@ -419,6 +419,6 @@ analyticsRouter.get("/team", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load team analytics", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load team analytics"));
   }
 });

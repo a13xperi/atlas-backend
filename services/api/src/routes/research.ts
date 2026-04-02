@@ -46,7 +46,7 @@ researchRouter.post("/", async (req: AuthRequest, res) => {
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Research failed:", err.message);
-    res.status(502).json(buildErrorResponse(req, "Research failed", { message: err.message }));
+    res.status(502).json(buildErrorResponse(req, "Research failed"));
   }
 });
 
@@ -62,6 +62,6 @@ researchRouter.get("/history", async (req: AuthRequest, res) => {
   } catch (err: any) {
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load research history", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load research history"));
   }
 });

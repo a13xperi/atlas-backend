@@ -25,7 +25,7 @@ usersRouter.get("/profile", async (req: AuthRequest, res) => {
     const { passwordHash, ...safe } = user;
     res.json({ user: safe });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load profile", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to load profile"));
   }
 });
 
@@ -50,7 +50,7 @@ usersRouter.patch("/profile", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json(buildErrorResponse(req, "Failed to update profile", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to update profile"));
   }
 });
 
@@ -76,7 +76,7 @@ usersRouter.get("/team", async (req: AuthRequest, res) => {
       team: team.map(({ passwordHash, ...u }) => u),
     });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load team", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to load team"));
   }
 });
 
@@ -163,7 +163,7 @@ usersRouter.post("/push-top-profiles", async (req: AuthRequest, res) => {
 
     res.json({ message: `Pushed top-5 profile blend to ${inactiveIds.length} inactive analyst(s)`, affected: inactiveIds.length });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to push top profiles", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to push top profiles"));
   }
 });
 
@@ -190,7 +190,7 @@ usersRouter.post("/send-nudge", async (req: AuthRequest, res) => {
 
     res.json({ message: `Sent nudge to ${inactive.length} inactive analyst(s)`, affected: inactive.length });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to send nudge", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to send nudge"));
   }
 });
 
@@ -248,6 +248,6 @@ usersRouter.post("/push-style", async (req: AuthRequest, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json(buildErrorResponse(req, "Failed to push style", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to push style"));
   }
 });

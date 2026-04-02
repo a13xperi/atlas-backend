@@ -111,7 +111,7 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Generate failed:", err.message);
-    res.status(502).json(buildErrorResponse(req, "AI generation failed", { message: err.message }));
+    res.status(502).json(buildErrorResponse(req, "AI generation failed"));
   }
 });
 
@@ -202,7 +202,7 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Regenerate failed:", err.message);
-    res.status(502).json(buildErrorResponse(req, "AI generation failed", { message: err.message }));
+    res.status(502).json(buildErrorResponse(req, "AI generation failed"));
   }
 });
 
@@ -225,7 +225,7 @@ draftsRouter.get("/", async (req: AuthRequest, res) => {
 
     res.json({ drafts });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load drafts", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to load drafts"));
   }
 });
 
@@ -278,7 +278,7 @@ draftsRouter.get("/:id", async (req: AuthRequest, res) => {
     if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
     res.json({ draft });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to get draft", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to get draft"));
   }
 });
 
@@ -304,7 +304,7 @@ draftsRouter.post("/", async (req: AuthRequest, res) => {
 
     res.json({ draft });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to create draft", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to create draft"));
   }
 });
 
@@ -341,7 +341,7 @@ draftsRouter.patch("/:id", async (req: AuthRequest, res) => {
 
     res.json({ draft });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to update draft", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to update draft"));
   }
 });
 
@@ -356,7 +356,7 @@ draftsRouter.delete("/:id", async (req: AuthRequest, res) => {
     await prisma.tweetDraft.delete({ where: { id: req.params.id as string } });
     res.json({ success: true });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to delete draft", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to delete draft"));
   }
 });
 
@@ -411,6 +411,6 @@ draftsRouter.post("/:id/engagement", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to record engagement", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to record engagement"));
   }
 });

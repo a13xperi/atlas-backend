@@ -50,6 +50,10 @@ describe("config", () => {
     process.env.JWT_SECRET = "test-secret";
     process.env.DATABASE_URL = "postgresql://localhost:5432/test";
     process.env.NODE_ENV = "test";
+    delete process.env.GOOGLE_AI_API_KEY;
+    delete process.env.XAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
 
     const { config } = require("../../lib/config");
 

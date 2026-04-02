@@ -27,6 +27,7 @@ jest.mock("jsonwebtoken", () => ({
 
 import { authRouter } from "../routes/auth";
 import { prisma } from "../lib/prisma";
+import { clearRateLimitStore } from "../middleware/rateLimit";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 
@@ -45,6 +46,7 @@ const mockUser = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  clearRateLimitStore();
   process.env.JWT_SECRET = "test-secret";
 });
 

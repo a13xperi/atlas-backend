@@ -16,6 +16,8 @@ import { imagesRouter } from "./routes/images";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
 import { formatErrorResponse } from "./lib/errors";
+import { prisma } from "./lib/prisma";
+import { getRedis } from "./lib/redis";
 import { initBot } from "./lib/telegram";
 
 dotenv.config();
@@ -46,8 +48,38 @@ app.use(requestIdMiddleware);
 app.use(rateLimit(100, 60 * 1000)); // Global: 100 req/min per IP
 
 // Health check
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "atlas-api", timestamp: new Date().toISOString() });
+app.get("/health", async (_req, res) => {
+  const checks: Record<string, string> = {};
+
+  // Database check
+  try {
+    await prisma.$queryRaw\`SELECT 1\`;
+    checks.db = "ok";
+  } catch {
+    checks.db = "error";
+  }
+
+  // Redis check
+  try {
+    const redis = getRedis();
+    if (redis) {
+      await redis.ping();
+      checks.redis = "ok";
+    } else {
+      checks.redis = "not_configured";
+    }
+  } catch {
+    checks.redis = "error";
+  }
+
+  const allOk = Object.values(checks).every((v) => v === "ok" || v === "not_configured");
+  res.status(allOk ? 200 : 503).json({
+    status: allOk ? "ok" : "degraded",
+    service: "atlas-api",
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    checks,
+  });
 });
 
 // Routes
@@ -60,6 +92,11 @@ app.use("/api/alerts", alertsRouter);
 app.use("/api/research", researchRouter);
 app.use("/api/trending", trendingRouter);
 app.use("/api/images", imagesRouter);
+
+// 404 handler — catch unknown routes before error handlers
+app.use((req, res) => {
+  res.status(404).json(buildErrorResponse(req, `Cannot ${req.method} ${req.path}`));
+});
 
 // Sentry error handler — must be before any other error middleware
 Sentry.setupExpressErrorHandler(app);
