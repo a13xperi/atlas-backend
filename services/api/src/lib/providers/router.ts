@@ -11,6 +11,7 @@ import { anthropicProvider } from "./anthropic";
 import { openaiProvider } from "./openai";
 import { geminiProvider } from "./gemini";
 import { grokProvider } from "./grok";
+import { logger } from "../logger";
 
 const providers: Record<ProviderId, Provider> = {
   anthropic: anthropicProvider,
@@ -65,8 +66,9 @@ export async function routeCompletion(request: CompletionRequest): Promise<Compl
       return await provider.complete(request);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(
-        `[providers] ${provider.config.id} failed for ${taskType}: ${lastError.message}. Trying next...`
+      logger.warn(
+        { provider: provider.config.id, taskType, error: lastError.message },
+        `Provider failed, trying next`
       );
     }
   }
