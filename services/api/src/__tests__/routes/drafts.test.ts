@@ -183,7 +183,7 @@ describe("POST /api/drafts", () => {
       .send({});
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Content is required");
+    expect(res.body.error).toBe("Invalid request");
   });
 
   it("creates draft and logs analytics event", async () => {
