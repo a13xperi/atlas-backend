@@ -125,3 +125,119 @@ describe("GET /api/analytics/team", () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe("GET /api/analytics/days-to-peak", () => {
+  it("returns 401 without token", async () => {
+    const res = await request(app).get("/api/analytics/days-to-peak");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 403 for ANALYST role", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ id: "user-123", role: "ANALYST" });
+    const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Manager access required");
+  });
+
+  it("returns 403 when user not found", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
+    expect(res.status).toBe(403);
+  });
+
+  it("returns peaks for analysts with drafts", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ id: "user-123", role: "MANAGER" });
+    (mockPrisma.user.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: "a-1",
+        displayName: "Alice",
+        handle: "alice",
+        tweetDrafts: [
+          { createdAt: new Date("2026-01-01"), actualEngagement: 10 },
+          { createdAt: new Date("2026-01-15"), actualEngagement: 50 },
+          { createdAt: new Date("2026-01-20"), actualEngagement: 30 },
+        ],
+      },
+    ]);
+
+    const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.peaks).toHaveLength(1);
+    expect(res.body.peaks[0]).toEqual({
+      name: "Alice",
+      days: 14,
+      hasDrafts: true,
+    });
+  });
+
+  it("returns days=0, hasDrafts=false for analysts with no drafts", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ id: "user-123", role: "MANAGER" });
+    (mockPrisma.user.findMany as jest.Mock).mockResolvedValueOnce([
+      { id: "a-1", displayName: null, handle: "bob", tweetDrafts: [] },
+    ]);
+
+    const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.peaks[0]).toEqual({
+      name: "bob",
+      days: 0,
+      hasDrafts: false,
+    });
+  });
+
+  it("returns empty array when no analysts exist", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ id: "user-123", role: "MANAGER" });
+    (mockPrisma.user.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.peaks).toEqual([]);
+  });
+
+  it("sorts results by days ascending", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ id: "user-123", role: "MANAGER" });
+    (mockPrisma.user.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: "a-1",
+        displayName: "Slow Starter",
+        handle: "slow",
+        tweetDrafts: [
+          { createdAt: new Date("2026-01-01"), actualEngagement: 5 },
+          { createdAt: new Date("2026-02-01"), actualEngagement: 80 },
+        ],
+      },
+      {
+        id: "a-2",
+        displayName: "Fast Learner",
+        handle: "fast",
+        tweetDrafts: [
+          { createdAt: new Date("2026-01-01"), actualEngagement: 10 },
+          { createdAt: new Date("2026-01-05"), actualEngagement: 90 },
+        ],
+      },
+      {
+        id: "a-3",
+        displayName: null,
+        handle: "none",
+        tweetDrafts: [],
+      },
+    ]);
+
+    const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.peaks).toHaveLength(3);
+    expect(res.body.peaks[0].name).toBe("none");     // 0 days (no drafts)
+    expect(res.body.peaks[1].name).toBe("Fast Learner"); // 4 days
+    expect(res.body.peaks[2].name).toBe("Slow Starter"); // 31 days
+  });
+
+  it("uses handle as fallback when displayName is null", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ id: "user-123", role: "MANAGER" });
+    (mockPrisma.user.findMany as jest.Mock).mockResolvedValueOnce([
+      { id: "a-1", displayName: null, handle: "fallback_handle", tweetDrafts: [] },
+    ]);
+
+    const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
+    expect(res.body.peaks[0].name).toBe("fallback_handle");
+  });
+});

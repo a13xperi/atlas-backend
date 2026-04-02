@@ -371,6 +371,7 @@ analyticsRouter.get("/days-to-peak", async (req: AuthRequest, res) => {
       return { name, days, hasDrafts: true };
     });
 
+    peaks.sort((a, b) => a.days - b.days);
     res.json({ peaks });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
