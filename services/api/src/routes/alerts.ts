@@ -122,6 +122,7 @@ alertsRouter.get("/feed", async (req: AuthRequest, res) => {
     const { limit = "20", offset = "0" } = req.query;
 
     const alerts = await prisma.alert.findMany({
+      where: { userId: req.userId },
       orderBy: { createdAt: "desc" },
       take: parseInt(limit as string),
       skip: parseInt(offset as string),
