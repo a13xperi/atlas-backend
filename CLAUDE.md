@@ -1,3 +1,18 @@
+## MULTI-AGENT BUILD PROTOCOL
+This project uses multiple AI coding tools in parallel.
+READ ATLAS-BUILD-CONTEXT.md for full project context and architecture.
+READ TASK-STATUS.md for current task assignments and status.
+
+## YOUR ROLE: Backend Lane (Claude Code)
+You ONLY modify: services/api/src/*, prisma/*, package.json, tsconfig.json
+DO NOT touch: frontend repo (atlas-portal), test files (Cursor lane)
+
+## AFTER EVERY COMMIT
+1. Update TASK-STATUS.md with your task status
+2. git add -A && git commit -m "[claude-code] type: description" && git push
+
+---
+
 # CLAUDE.md — Atlas Backend API
 
 ## Project
