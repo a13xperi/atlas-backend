@@ -5,6 +5,7 @@
 
 import type { PipelineStep, PipelineContext, StepResult, PipelineResult } from "./types";
 import { logger } from "../logger";
+import { withTimeout } from "../timeout";
 
 async function executeStep(step: PipelineStep, ctx: PipelineContext): Promise<StepResult> {
   const start = Date.now();
