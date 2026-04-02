@@ -12,6 +12,8 @@
     "db:migrate": "npx prisma migrate dev",
     "db:studio": "npx prisma studio",
     "db:seed": "npx prisma db seed",
+    "db:backup": "./scripts/backup-db.sh",
+    "db:backup:r2": "npx tsx scripts/backup-to-r2.ts",
     "smoke": "npx tsx services/api/src/scripts/smoke-test.ts",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -19,6 +21,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
+    "@aws-sdk/client-s3": "^3.1023.0",
     "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^6.5.0",
     "@sentry/node": "^10.47.0",
