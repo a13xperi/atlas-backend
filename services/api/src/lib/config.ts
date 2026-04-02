@@ -33,9 +33,7 @@ const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
 
   // Monitoring
-  SENTRY_DSN: z.string().default(
-    "https://6be1301a05c1c96a9de8ef96b5552c76@o4511146712825856.ingest.us.sentry.io/4511146753523712"
-  ),
+  SENTRY_DSN: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;
