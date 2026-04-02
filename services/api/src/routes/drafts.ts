@@ -157,6 +157,63 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
   }
 });
 
+// Refine a draft with a natural-language instruction
+const refineSchema = z.object({
+  instruction: z.string().min(1).max(2000),
+});
+
+draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
+  try {
+    const body = refineSchema.parse(req.body);
+
+    const existing = await prisma.tweetDraft.findFirst({
+      where: { id: req.params.id as string, userId: req.userId },
+    });
+    if (!existing) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+
+    // Run generation pipeline with the instruction as feedback
+    const result = await runGenerationPipeline({
+      userId: req.userId!,
+      sourceContent: existing.sourceContent || existing.content,
+      sourceType: existing.sourceType || "MANUAL",
+      blendId: existing.blendId || undefined,
+      feedback: body.instruction,
+    });
+
+    // Update the draft in-place with refined content
+    const draft = await prisma.tweetDraft.update({
+      where: { id: existing.id },
+      data: {
+        content: result.ctx.generatedContent!,
+        confidence: result.ctx.confidence,
+        predictedEngagement: result.ctx.predictedEngagement,
+        version: existing.version + 1,
+        feedback: body.instruction,
+      },
+    });
+
+    // Log analytics
+    await prisma.analyticsEvent.create({
+      data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
+    });
+
+    res.json({ draft });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    if (err.message?.includes("Voice profile not found")) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, err.message));
+    }
+    logger.error({ err: err.message }, "Refine failed");
+    res.status(502).json(buildErrorResponse(req, "AI refinement failed"));
+  }
+});
+
 // --- Standard CRUD Endpoints ---
 
 // List drafts
@@ -255,6 +312,9 @@ draftsRouter.post("/", async (req: AuthRequest, res) => {
 
     res.json({ draft });
   } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
     res.status(500).json(buildErrorResponse(req, "Failed to create draft"));
   }
 });
