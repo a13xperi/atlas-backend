@@ -40,7 +40,11 @@ app.use(
           ? new RegExp("^" + ao.replace(/\*/g, ".*") + "$").test(origin)
           : ao === origin
       );
-      callback(null, allowed || undefined);
+      if (allowed) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origin ${origin} not allowed by CORS`));
+      }
     },
     credentials: true,
   })
