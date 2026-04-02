@@ -119,6 +119,8 @@ app.use((err: Error, req: express.Request, res: express.Response, _next: express
 });
 
 const server = createServer(app);
+server.timeout = 120_000; // 2 min — AI generation routes need more than Railway's 30s default
+server.keepAliveTimeout = 65_000;
 initSocket(server, allowedOrigins);
 
 server.listen(PORT, () => {
