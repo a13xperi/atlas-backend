@@ -1,3 +1,5 @@
+// Logger mock is set up per-test via jest.doMock inside loadTelegramModule
+
 type PrismaMock = {
   user: {
     findUnique: jest.Mock;
@@ -70,6 +72,15 @@ describe("telegram", () => {
     telegrafInstances = [];
     launchImplementation = jest.fn().mockResolvedValue(undefined);
 
+    jest.doMock("../../lib/logger", () => ({
+      logger: {
+        info: jest.fn(),
+        error: jest.fn(),
+        warn: jest.fn(),
+        debug: jest.fn(),
+      },
+    }));
+
     jest.doMock("../../lib/config", () => ({
       config: {
         TELEGRAM_BOT_TOKEN: token,
@@ -131,8 +142,9 @@ describe("telegram", () => {
   });
 
   it("returns null and warns when TELEGRAM_BOT_TOKEN is not set", () => {
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
     const { initBot, getBot } = loadTelegramModule("");
+    const { logger: freshLogger } = require("../../lib/logger");
+    const warnSpy = freshLogger.warn as jest.Mock;
 
     expect(initBot()).toBeNull();
     expect(getBot()).toBeNull();
@@ -143,9 +155,10 @@ describe("telegram", () => {
   });
 
   it("initializes the bot, registers handlers, and starts polling", async () => {
-    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
     const onceSpy = jest.spyOn(process, "once");
     const { initBot, getBot } = loadTelegramModule();
+    const { logger: freshLogger } = require("../../lib/logger");
+    const logSpy = freshLogger.info as jest.Mock;
 
     const bot = initBot();
     await flushPromises();
@@ -170,7 +183,6 @@ describe("telegram", () => {
 
   it("stops the bot on shutdown signals", async () => {
     const signalHandlers: Record<string, () => void> = {};
-    jest.spyOn(console, "log").mockImplementation(() => {});
     jest.spyOn(process, "once").mockImplementation(((signal: string, handler: () => void) => {
       signalHandlers[signal] = handler;
       return process;
@@ -188,18 +200,18 @@ describe("telegram", () => {
   });
 
   it("logs bot launch failures", async () => {
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     const { initBot } = loadTelegramModule();
+    const { logger: freshLogger } = require("../../lib/logger");
+    const errorSpy = freshLogger.error as jest.Mock;
     launchImplementation.mockRejectedValueOnce(new Error("launch failed"));
 
     initBot();
     await flushPromises();
 
-    expect(errorSpy).toHaveBeenCalledWith("[telegram] Bot launch failed:", "launch failed");
+    expect(errorSpy).toHaveBeenCalledWith({ err: "launch failed" }, "[telegram] Bot launch failed");
   });
 
   it("replies to /start and /help commands", async () => {
-    jest.spyOn(console, "log").mockImplementation(() => {});
     const { initBot } = loadTelegramModule();
     initBot();
     await flushPromises();
@@ -227,9 +239,9 @@ describe("telegram", () => {
   });
 
   it("handles /link usage errors, missing users, conflicts, success, and recovery", async () => {
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-    jest.spyOn(console, "log").mockImplementation(() => {});
     const { initBot } = loadTelegramModule();
+    const { logger: freshLogger } = require("../../lib/logger");
+    const errorSpy = freshLogger.error as jest.Mock;
     initBot();
     await flushPromises();
 
@@ -272,14 +284,14 @@ describe("telegram", () => {
     prismaMock.user.findUnique.mockRejectedValueOnce(new Error("db down"));
     const failureCtx = createContext("/link atlas");
     await getBotInstance().commandHandlers.link(failureCtx);
-    expect(errorSpy).toHaveBeenCalledWith("[telegram] Link error:", expect.any(Error));
+    expect(errorSpy).toHaveBeenCalledWith({ err: expect.any(Error) }, "[telegram] Link error");
     expect(failureCtx.reply).toHaveBeenCalledWith("Something went wrong. Please try again.");
   });
 
   it("handles /unlink cases", async () => {
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-    jest.spyOn(console, "log").mockImplementation(() => {});
     const { initBot } = loadTelegramModule();
+    const { logger: freshLogger } = require("../../lib/logger");
+    const errorSpy = freshLogger.error as jest.Mock;
     initBot();
     await flushPromises();
 
@@ -305,14 +317,14 @@ describe("telegram", () => {
     prismaMock.user.findFirst.mockRejectedValueOnce(new Error("db down"));
     const failureCtx = createContext("/unlink", 555);
     await getBotInstance().commandHandlers.unlink(failureCtx);
-    expect(errorSpy).toHaveBeenCalledWith("[telegram] Unlink error:", expect.any(Error));
+    expect(errorSpy).toHaveBeenCalledWith({ err: expect.any(Error) }, "[telegram] Unlink error");
     expect(failureCtx.reply).toHaveBeenCalledWith("Something went wrong. Please try again.");
   });
 
   it("handles /alerts cases and formats recent alerts", async () => {
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-    jest.spyOn(console, "log").mockImplementation(() => {});
     const { initBot } = loadTelegramModule();
+    const { logger: freshLogger } = require("../../lib/logger");
+    const errorSpy = freshLogger.error as jest.Mock;
     initBot();
     await flushPromises();
 
@@ -363,14 +375,14 @@ describe("telegram", () => {
     prismaMock.user.findFirst.mockRejectedValueOnce(new Error("db down"));
     const failureCtx = createContext("/alerts", 999);
     await getBotInstance().commandHandlers.alerts(failureCtx);
-    expect(errorSpy).toHaveBeenCalledWith("[telegram] Alerts error:", expect.any(Error));
+    expect(errorSpy).toHaveBeenCalledWith({ err: expect.any(Error) }, "[telegram] Alerts error");
     expect(failureCtx.reply).toHaveBeenCalledWith("Failed to fetch alerts.");
   });
 
   it("handles /subscriptions cases and formats active subscriptions", async () => {
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-    jest.spyOn(console, "log").mockImplementation(() => {});
     const { initBot } = loadTelegramModule();
+    const { logger: freshLogger } = require("../../lib/logger");
+    const errorSpy = freshLogger.error as jest.Mock;
     initBot();
     await flushPromises();
 
@@ -403,12 +415,11 @@ describe("telegram", () => {
     prismaMock.user.findFirst.mockRejectedValueOnce(new Error("db down"));
     const failureCtx = createContext("/subscriptions", 222);
     await getBotInstance().commandHandlers.subscriptions(failureCtx);
-    expect(errorSpy).toHaveBeenCalledWith("[telegram] Subscriptions error:", expect.any(Error));
+    expect(errorSpy).toHaveBeenCalledWith({ err: expect.any(Error) }, "[telegram] Subscriptions error");
     expect(failureCtx.reply).toHaveBeenCalledWith("Failed to fetch subscriptions.");
   });
 
   it("sends alert messages with formatting and truncation", async () => {
-    jest.spyOn(console, "log").mockImplementation(() => {});
     const { initBot, deliverAlert } = loadTelegramModule();
     initBot();
     await flushPromises();
@@ -434,9 +445,9 @@ describe("telegram", () => {
   });
 
   it("returns false when delivery cannot be sent", async () => {
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-    jest.spyOn(console, "log").mockImplementation(() => {});
     const { deliverAlert, initBot } = loadTelegramModule();
+    const { logger: freshLogger } = require("../../lib/logger");
+    const errorSpy = freshLogger.error as jest.Mock;
 
     expect(
       await deliverAlert(
@@ -461,15 +472,15 @@ describe("telegram", () => {
       )
     ).resolves.toBe(false);
     expect(errorSpy).toHaveBeenCalledWith(
-      "[telegram] Failed to deliver alert to chat chat-123:",
-      expect.any(Error)
+      { err: expect.any(Error), chatId: "chat-123" },
+      "[telegram] Failed to deliver alert"
     );
   });
 
   it("looks up linked users before delivering alerts", async () => {
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-    jest.spyOn(console, "log").mockImplementation(() => {});
     const { initBot, deliverAlertToUser } = loadTelegramModule();
+    const { logger: freshLogger } = require("../../lib/logger");
+    const errorSpy = freshLogger.error as jest.Mock;
     initBot();
     await flushPromises();
 
@@ -514,8 +525,8 @@ describe("telegram", () => {
       )
     ).resolves.toBe(false);
     expect(errorSpy).toHaveBeenCalledWith(
-      "[telegram] Failed to look up user user-3:",
-      expect.any(Error)
+      { err: expect.any(Error), userId: "user-3" },
+      "[telegram] Failed to look up user"
     );
   });
 });
