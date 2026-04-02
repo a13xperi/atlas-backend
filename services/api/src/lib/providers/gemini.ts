@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { config as envConfig } from "../config";
+import { withRetry } from "../retry";
 import type { Provider, ProviderConfig, CompletionRequest, CompletionResponse } from "./types";
 
 let client: GoogleGenerativeAI | null = null;
@@ -44,13 +45,17 @@ export const geminiProvider: Provider = {
       });
     }
 
-    const result = await model.generateContent({
-      contents,
-      generationConfig: {
-        maxOutputTokens: request.maxTokens ?? 1024,
-        ...(request.temperature !== undefined && { temperature: request.temperature }),
-      },
-    });
+    const result = await withRetry(
+      () =>
+        model.generateContent({
+          contents,
+          generationConfig: {
+            maxOutputTokens: request.maxTokens ?? 1024,
+            ...(request.temperature !== undefined && { temperature: request.temperature }),
+          },
+        }),
+      "gemini-provider:complete",
+    );
 
     const content = result.response.text();
 
