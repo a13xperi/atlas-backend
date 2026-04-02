@@ -30,7 +30,7 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
         const supabaseId = data.user.id;
 
         // Look up Prisma user by supabaseId
-        let user = await prisma.user.findUnique({ where: { supabaseId } });
+        let user = await prisma.user.findFirst({ where: { supabaseId } });
 
         // Auto-link: if no user by supabaseId but email matches an existing user, link them
         if (!user && data.user.email) {

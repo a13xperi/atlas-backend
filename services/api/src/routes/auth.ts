@@ -134,7 +134,7 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
     }
 
     // Resolve Prisma user
-    let user = await prisma.user.findUnique({ where: { supabaseId: session.user.id } });
+    let user = await prisma.user.findFirst({ where: { supabaseId: session.user.id } });
 
     // Lazy migration: link by email if supabaseId not set
     if (!user) {

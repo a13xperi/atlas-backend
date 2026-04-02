@@ -9,7 +9,7 @@ datasource db {
 
 model User {
   id            String   @id @default(cuid())
-  supabaseId    String?  @unique
+  supabaseId    String?
   handle        String   @unique
   email         String?  @unique
   passwordHash  String?
