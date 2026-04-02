@@ -21,6 +21,7 @@ dotenv.config();
 
 import { PrismaClient } from "@prisma/client";
 import { createClient } from "@supabase/supabase-js";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
@@ -74,11 +75,13 @@ async function main() {
   }
 
   // --- Prisma User + Voice Profile ---
+  const passwordHash = await bcrypt.hash(ANIL_PASSWORD, 10);
   const user = await prisma.user.create({
     data: {
       handle: ANIL_HANDLE,
       email: ANIL_EMAIL,
       displayName: "Anil",
+      passwordHash,
       supabaseId,
       role: "MANAGER",
       onboardingTrack: "TRACK_A",
