@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { parsePagination } from "../lib/pagination";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
@@ -110,14 +111,19 @@ voiceRouter.patch("/profile", async (req: AuthRequest, res) => {
 // List reference voices
 voiceRouter.get("/references", async (req: AuthRequest, res) => {
   try {
+    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
+
     const voices = await prisma.referenceVoice.findMany({
       where: { userId: req.userId, isActive: true },
+      take,
+      skip,
     });
     res.json({ voices });
   } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to load reference voices");
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load reference voices"));
+      .json(buildErrorResponse(req, "Failed to load reference voices", { message: err.message }));
   }
 });
 
@@ -148,13 +154,18 @@ voiceRouter.post("/references", async (req: AuthRequest, res) => {
 // List saved blends
 voiceRouter.get("/blends", async (req: AuthRequest, res) => {
   try {
+    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
+
     const blends = await prisma.savedBlend.findMany({
       where: { userId: req.userId },
+      take,
+      skip,
       include: { voices: { include: { referenceVoice: true } } },
     });
     res.json({ blends });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load blends"));
+    logger.error({ err: err.message }, "Failed to load blends");
+    res.status(500).json(buildErrorResponse(req, "Failed to load blends", { message: err.message }));
   }
 });
 

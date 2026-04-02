@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { parsePagination } from "../lib/pagination";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { runGenerationPipeline } from "../lib/pipeline";
 import { buildErrorResponse } from "../middleware/requestId";
@@ -219,7 +220,8 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
 // List drafts
 draftsRouter.get("/", async (req: AuthRequest, res) => {
   try {
-    const { status, limit = "20", offset = "0" } = req.query;
+    const { status } = req.query;
+    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
 
     const drafts = await prisma.tweetDraft.findMany({
       where: {
@@ -227,54 +229,64 @@ draftsRouter.get("/", async (req: AuthRequest, res) => {
         ...(status && { status: status as any }),
       },
       orderBy: { createdAt: "desc" },
-      take: parseInt(limit as string),
-      skip: parseInt(offset as string),
+      take,
+      skip,
     });
 
     res.json({ drafts });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load drafts"));
+    logger.error({ err: err.message }, "Failed to load drafts");
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load drafts", { message: err.message }));
   }
 });
 
 // List team drafts (APPROVED + POSTED) — MANAGER/ADMIN only
 draftsRouter.get("/team", async (req: AuthRequest, res) => {
-  const { limit = "50", offset = "0" } = req.query;
+  try {
+    const { take, skip } = parsePagination(req.query, { limit: 50, offset: 0 });
 
-  const requestingUser = await prisma.user.findUnique({
-    where: { id: req.userId! },
-    select: { role: true },
-  });
-  if (!requestingUser || requestingUser.role === "ANALYST") {
-    return res.status(403).json({ error: "Manager or Admin role required" });
+    const requestingUser = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      select: { role: true },
+    });
+    if (!requestingUser || requestingUser.role === "ANALYST") {
+      return res.status(403).json({ error: "Manager or Admin role required" });
+    }
+
+    const drafts = await prisma.tweetDraft.findMany({
+      where: { status: { in: ["APPROVED", "POSTED"] } },
+      orderBy: { updatedAt: "desc" },
+      take,
+      skip,
+      include: {
+        user: { select: { handle: true, displayName: true, avatarUrl: true } },
+      },
+    });
+
+    // Resolve blend names in one query
+    const blendIds = [...new Set(drafts.map((d) => d.blendId).filter(Boolean))] as string[];
+    const blends = blendIds.length
+      ? await prisma.savedBlend.findMany({
+          where: { id: { in: blendIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const blendMap = Object.fromEntries(blends.map((b) => [b.id, b.name]));
+
+    const result = drafts.map((d) => ({
+      ...d,
+      blendName: d.blendId ? (blendMap[d.blendId] ?? null) : null,
+    }));
+
+    res.json({ drafts: result, total: result.length });
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to load team drafts");
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load team drafts", { message: err.message }));
   }
-
-  const drafts = await prisma.tweetDraft.findMany({
-    where: { status: { in: ["APPROVED", "POSTED"] } },
-    orderBy: { updatedAt: "desc" },
-    take: parseInt(limit as string),
-    skip: parseInt(offset as string),
-    include: {
-      user: { select: { handle: true, displayName: true, avatarUrl: true } },
-    },
-  });
-
-  // Resolve blend names in one query
-  const blendIds = [...new Set(drafts.map((d) => d.blendId).filter(Boolean))] as string[];
-  const blends = blendIds.length
-    ? await prisma.savedBlend.findMany({
-        where: { id: { in: blendIds } },
-        select: { id: true, name: true },
-      })
-    : [];
-  const blendMap = Object.fromEntries(blends.map((b) => [b.id, b.name]));
-
-  const result = drafts.map((d) => ({
-    ...d,
-    blendName: d.blendId ? (blendMap[d.blendId] ?? null) : null,
-  }));
-
-  res.json({ drafts: result, total: result.length });
 });
 
 // Get single draft
@@ -286,7 +298,10 @@ draftsRouter.get("/:id", async (req: AuthRequest, res) => {
     if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
     res.json({ draft });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to get draft"));
+    logger.error({ err: err.message }, "Failed to get draft");
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to get draft", { message: err.message }));
   }
 });
 
@@ -315,7 +330,10 @@ draftsRouter.post("/", async (req: AuthRequest, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json(buildErrorResponse(req, "Failed to create draft"));
+    logger.error({ err: err.message }, "Failed to create draft");
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to create draft", { message: err.message }));
   }
 });
 
@@ -352,7 +370,13 @@ draftsRouter.patch("/:id", async (req: AuthRequest, res) => {
 
     res.json({ draft });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to update draft"));
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    logger.error({ err: err.message }, "Failed to update draft");
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to update draft", { message: err.message }));
   }
 });
 
@@ -367,7 +391,10 @@ draftsRouter.delete("/:id", async (req: AuthRequest, res) => {
     await prisma.tweetDraft.delete({ where: { id: req.params.id as string } });
     res.json({ success: true });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to delete draft"));
+    logger.error({ err: err.message }, "Failed to delete draft");
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to delete draft", { message: err.message }));
   }
 });
 

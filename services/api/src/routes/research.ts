@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { parsePagination } from "../lib/pagination";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { conductResearch } from "../lib/research";
@@ -54,15 +55,19 @@ researchRouter.post("/", async (req: AuthRequest, res) => {
 // Get recent research results
 researchRouter.get("/history", async (req: AuthRequest, res) => {
   try {
+    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
+
     const results = await prisma.researchResult.findMany({
       where: { userId: req.userId },
       orderBy: { createdAt: "desc" },
-      take: 20,
+      take,
+      skip,
     });
     res.json({ results });
   } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to load research history");
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load research history"));
+      .json(buildErrorResponse(req, "Failed to load research history", { message: err.message }));
   }
 });

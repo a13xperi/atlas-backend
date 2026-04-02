@@ -32,6 +32,15 @@ jest.mock("jsonwebtoken", () => ({
   verify: jest.fn().mockReturnValue({ userId: "user-123" }),
 }));
 
+jest.mock("bcryptjs", () => ({
+  hash: jest.fn().mockResolvedValue("hashed_password"),
+  compare: jest.fn().mockResolvedValue(true),
+}));
+
+jest.mock("../lib/logger", () => ({
+  logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() },
+}));
+
 import { authRouter } from "../routes/auth";
 import { prisma } from "../lib/prisma";
 
@@ -81,7 +90,7 @@ describe("POST /api/auth/register", () => {
 
 describe("POST /api/auth/login", () => {
   it("returns 401 when user not found (legacy fallback)", async () => {
-    (mockPrisma.user.findFirst as jest.Mock).mockResolvedValue(null);
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
     const res = await request(app)
       .post("/api/auth/login")
       .send({ email: "test@example.com", password: "secret123" });
