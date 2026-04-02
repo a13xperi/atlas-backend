@@ -53,7 +53,7 @@ app.get("/health", async (_req, res) => {
 
   // Database check
   try {
-    await prisma.$queryRaw\`SELECT 1\`;
+    await prisma.$queryRaw`SELECT 1`;
     checks.db = "ok";
   } catch {
     checks.db = "error";
