@@ -21,6 +21,7 @@ jest.mock("../lib/prisma", () => ({
   prisma: {
     user: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       create: jest.fn(),
     },
   },
@@ -59,13 +60,18 @@ afterEach(() => {
 });
 
 describe("POST /api/auth/register", () => {
-  it("returns 503 when Supabase is not configured", async () => {
+  it("falls through to legacy auth when Supabase is not configured", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue(null);
+    (mockPrisma.user.create as jest.Mock).mockResolvedValue({
+      ...mockUser,
+      voiceProfile: {},
+    });
     const res = await request(app)
       .post("/api/auth/register")
       .send({ handle: "testuser", email: "test@example.com", password: "secret123" });
-    expect(res.status).toBe(503);
-    expect(res.body.error).toBe("Auth service unavailable");
-  });
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+  }, 15000);
 
   it("returns 400 when handle is missing", async () => {
     const res = await request(app).post("/api/auth/register").send({});
@@ -74,12 +80,12 @@ describe("POST /api/auth/register", () => {
 });
 
 describe("POST /api/auth/login", () => {
-  it("returns 503 when Supabase is not configured", async () => {
+  it("returns 401 when user not found (legacy fallback)", async () => {
+    (mockPrisma.user.findFirst as jest.Mock).mockResolvedValue(null);
     const res = await request(app)
       .post("/api/auth/login")
       .send({ email: "test@example.com", password: "secret123" });
-    expect(res.status).toBe(503);
-    expect(res.body.error).toBe("Auth service unavailable");
+    expect(res.status).toBe(401);
   });
 });
 
