@@ -72,7 +72,7 @@ voiceRouter.get("/profile", async (req: AuthRequest, res) => {
   } catch (err: any) {
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load voice profile", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load voice profile"));
   }
 });
 
@@ -100,7 +100,7 @@ voiceRouter.patch("/profile", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to update voice profile", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to update voice profile"));
   }
 });
 
@@ -114,7 +114,7 @@ voiceRouter.get("/references", async (req: AuthRequest, res) => {
   } catch (err: any) {
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load reference voices", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to load reference voices"));
   }
 });
 
@@ -138,7 +138,7 @@ voiceRouter.post("/references", async (req: AuthRequest, res) => {
     }
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to create reference voice", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to create reference voice"));
   }
 });
 
@@ -151,7 +151,7 @@ voiceRouter.get("/blends", async (req: AuthRequest, res) => {
     });
     res.json({ blends });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load blends", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to load blends"));
   }
 });
 
@@ -185,7 +185,7 @@ voiceRouter.post("/blends", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    res.status(500).json(buildErrorResponse(req, "Failed to create blend", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to create blend"));
   }
 });
 
@@ -220,7 +220,7 @@ voiceRouter.patch("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, r
   } catch (err: any) {
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to update blend voice", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to update blend voice"));
   }
 });
 
@@ -245,6 +245,6 @@ voiceRouter.delete("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, 
   } catch (err: any) {
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to delete blend voice", { message: err.message }));
+      .json(buildErrorResponse(req, "Failed to delete blend voice"));
   }
 });

@@ -109,7 +109,7 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Register error:", err.message);
-    res.status(500).json(buildErrorResponse(req, "Registration failed", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Registration failed"));
   }
 });
 
@@ -159,7 +159,7 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Login error:", err.message);
-    res.status(500).json(buildErrorResponse(req, "Login failed", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Login failed", {}));
   }
 });
 
@@ -227,7 +227,7 @@ authRouter.post("/link-account", async (req, res) => {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
     console.error("Link account error:", err.message);
-    res.status(500).json(buildErrorResponse(req, "Account linking failed", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Account linking failed", {}));
   }
 });
 
@@ -250,7 +250,7 @@ authRouter.get("/me", authenticate, async (req: AuthRequest, res) => {
     });
   } catch (err: any) {
     console.error("Me error:", err.message);
-    res.status(500).json(buildErrorResponse(req, "Failed to get user", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to get user", {}));
   }
 });
 
@@ -264,7 +264,7 @@ authRouter.get("/sessions", authenticate, async (req: AuthRequest, res) => {
     });
     res.json({ sessions });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to list sessions", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to list sessions", {}));
   }
 });
 
@@ -280,6 +280,6 @@ authRouter.delete("/sessions/:id", authenticate, async (req: AuthRequest, res) =
     await prisma.session.delete({ where: { id: sessionId } });
     res.json({ success: true });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to revoke session", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to revoke session", {}));
   }
 });

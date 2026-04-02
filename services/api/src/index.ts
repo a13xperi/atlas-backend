@@ -3,6 +3,7 @@ import { Sentry } from "./lib/sentry";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import { config } from "./lib/config";
 import { authRouter } from "./routes/auth";
 import { voiceRouter } from "./routes/voice";
 import { draftsRouter } from "./routes/drafts";
@@ -13,14 +14,18 @@ import { researchRouter } from "./routes/research";
 import { trendingRouter } from "./routes/trending";
 import { imagesRouter } from "./routes/images";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
+import { rateLimit } from "./middleware/rateLimit";
+import { formatErrorResponse } from "./lib/errors";
+import { prisma } from "./lib/prisma";
+import { getRedis } from "./lib/redis";
 import { initBot } from "./lib/telegram";
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 8000;
+const PORT = config.PORT;
 
-const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:3000")
+const allowedOrigins = config.FRONTEND_URL
   .split(",")
   .map((o) => o.trim());
 
@@ -40,10 +45,41 @@ app.use(
 );
 app.use(express.json({ limit: "10mb" }));
 app.use(requestIdMiddleware);
+app.use(rateLimit(100, 60 * 1000)); // Global: 100 req/min per IP
 
 // Health check
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "atlas-api", timestamp: new Date().toISOString() });
+app.get("/health", async (_req, res) => {
+  const checks: Record<string, string> = {};
+
+  // Database check
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks.db = "ok";
+  } catch {
+    checks.db = "error";
+  }
+
+  // Redis check
+  try {
+    const redis = getRedis();
+    if (redis) {
+      await redis.ping();
+      checks.redis = "ok";
+    } else {
+      checks.redis = "not_configured";
+    }
+  } catch {
+    checks.redis = "error";
+  }
+
+  const allOk = Object.values(checks).every((v) => v === "ok" || v === "not_configured");
+  res.status(allOk ? 200 : 503).json({
+    status: allOk ? "ok" : "degraded",
+    service: "atlas-api",
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    checks,
+  });
 });
 
 // Routes
@@ -57,17 +93,22 @@ app.use("/api/research", researchRouter);
 app.use("/api/trending", trendingRouter);
 app.use("/api/images", imagesRouter);
 
+// 404 handler — catch unknown routes before error handlers
+app.use((req, res) => {
+  res.status(404).json(buildErrorResponse(req, `Cannot ${req.method} ${req.path}`));
+});
+
 // Sentry error handler — must be before any other error middleware
 Sentry.setupExpressErrorHandler(app);
 
 // Global error handler
 app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error("Unhandled error:", err.message, err.stack);
-  res.status(500).json(
-    buildErrorResponse(req, "Internal server error", {
-      message: err.message,
-    })
-  );
+  const requestId = (req as any).requestId;
+  const { statusCode, body } = formatErrorResponse(err, requestId);
+  if (statusCode >= 500) {
+    console.error(`[${requestId}] ${err.message}`);
+  }
+  res.status(statusCode).json(body);
 });
 
 app.listen(PORT, () => {

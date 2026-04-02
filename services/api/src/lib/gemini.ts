@@ -1,10 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { config } from "./config";
 
 let client: GoogleGenerativeAI | null = null;
 
 export function getGeminiClient(): GoogleGenerativeAI {
   if (!client) {
-    client = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY!);
+    client = new GoogleGenerativeAI(config.GOOGLE_AI_API_KEY!);
   }
   return client;
 }
@@ -43,7 +44,7 @@ export async function generateImage(params: ImageGenParams): Promise<ImageGenRes
   const client = getGeminiClient();
 
   // Use Gemini's image generation model
-  const model = client.getGenerativeModel({ model: process.env.GEMINI_MODEL || "gemini-2.5-flash" });
+  const model = client.getGenerativeModel({ model: config.GEMINI_MODEL });
 
   const result = await model.generateContent({
     contents: [{ role: "user", parts: [{ text: `Generate an image: ${fullPrompt}. Aspect ratio: ${aspectRatio}.` }] }],
@@ -78,7 +79,7 @@ export async function generateVisualConcept(tweetContent: string, style: ImageSt
   elements: string[];
 }> {
   const client = getGeminiClient();
-  const model = client.getGenerativeModel({ model: process.env.GEMINI_MODEL || "gemini-2.5-flash" });
+  const model = client.getGenerativeModel({ model: config.GEMINI_MODEL });
 
   const result = await model.generateContent({
     contents: [{

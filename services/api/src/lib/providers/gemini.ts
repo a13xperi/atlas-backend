@@ -1,19 +1,20 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { config as envConfig } from "../config";
 import type { Provider, ProviderConfig, CompletionRequest, CompletionResponse } from "./types";
 
 let client: GoogleGenerativeAI | null = null;
 
 function getClient(): GoogleGenerativeAI {
   if (!client) {
-    client = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY!);
+    client = new GoogleGenerativeAI(envConfig.GOOGLE_AI_API_KEY!);
   }
   return client;
 }
 
 const config: ProviderConfig = {
   id: "gemini",
-  defaultModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-  available: !!process.env.GOOGLE_AI_API_KEY,
+  defaultModel: envConfig.GEMINI_MODEL,
+  available: !!envConfig.GOOGLE_AI_API_KEY,
   inputCostPer1M: 0.15,
   outputCostPer1M: 0.60,
 };

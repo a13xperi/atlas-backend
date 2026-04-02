@@ -5,19 +5,29 @@
  */
 
 import { Request, Response, NextFunction } from "express";
-import { authenticate, AuthRequest } from "../middleware/auth";
 import jwt from "jsonwebtoken";
 
 jest.mock("../lib/supabase", () => ({ supabaseAdmin: null }));
 jest.mock("../lib/prisma", () => ({
   prisma: { user: { findUnique: jest.fn(), update: jest.fn() } },
 }));
+jest.mock("../lib/config", () => ({
+  config: {
+    JWT_SECRET: "test-secret",
+    NODE_ENV: "test",
+  },
+}));
 
 jest.mock("jsonwebtoken", () => ({
   verify: jest.fn(),
 }));
 
+// Import after mocks
+import { authenticate, AuthRequest } from "../middleware/auth";
+import { config } from "../lib/config";
+
 const mockJwt = jwt as jest.Mocked<typeof jwt>;
+const mockConfig = config as { JWT_SECRET: string };
 
 function makeReq(authHeader?: string): AuthRequest {
   return {
@@ -38,11 +48,7 @@ describe("authenticate middleware", () => {
 
   beforeEach(() => {
     next = jest.fn();
-    process.env.JWT_SECRET = "test-secret";
-  });
-
-  afterEach(() => {
-    delete process.env.JWT_SECRET;
+    mockConfig.JWT_SECRET = "test-secret";
   });
 
   it("returns 401 when Authorization header is missing", async () => {
@@ -84,8 +90,8 @@ describe("authenticate middleware", () => {
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it("verifies token against JWT_SECRET env var", async () => {
-    process.env.JWT_SECRET = "my-test-secret";
+  it("verifies token against config.JWT_SECRET", async () => {
+    mockConfig.JWT_SECRET = "my-test-secret";
     const req = makeReq("Bearer valid_token");
     const res = makeRes();
     (mockJwt.verify as jest.Mock).mockReturnValueOnce({ userId: "user-xyz" });
@@ -93,8 +99,8 @@ describe("authenticate middleware", () => {
     expect(mockJwt.verify).toHaveBeenCalledWith("valid_token", "my-test-secret");
   });
 
-  it("returns 401 when JWT_SECRET not set", async () => {
-    delete process.env.JWT_SECRET;
+  it("returns 401 when JWT_SECRET is empty", async () => {
+    mockConfig.JWT_SECRET = "";
     const req = makeReq("Bearer valid_token");
     const res = makeRes();
     await authenticate(req, res, next as NextFunction);

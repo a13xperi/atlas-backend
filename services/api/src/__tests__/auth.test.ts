@@ -11,6 +11,12 @@ import { requestIdMiddleware } from "../middleware/requestId";
 
 jest.mock("../lib/supabase", () => ({ supabaseAdmin: null }));
 
+jest.mock("../middleware/rateLimit", () => ({
+  rateLimit: () => (_req: any, _res: any, next: any) => next(),
+  rateLimitByUser: () => (_req: any, _res: any, next: any) => next(),
+  clearRateLimitStore: jest.fn(),
+}));
+
 jest.mock("../lib/prisma", () => ({
   prisma: {
     user: {

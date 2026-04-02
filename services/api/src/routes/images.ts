@@ -51,7 +51,7 @@ imagesRouter.post("/generate", async (req: AuthRequest, res) => {
     console.error("Image generation failed:", err.message);
     res
       .status(502)
-      .json(buildErrorResponse(req, "Image generation failed", { message: err.message }));
+      .json(buildErrorResponse(req, "Image generation failed"));
   }
 });
 
@@ -95,7 +95,7 @@ imagesRouter.post("/generate-for-draft", async (req: AuthRequest, res) => {
     console.error("Image generation failed:", err.message);
     res
       .status(502)
-      .json(buildErrorResponse(req, "Image generation failed", { message: err.message }));
+      .json(buildErrorResponse(req, "Image generation failed"));
   }
 });
 
@@ -108,6 +108,6 @@ imagesRouter.get("/for-draft/:draftId", async (req: AuthRequest, res) => {
     });
     res.json({ images });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load images", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to load images"));
   }
 });

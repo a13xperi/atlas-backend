@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { config } from "../lib/config";
 import { prisma } from "../lib/prisma";
 import { supabaseAdmin } from "../lib/supabase";
 
@@ -56,7 +57,7 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
 
   // Path 2: Legacy JWT fallback
   try {
-    const secret = process.env.JWT_SECRET;
+    const secret = config.JWT_SECRET;
     if (!secret) {
       return res.status(401).json({ error: "Invalid or expired token" });
     }
