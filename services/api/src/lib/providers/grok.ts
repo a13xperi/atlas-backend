@@ -10,6 +10,8 @@ function getClient(): OpenAI {
     client = new OpenAI({
       apiKey: envConfig.XAI_API_KEY,
       baseURL: "https://api.x.ai/v1",
+      timeout: 20_000,
+      maxRetries: 0,
     });
   }
   return client;
@@ -42,6 +44,7 @@ export const grokProvider: Provider = {
           })),
         }),
       "grok-provider:complete",
+      { maxRetries: 1 },
     );
 
     const content = response.choices[0]?.message?.content?.trim() ?? "";

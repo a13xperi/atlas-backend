@@ -6,6 +6,7 @@ import { authenticate, AuthRequest } from "../middleware/auth";
 import { runGenerationPipeline } from "../lib/pipeline";
 import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
+import { withTimeout, TimeoutError } from "../lib/timeout";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
@@ -46,13 +47,17 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
   try {
     const body = generateSchema.parse(req.body);
 
-    // Run generation pipeline (voice fetch + blend + research in parallel, then generate)
-    const result = await runGenerationPipeline({
-      userId: req.userId!,
-      sourceContent: body.sourceContent,
-      sourceType: body.sourceType,
-      blendId: body.blendId,
-    });
+    // Run generation pipeline with 90s route-level timeout (Railway limit is 120s)
+    const result = await withTimeout(
+      runGenerationPipeline({
+        userId: req.userId!,
+        sourceContent: body.sourceContent,
+        sourceType: body.sourceType,
+        blendId: body.blendId,
+      }),
+      90_000,
+      "generate-pipeline",
+    );
 
     // Save as draft
     const draft = await prisma.tweetDraft.create({
@@ -79,6 +84,12 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
       return res
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    if (err instanceof TimeoutError) {
+      logger.warn({ err: err.message }, "Generate timed out");
+      return res
+        .status(504)
+        .json(buildErrorResponse(req, "Generation timed out — please try again"));
     }
     // fetchVoice step throws with this message when profile missing
     if (err.message?.includes("Voice profile not found")) {
@@ -107,14 +118,18 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
         .json(buildErrorResponse(req, "Cannot regenerate a manual draft without source content"));
     }
 
-    // Run generation pipeline with existing draft's context
-    const result = await runGenerationPipeline({
-      userId: req.userId!,
-      sourceContent: existing.sourceContent,
-      sourceType: existing.sourceType || "MANUAL",
-      blendId: existing.blendId || undefined,
-      feedback: body.feedback || existing.feedback || undefined,
-    });
+    // Run generation pipeline with 90s route-level timeout
+    const result = await withTimeout(
+      runGenerationPipeline({
+        userId: req.userId!,
+        sourceContent: existing.sourceContent,
+        sourceType: existing.sourceType || "MANUAL",
+        blendId: existing.blendId || undefined,
+        feedback: body.feedback || existing.feedback || undefined,
+      }),
+      90_000,
+      "regenerate-pipeline",
+    );
 
     // Create new draft (preserves version history)
     const draft = await prisma.tweetDraft.create({
@@ -148,6 +163,12 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
+    if (err instanceof TimeoutError) {
+      logger.warn({ err: err.message }, "Regenerate timed out");
+      return res
+        .status(504)
+        .json(buildErrorResponse(req, "Generation timed out — please try again"));
+    }
     if (err.message?.includes("Voice profile not found")) {
       return res
         .status(400)
@@ -172,14 +193,18 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
     });
     if (!existing) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
 
-    // Run generation pipeline with the instruction as feedback
-    const result = await runGenerationPipeline({
-      userId: req.userId!,
-      sourceContent: existing.sourceContent || existing.content,
-      sourceType: existing.sourceType || "MANUAL",
-      blendId: existing.blendId || undefined,
-      feedback: body.instruction,
-    });
+    // Run generation pipeline with 90s route-level timeout
+    const result = await withTimeout(
+      runGenerationPipeline({
+        userId: req.userId!,
+        sourceContent: existing.sourceContent || existing.content,
+        sourceType: existing.sourceType || "MANUAL",
+        blendId: existing.blendId || undefined,
+        feedback: body.instruction,
+      }),
+      90_000,
+      "refine-pipeline",
+    );
 
     // Update the draft in-place with refined content
     const draft = await prisma.tweetDraft.update({
@@ -204,6 +229,12 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
       return res
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    if (err instanceof TimeoutError) {
+      logger.warn({ err: err.message }, "Refine timed out");
+      return res
+        .status(504)
+        .json(buildErrorResponse(req, "Generation timed out — please try again"));
     }
     if (err.message?.includes("Voice profile not found")) {
       return res

@@ -58,6 +58,7 @@ export const geminiProvider: Provider = {
           },
         }),
       "gemini-provider:complete",
+      { maxRetries: 1 },
     );
 
     const content = result.response.text();

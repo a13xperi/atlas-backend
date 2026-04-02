@@ -73,9 +73,11 @@ export async function runPipeline(steps: PipelineStep[], ctx: PipelineContext): 
       const result = await executeStep(entry.steps[0], ctx);
       ctx.stepResults.push(result);
     } else {
-      // Parallel group
-      const results = await Promise.all(
-        entry.steps.map((s) => executeStep(s, ctx))
+      // Parallel group — 30s cap prevents the prepare phase from hanging
+      const results = await withTimeout(
+        Promise.all(entry.steps.map((s) => executeStep(s, ctx))),
+        30_000,
+        `pipeline-group:${entry.group ?? "parallel"}`,
       );
       ctx.stepResults.push(...results);
     }
