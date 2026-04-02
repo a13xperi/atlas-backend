@@ -15,6 +15,8 @@ import { trendingRouter } from "./routes/trending";
 import { imagesRouter } from "./routes/images";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
+import { requestLogger } from "./middleware/requestLogger";
+import { logger } from "./lib/logger";
 import { formatErrorResponse } from "./lib/errors";
 import { prisma } from "./lib/prisma";
 import { getRedis } from "./lib/redis";
@@ -45,6 +47,7 @@ app.use(
 );
 app.use(express.json({ limit: "10mb" }));
 app.use(requestIdMiddleware);
+app.use(requestLogger);
 app.use(rateLimit(100, 60 * 1000)); // Global: 100 req/min per IP
 
 // Health check
@@ -106,13 +109,13 @@ app.use((err: Error, req: express.Request, res: express.Response, _next: express
   const requestId = (req as any).requestId;
   const { statusCode, body } = formatErrorResponse(err, requestId);
   if (statusCode >= 500) {
-    console.error(`[${requestId}] ${err.message}`);
+    logger.error({ requestId, err: err.message }, `Unhandled error: ${err.message}`);
   }
   res.status(statusCode).json(body);
 });
 
 app.listen(PORT, () => {
-  console.log(`Atlas API running on port ${PORT}`);
+  logger.info({ port: PORT }, `Atlas API running on port ${PORT}`);
 });
 
 export default app;

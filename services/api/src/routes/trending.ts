@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { searchTrending } from "../lib/grok";
 import { buildErrorResponse } from "../middleware/requestId";
+import { logger } from "../lib/logger";
 
 export const trendingRouter = Router();
 trendingRouter.use(authenticate);
@@ -59,7 +60,7 @@ trendingRouter.post("/scan", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Trending scan failed:", err.message);
+    logger.error({ err: err.message }, "Trending scan failed");
     res.status(502).json(buildErrorResponse(req, "Twitter scan failed"));
   }
 });
@@ -96,7 +97,7 @@ trendingRouter.get("/topics", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Failed to get topics:", err.message);
+    logger.error({ err: err.message }, "Failed to get topics");
     res
       .status(500)
       .json(buildErrorResponse(req, "Failed to load trending topics"));

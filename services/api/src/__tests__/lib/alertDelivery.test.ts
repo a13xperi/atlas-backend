@@ -16,6 +16,19 @@ jest.mock("../../lib/telegram", () => ({
   deliverAlertToUser: jest.fn(),
 }));
 
+import { logger } from "../../lib/logger";
+
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    info: jest.fn(),
+    error: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
+
+
 import { prisma } from "../../lib/prisma";
 import { deliverAlertToUser } from "../../lib/telegram";
 import { dispatchAlert } from "../../lib/alertDelivery";
@@ -77,7 +90,7 @@ describe("dispatchAlert", () => {
 
   it("logs Telegram delivery failures without throwing", async () => {
     const error = new Error("telegram offline");
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = logger.error as jest.Mock;
     (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([
       { id: "sub-1", delivery: ["TELEGRAM"] },
     ]);
@@ -86,24 +99,18 @@ describe("dispatchAlert", () => {
     await dispatchAlert(baseAlert);
     await flushPromises();
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      "[alertDelivery] Telegram delivery failed for alert alert-1:",
-      error
-    );
+    expect(errorSpy).toHaveBeenCalledWith({ err: error }, "[alertDelivery] Telegram delivery failed for alert alert-1");
 
     errorSpy.mockRestore();
   });
 
   it("logs subscription lookup failures without throwing", async () => {
     const error = new Error("db unavailable");
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = logger.error as jest.Mock;
     (mockPrisma.alertSubscription.findMany as jest.Mock).mockRejectedValueOnce(error);
 
     await expect(dispatchAlert(baseAlert)).resolves.toBeUndefined();
-    expect(errorSpy).toHaveBeenCalledWith(
-      "[alertDelivery] Dispatch failed for alert alert-1:",
-      error
-    );
+    expect(errorSpy).toHaveBeenCalledWith({ err: error }, "[alertDelivery] Dispatch failed for alert alert-1");
 
     errorSpy.mockRestore();
   });

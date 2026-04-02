@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateVisualConcept, ImageStyle } from "../lib/gemini";
 import { buildErrorResponse } from "../middleware/requestId";
+import { logger } from "../lib/logger";
 
 export const imagesRouter = Router();
 imagesRouter.use(authenticate);
@@ -48,7 +49,7 @@ imagesRouter.post("/generate", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Image generation failed:", err.message);
+    logger.error({ err: err.message }, "Image generation failed");
     res
       .status(502)
       .json(buildErrorResponse(req, "Image generation failed"));
@@ -92,7 +93,7 @@ imagesRouter.post("/generate-for-draft", async (req: AuthRequest, res) => {
         .status(400)
         .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Image generation failed:", err.message);
+    logger.error({ err: err.message }, "Image generation failed");
     res
       .status(502)
       .json(buildErrorResponse(req, "Image generation failed"));

@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 /**
  * Telegram Bot — Atlas alert delivery channel.
  *
@@ -20,7 +21,7 @@ let bot: Telegraf | null = null;
 export function initBot(): Telegraf | null {
   const token = config.TELEGRAM_BOT_TOKEN;
   if (!token) {
-    console.warn("[telegram] TELEGRAM_BOT_TOKEN not set — Telegram bot disabled");
+    logger.warn("[telegram] TELEGRAM_BOT_TOKEN not set — Telegram bot disabled");
     return null;
   }
 
@@ -78,7 +79,7 @@ export function initBot(): Telegraf | null {
 
       ctx.reply(`Linked to Atlas account @${handle}. You'll now receive alerts here.`);
     } catch (err) {
-      console.error("[telegram] Link error:", err);
+      logger.error({ err }, "[telegram] Link error");
       ctx.reply("Something went wrong. Please try again.");
     }
   });
@@ -100,7 +101,7 @@ export function initBot(): Telegraf | null {
 
       ctx.reply("Unlinked. You will no longer receive alerts here.");
     } catch (err) {
-      console.error("[telegram] Unlink error:", err);
+      logger.error({ err }, "[telegram] Unlink error");
       ctx.reply("Something went wrong. Please try again.");
     }
   });
@@ -139,7 +140,7 @@ export function initBot(): Telegraf | null {
 
       ctx.reply(`Recent alerts:\n\n${formatted}`);
     } catch (err) {
-      console.error("[telegram] Alerts error:", err);
+      logger.error({ err }, "[telegram] Alerts error");
       ctx.reply("Failed to fetch alerts.");
     }
   });
@@ -171,7 +172,7 @@ export function initBot(): Telegraf | null {
 
       ctx.reply(`Active subscriptions:\n\n${formatted}`);
     } catch (err) {
-      console.error("[telegram] Subscriptions error:", err);
+      logger.error({ err }, "[telegram] Subscriptions error");
       ctx.reply("Failed to fetch subscriptions.");
     }
   });
@@ -179,8 +180,8 @@ export function initBot(): Telegraf | null {
   // Start polling (non-blocking)
   bot
     .launch()
-    .then(() => console.log("[telegram] Bot started (long polling)"))
-    .catch((err) => console.error("[telegram] Bot launch failed:", err.message));
+    .then(() => logger.info("[telegram] Bot started (long polling)"))
+    .catch((err) => logger.error({ err: err.message }, "[telegram] Bot launch failed"));
 
   // Graceful shutdown
   process.once("SIGINT", () => bot?.stop("SIGINT"));
@@ -212,7 +213,7 @@ export async function deliverAlert(
     await bot.telegram.sendMessage(chatId, message);
     return true;
   } catch (err) {
-    console.error(`[telegram] Failed to deliver alert to chat ${chatId}:`, err);
+    logger.error({ err, chatId }, "[telegram] Failed to deliver alert");
     return false;
   }
 }
@@ -234,7 +235,7 @@ export async function deliverAlertToUser(
     if (!user?.telegramChatId) return false;
     return deliverAlert(alert, user.telegramChatId);
   } catch (err) {
-    console.error(`[telegram] Failed to look up user ${userId}:`, err);
+    logger.error({ err, userId }, "[telegram] Failed to look up user");
     return false;
   }
 }
