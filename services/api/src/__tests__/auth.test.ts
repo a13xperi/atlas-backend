@@ -11,6 +11,12 @@ import { requestIdMiddleware } from "../middleware/requestId";
 
 jest.mock("../lib/supabase", () => ({ supabaseAdmin: null }));
 
+jest.mock("../middleware/rateLimit", () => ({
+  rateLimit: () => (_req: any, _res: any, next: any) => next(),
+  rateLimitByUser: () => (_req: any, _res: any, next: any) => next(),
+  clearRateLimitStore: jest.fn(),
+}));
+
 jest.mock("../lib/prisma", () => ({
   prisma: {
     user: {
@@ -27,7 +33,6 @@ jest.mock("jsonwebtoken", () => ({
 
 import { authRouter } from "../routes/auth";
 import { prisma } from "../lib/prisma";
-import { clearRateLimitStore } from "../middleware/rateLimit";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 
@@ -46,7 +51,6 @@ const mockUser = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  clearRateLimitStore();
   process.env.JWT_SECRET = "test-secret";
 });
 
