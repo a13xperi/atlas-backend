@@ -186,6 +186,6 @@ describe("GET /api/images/for-draft/:draftId", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Failed to load images");
-    expect(res.body.message).toBe("db down");
+    expect(res.body.ok).toBe(false);
   });
 });

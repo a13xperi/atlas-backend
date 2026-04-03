@@ -178,8 +178,9 @@ describe("GET /api/analytics/days-to-peak", () => {
 
     const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.peaks).toHaveLength(1);
-    expect(res.body.peaks[0]).toEqual({
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.peaks).toHaveLength(1);
+    expect(data.peaks[0]).toEqual({
       name: "Alice",
       days: 14,
       hasDrafts: true,
@@ -194,7 +195,8 @@ describe("GET /api/analytics/days-to-peak", () => {
 
     const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.peaks[0]).toEqual({
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.peaks[0]).toEqual({
       name: "bob",
       days: 0,
       hasDrafts: false,
@@ -207,7 +209,7 @@ describe("GET /api/analytics/days-to-peak", () => {
 
     const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.peaks).toEqual([]);
+    expect(expectSuccessResponse<any>(res.body).peaks).toEqual([]);
   });
 
   it("sorts results by days ascending", async () => {
@@ -241,10 +243,11 @@ describe("GET /api/analytics/days-to-peak", () => {
 
     const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.peaks).toHaveLength(3);
-    expect(res.body.peaks[0].name).toBe("none");     // 0 days (no drafts)
-    expect(res.body.peaks[1].name).toBe("Fast Learner"); // 4 days
-    expect(res.body.peaks[2].name).toBe("Slow Starter"); // 31 days
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.peaks).toHaveLength(3);
+    expect(data.peaks[0].name).toBe("none");     // 0 days (no drafts)
+    expect(data.peaks[1].name).toBe("Fast Learner"); // 4 days
+    expect(data.peaks[2].name).toBe("Slow Starter"); // 31 days
   });
 
   it("uses handle as fallback when displayName is null", async () => {
@@ -254,6 +257,6 @@ describe("GET /api/analytics/days-to-peak", () => {
     ]);
 
     const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
-    expect(res.body.peaks[0].name).toBe("fallback_handle");
+    expect(expectSuccessResponse<any>(res.body).peaks[0].name).toBe("fallback_handle");
   });
 });

@@ -320,6 +320,9 @@ draftsRouter.patch("/:id", async (req: AuthRequest, res) => {
 
     res.json({ draft });
   } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
     res.status(500).json(buildErrorResponse(req, "Failed to update draft"));
   }
 });
