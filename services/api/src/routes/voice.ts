@@ -9,6 +9,23 @@ import { fetchTweetsByHandle } from "../lib/twitter";
 import { calibrateFromTweets } from "../lib/calibrate";
 import { logger } from "../lib/logger";
 
+// Public router — no auth required
+export const referenceAccountsRouter = Router();
+
+referenceAccountsRouter.get("/reference-accounts", async (_req, res) => {
+  try {
+    const accounts = await prisma.referenceVoice.findMany({
+      where: { isGlobal: true, isActive: true },
+      select: { id: true, name: true, handle: true, avatarUrl: true },
+      orderBy: { name: "asc" },
+    });
+    res.json(success({ accounts }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to load reference accounts");
+    res.status(500).json(error("Failed to load reference accounts"));
+  }
+});
+
 export const voiceRouter = Router();
 voiceRouter.use(authenticate);
 
