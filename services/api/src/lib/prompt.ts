@@ -1,6 +1,6 @@
 /**
  * Prompt builder for Atlas tweet generation.
- * Translates voice profile dimensions (0-100) into natural language style instructions.
+ * Translates mixed-scale voice profile dimensions into natural language style instructions.
  */
 
 interface VoiceDimensions {
@@ -8,6 +8,14 @@ interface VoiceDimensions {
   formality: number;
   brevity: number;
   contrarianTone: number;
+  directness?: number;
+  warmth?: number;
+  technicalDepth?: number;
+  confidence?: number;
+  evidenceOrientation?: number;
+  solutionOrientation?: number;
+  socialPosture?: number;
+  selfPromotionalIntensity?: number;
 }
 
 interface BlendVoice {
@@ -56,6 +64,74 @@ function describeContrarian(v: number): string {
   return "Strongly contrarian. Take the opposite position. Provocative and bold.";
 }
 
+function describeDirectness(v: number): string {
+  if (v <= 2) return "Indirect and careful. Ease into the point with nuance.";
+  if (v <= 4) return "Diplomatic. Soften claims and leave room for interpretation.";
+  if (v <= 6) return "Clear and straightforward. State the point without over-explaining.";
+  if (v <= 8) return "Blunt and decisive. Lead with the conclusion and trim the filler.";
+  return "Exceptionally direct. Sharp, unvarnished, and immediately to the point.";
+}
+
+function describeWarmth(v: number): string {
+  if (v <= 2) return "Cool and detached. Prioritize analysis over emotional connection.";
+  if (v <= 4) return "Reserved. Friendly enough, but not especially affectionate.";
+  if (v <= 6) return "Balanced warmth. Human and approachable without sounding soft.";
+  if (v <= 8) return "Warm and encouraging. Sound generous, empathetic, and constructive.";
+  return "Very warm. Radiate enthusiasm, support, and human connection.";
+}
+
+function describeTechnicalDepth(v: number): string {
+  if (v <= 2) return "Keep it accessible. Avoid jargon and deep implementation detail.";
+  if (v <= 4) return "Lightly technical. Use simple concepts and only necessary terminology.";
+  if (v <= 6) return "Moderately technical. Include substance without overwhelming the reader.";
+  if (v <= 8) return "Deeply technical. Bring in mechanisms, frameworks, and nuanced detail.";
+  return "Highly technical. Dense expertise is welcome if it sharpens the insight.";
+}
+
+function describeConfidence(v: number): string {
+  if (v <= 2) return "Tentative and exploratory. Signal uncertainty openly.";
+  if (v <= 4) return "Measured confidence. Avoid overclaiming and hedge when appropriate.";
+  if (v <= 6) return "Steady confidence. Sound credible and composed.";
+  if (v <= 8) return "Assertive. Make crisp claims and sound conviction.";
+  return "Extremely confident. Bold, declarative, and highly assured.";
+}
+
+function describeEvidenceOrientation(v: number): string {
+  if (v <= 2) return "Lean on instinct and framing more than proof points.";
+  if (v <= 4) return "Use evidence selectively. A supporting fact is enough.";
+  if (v <= 6) return "Balance opinion with evidence. Ground claims when it adds clarity.";
+  if (v <= 8) return "Evidence-forward. Prefer concrete facts, data, and observable signals.";
+  return "Highly evidence-driven. Anchor the take in proof, mechanisms, and receipts.";
+}
+
+function describeSolutionOrientation(v: number): string {
+  if (v <= 2) return "Mostly diagnose or observe. Do not force a prescription.";
+  if (v <= 4) return "Offer light implications, but keep the focus on the analysis.";
+  if (v <= 6) return "Blend diagnosis with next steps when useful.";
+  if (v <= 8) return "Solution-oriented. Emphasize what should happen next.";
+  return "Strongly solution-first. Turn the insight into a concrete recommendation or action.";
+}
+
+function describeSocialPosture(v: number): string {
+  if (v <= 2) return "Detached observer. Minimal social signaling or community language.";
+  if (v <= 4) return "Independent voice. Engage lightly without sounding communal.";
+  if (v <= 6) return "Balanced social posture. Mix personal perspective with audience awareness.";
+  if (v <= 8) return "Community-facing. Invite shared understanding and collective framing.";
+  return "Highly social. Sound plugged-in, participatory, and conversation-oriented.";
+}
+
+function describeSelfPromotionalIntensity(v: number): string {
+  if (v <= 2) return "Avoid self-reference. Keep the spotlight on the idea.";
+  if (v <= 4) return "Minimal self-promotion. Mention your perspective only when necessary.";
+  if (v <= 6) return "Occasional self-positioning is fine if it adds credibility.";
+  if (v <= 8) return "Moderately self-promotional. Confidently signal taste, track record, or brand.";
+  return "High self-promotion. Lean into personal brand, authority, and status signals.";
+}
+
+function normalizeTenPointDimension(value?: number): number {
+  return value ?? 5;
+}
+
 function getSourceTypeInstruction(sourceType: string): string {
   switch (sourceType) {
     case "REPORT":
@@ -76,13 +152,29 @@ function getSourceTypeInstruction(sourceType: string): string {
 
 export function buildTweetPrompt(params: PromptParams): { system: string; userMessage: string } {
   const { voiceProfile, sourceContent, sourceType, blendVoices, feedback } = params;
+  const directness = normalizeTenPointDimension(voiceProfile.directness);
+  const warmth = normalizeTenPointDimension(voiceProfile.warmth);
+  const technicalDepth = normalizeTenPointDimension(voiceProfile.technicalDepth);
+  const confidence = normalizeTenPointDimension(voiceProfile.confidence);
+  const evidenceOrientation = normalizeTenPointDimension(voiceProfile.evidenceOrientation);
+  const solutionOrientation = normalizeTenPointDimension(voiceProfile.solutionOrientation);
+  const socialPosture = normalizeTenPointDimension(voiceProfile.socialPosture);
+  const selfPromotionalIntensity = normalizeTenPointDimension(voiceProfile.selfPromotionalIntensity);
 
   // Build the voice description
   const voiceDescription = [
-    `- Humor: ${describeHumor(voiceProfile.humor)}`,
-    `- Formality: ${describeFormality(voiceProfile.formality)}`,
-    `- Brevity: ${describeBrevity(voiceProfile.brevity)}`,
-    `- Contrarian edge: ${describeContrarian(voiceProfile.contrarianTone)}`,
+    `- Humor (${voiceProfile.humor}/100): ${describeHumor(voiceProfile.humor)}`,
+    `- Formality (${voiceProfile.formality}/100): ${describeFormality(voiceProfile.formality)}`,
+    `- Brevity (${voiceProfile.brevity}/100): ${describeBrevity(voiceProfile.brevity)}`,
+    `- Contrarian tone (${voiceProfile.contrarianTone}/100): ${describeContrarian(voiceProfile.contrarianTone)}`,
+    `- Directness (${directness}/10): ${describeDirectness(directness)}`,
+    `- Warmth (${warmth}/10): ${describeWarmth(warmth)}`,
+    `- Technical depth (${technicalDepth}/10): ${describeTechnicalDepth(technicalDepth)}`,
+    `- Confidence (${confidence}/10): ${describeConfidence(confidence)}`,
+    `- Evidence orientation (${evidenceOrientation}/10): ${describeEvidenceOrientation(evidenceOrientation)}`,
+    `- Solution orientation (${solutionOrientation}/10): ${describeSolutionOrientation(solutionOrientation)}`,
+    `- Social posture (${socialPosture}/10): ${describeSocialPosture(socialPosture)}`,
+    `- Self-promotional intensity (${selfPromotionalIntensity}/10): ${describeSelfPromotionalIntensity(selfPromotionalIntensity)}`,
   ].join("\n");
 
   let system = `You are Atlas, a crypto analyst's tweet-crafting AI. You generate tweets styled to the user's voice profile.

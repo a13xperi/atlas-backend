@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { parsePagination } from "../lib/pagination";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { runGenerationPipeline } from "../lib/pipeline";
 import { buildErrorResponse } from "../middleware/requestId";
@@ -179,80 +178,12 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
   }
 });
 
-// Refine a draft with a natural-language instruction
-const refineSchema = z.object({
-  instruction: z.string().min(1).max(2000),
-});
-
-draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
-  try {
-    const body = refineSchema.parse(req.body);
-
-    const existing = await prisma.tweetDraft.findFirst({
-      where: { id: req.params.id as string, userId: req.userId },
-    });
-    if (!existing) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
-
-    // Run generation pipeline with 90s route-level timeout
-    const result = await withTimeout(
-      runGenerationPipeline({
-        userId: req.userId!,
-        sourceContent: existing.sourceContent || existing.content,
-        sourceType: existing.sourceType || "MANUAL",
-        blendId: existing.blendId || undefined,
-        feedback: body.instruction,
-      }),
-      90_000,
-      "refine-pipeline",
-    );
-
-    // Update the draft in-place with refined content
-    const draft = await prisma.tweetDraft.update({
-      where: { id: existing.id },
-      data: {
-        content: result.ctx.generatedContent!,
-        confidence: result.ctx.confidence,
-        predictedEngagement: result.ctx.predictedEngagement,
-        version: existing.version + 1,
-        feedback: body.instruction,
-      },
-    });
-
-    // Log analytics
-    await prisma.analyticsEvent.create({
-      data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
-    });
-
-    res.json({ draft });
-  } catch (err: any) {
-    if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
-    }
-    if (err instanceof TimeoutError) {
-      logger.warn({ err: err.message }, "Refine timed out");
-      return res
-        .status(504)
-        .json(buildErrorResponse(req, "Generation timed out — please try again"));
-    }
-    if (err.message?.includes("Voice profile not found")) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, err.message));
-    }
-    logger.error({ err: err.message }, "Refine failed");
-    res.status(502).json(buildErrorResponse(req, "AI refinement failed"));
-  }
-});
-
 // --- Standard CRUD Endpoints ---
 
 // List drafts
 draftsRouter.get("/", async (req: AuthRequest, res) => {
   try {
-    const { status } = req.query;
-    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
+    const { status, limit = "20", offset = "0" } = req.query;
 
     const drafts = await prisma.tweetDraft.findMany({
       where: {
@@ -260,23 +191,20 @@ draftsRouter.get("/", async (req: AuthRequest, res) => {
         ...(status && { status: status as any }),
       },
       orderBy: { createdAt: "desc" },
-      take,
-      skip,
+      take: parseInt(limit as string),
+      skip: parseInt(offset as string),
     });
 
     res.json({ drafts });
   } catch (err: any) {
-    logger.error({ err: err.message }, "Failed to load drafts");
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load drafts", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to load drafts"));
   }
 });
 
 // List team drafts (APPROVED + POSTED) — MANAGER/ADMIN only
 draftsRouter.get("/team", async (req: AuthRequest, res) => {
   try {
-    const { take, skip } = parsePagination(req.query, { limit: 50, offset: 0 });
+    const { limit = "50", offset = "0" } = req.query;
 
     const requestingUser = await prisma.user.findUnique({
       where: { id: req.userId! },
@@ -289,8 +217,8 @@ draftsRouter.get("/team", async (req: AuthRequest, res) => {
     const drafts = await prisma.tweetDraft.findMany({
       where: { status: { in: ["APPROVED", "POSTED"] } },
       orderBy: { updatedAt: "desc" },
-      take,
-      skip,
+      take: parseInt(limit as string),
+      skip: parseInt(offset as string),
       include: {
         user: { select: { handle: true, displayName: true, avatarUrl: true } },
       },
@@ -313,10 +241,7 @@ draftsRouter.get("/team", async (req: AuthRequest, res) => {
 
     res.json({ drafts: result, total: result.length });
   } catch (err: any) {
-    logger.error({ err: err.message }, "Failed to load team drafts");
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load team drafts", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to load team drafts"));
   }
 });
 
@@ -329,10 +254,7 @@ draftsRouter.get("/:id", async (req: AuthRequest, res) => {
     if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
     res.json({ draft });
   } catch (err: any) {
-    logger.error({ err: err.message }, "Failed to get draft");
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to get draft", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to get draft"));
   }
 });
 
@@ -361,10 +283,7 @@ draftsRouter.post("/", async (req: AuthRequest, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    logger.error({ err: err.message }, "Failed to create draft");
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to create draft", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to create draft"));
   }
 });
 
@@ -404,10 +323,7 @@ draftsRouter.patch("/:id", async (req: AuthRequest, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    logger.error({ err: err.message }, "Failed to update draft");
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to update draft", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to update draft"));
   }
 });
 
@@ -422,10 +338,7 @@ draftsRouter.delete("/:id", async (req: AuthRequest, res) => {
     await prisma.tweetDraft.delete({ where: { id: req.params.id as string } });
     res.json({ success: true });
   } catch (err: any) {
-    logger.error({ err: err.message }, "Failed to delete draft");
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to delete draft", { message: err.message }));
+    res.status(500).json(buildErrorResponse(req, "Failed to delete draft"));
   }
 });
 

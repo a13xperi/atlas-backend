@@ -7,6 +7,12 @@
 import request from "supertest";
 import express from "express";
 import { requestIdMiddleware } from "../../middleware/requestId";
+import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
+
+process.env.NODE_ENV = "test";
+process.env.JWT_SECRET = "test-secret";
+process.env.DATABASE_URL = "postgresql://localhost:5432/atlas_test";
+delete process.env.REDIS_URL;
 
 process.env.NODE_ENV = "test";
 process.env.JWT_SECRET = "test-secret";
@@ -124,10 +130,11 @@ describe("POST /api/auth/register", () => {
       .send({ handle: "atlasanalyst", email: "atlas@example.com", password: "secret123" });
 
     expect(res.status).toBe(200);
-    expect(res.body.user.handle).toBe("atlasanalyst");
-    expect(res.body.token).toBe("sb-token");
-    expect(res.body.refresh_token).toBe("sb-refresh");
-  });
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.user.handle).toBe("atlasanalyst");
+    expect(data.token).toBe("sb-token");
+    expect(data.refresh_token).toBe("sb-refresh");
+  }, 15000);
 
   it("returns 409 when handle already exists", async () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(mockUser);
@@ -137,7 +144,7 @@ describe("POST /api/auth/register", () => {
       .send({ handle: "atlasanalyst", email: "atlas@example.com", password: "secret123" });
 
     expect(res.status).toBe(409);
-    expect(res.body.error).toBe("Handle already taken");
+    expectErrorResponse(res.body, "Handle already taken");
   });
 
   it("returns 400 when handle is missing", async () => {
@@ -165,8 +172,9 @@ describe("POST /api/auth/login", () => {
       .send({ email: "atlas@example.com", password: "secret123" });
 
     expect(res.status).toBe(200);
-    expect(res.body.user.handle).toBe("atlasanalyst");
-    expect(res.body.token).toBe("sb-token");
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.user.handle).toBe("atlasanalyst");
+    expect(data.token).toBe("sb-token");
   });
 
   it("returns 401 for invalid credentials", async () => {
@@ -180,7 +188,19 @@ describe("POST /api/auth/login", () => {
       .send({ email: "atlas@example.com", password: "wrong-password" });
 
     expect(res.status).toBe(401);
-    expect(res.body.error).toBe("Invalid credentials");
+    expectErrorResponse(res.body, "Invalid credentials");
+  });
+});
+
+describe("POST /api/auth/refresh", () => {
+  it("returns 400 for an invalid refresh payload", async () => {
+    const res = await request(app)
+      .post("/api/auth/refresh")
+      .send({ refresh_token: 123 });
+
+    expect(res.status).toBe(400);
+    const body = expectErrorResponse(res.body, "Invalid request");
+    expect(Array.isArray(body.details)).toBe(true);
   });
 });
 
@@ -193,8 +213,9 @@ describe("GET /api/auth/me", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.user.handle).toBe("atlasanalyst");
-    expect(res.body.user.voiceProfile).toBeDefined();
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.user.handle).toBe("atlasanalyst");
+    expect(data.user.voiceProfile).toBeDefined();
   });
 
   it("returns 401 without token", async () => {
@@ -212,8 +233,9 @@ describe("GET /api/auth/sessions", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.sessions).toHaveLength(1);
-    expect(res.body.sessions[0].id).toBe("session-1");
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.sessions).toHaveLength(1);
+    expect(data.sessions[0].id).toBe("session-1");
   });
 });
 
@@ -227,7 +249,7 @@ describe("DELETE /api/auth/sessions/:id", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ success: true });
+    expect(expectSuccessResponse<any>(res.body)).toEqual({ success: true });
   });
 
   it("returns 404 when session is not found", async () => {

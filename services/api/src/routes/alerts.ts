@@ -147,11 +147,13 @@ alertsRouter.get("/feed", async (req: AuthRequest, res) => {
   }
 });
 
-// Get single alert
+// Get single alert (ownership verified)
 alertsRouter.get("/:id", async (req: AuthRequest, res) => {
   try {
     const alertId = req.params.id as string;
-    const alert = await prisma.alert.findUnique({ where: { id: alertId } });
+    const alert = await prisma.alert.findFirst({
+      where: { id: alertId, userId: req.userId },
+    });
     if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
     res.json({ alert });
   } catch (err: any) {
@@ -159,11 +161,13 @@ alertsRouter.get("/:id", async (req: AuthRequest, res) => {
   }
 });
 
-// Dismiss/acknowledge alert (set expiresAt to now)
+// Dismiss/acknowledge alert (set expiresAt to now, ownership verified)
 alertsRouter.patch("/:id", async (req: AuthRequest, res) => {
   try {
     const alertId = req.params.id as string;
-    const alert = await prisma.alert.findUnique({ where: { id: alertId } });
+    const alert = await prisma.alert.findFirst({
+      where: { id: alertId, userId: req.userId },
+    });
     if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
 
     const updated = await prisma.alert.update({
@@ -176,11 +180,13 @@ alertsRouter.patch("/:id", async (req: AuthRequest, res) => {
   }
 });
 
-// Delete alert
+// Delete alert (ownership verified)
 alertsRouter.delete("/:id", async (req: AuthRequest, res) => {
   try {
     const alertId = req.params.id as string;
-    const alert = await prisma.alert.findUnique({ where: { id: alertId } });
+    const alert = await prisma.alert.findFirst({
+      where: { id: alertId, userId: req.userId },
+    });
     if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
 
     await prisma.alert.delete({ where: { id: alertId } });

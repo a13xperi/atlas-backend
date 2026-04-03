@@ -8,6 +8,7 @@ import request from "supertest";
 import express from "express";
 import { analyticsRouter } from "../../routes/analytics";
 import { requestIdMiddleware } from "../../middleware/requestId";
+import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
 
 jest.mock("../../middleware/auth", () => ({
   authenticate: jest.fn((req: any, res: any, next: any) => {
@@ -28,6 +29,7 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(),
     },
     learningLogEntry: {
+      create: jest.fn(),
       findMany: jest.fn(),
     },
     user: {
@@ -71,10 +73,24 @@ describe("GET /api/analytics/summary", () => {
 
     const res = await request(app).get("/api/analytics/summary").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.summary.draftsCreated).toBe(10);
-    expect(res.body.summary.draftsPosted).toBe(5);
-    expect(res.body.summary.feedbackGiven).toBe(3);
-    expect(res.body.summary.period).toBe("30d");
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.summary.draftsCreated).toBe(10);
+    expect(data.summary.draftsPosted).toBe(5);
+    expect(data.summary.feedbackGiven).toBe(3);
+    expect(data.summary.period).toBe("30d");
+  });
+});
+
+describe("POST /api/analytics/learning-log", () => {
+  it("returns 400 for an invalid learning log payload", async () => {
+    const res = await request(app)
+      .post("/api/analytics/learning-log")
+      .set(AUTH)
+      .send({ event: "", impact: "Helpful" });
+
+    expect(res.status).toBe(400);
+    const body = expectErrorResponse(res.body, "Invalid request");
+    expect(Array.isArray(body.details)).toBe(true);
   });
 });
 
@@ -85,7 +101,7 @@ describe("GET /api/analytics/learning-log", () => {
 
     const res = await request(app).get("/api/analytics/learning-log").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.entries).toHaveLength(1);
+    expect(expectSuccessResponse<any>(res.body).entries).toHaveLength(1);
   });
 });
 
@@ -96,7 +112,7 @@ describe("GET /api/analytics/engagement", () => {
 
     const res = await request(app).get("/api/analytics/engagement").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.events).toHaveLength(1);
+    expect(expectSuccessResponse<any>(res.body).events).toHaveLength(1);
   });
 });
 
@@ -105,7 +121,7 @@ describe("GET /api/analytics/team", () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ id: "user-123", role: "ANALYST" });
     const res = await request(app).get("/api/analytics/team").set(AUTH);
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Manager access required");
+    expectErrorResponse(res.body, "Manager access required");
   });
 
   it("returns team data for MANAGER role", async () => {
@@ -116,7 +132,7 @@ describe("GET /api/analytics/team", () => {
 
     const res = await request(app).get("/api/analytics/team").set(AUTH);
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.analysts)).toBe(true);
+    expect(Array.isArray(expectSuccessResponse<any>(res.body).analysts)).toBe(true);
   });
 
   it("returns 403 when user not found in DB", async () => {
@@ -162,8 +178,9 @@ describe("GET /api/analytics/days-to-peak", () => {
 
     const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.peaks).toHaveLength(1);
-    expect(res.body.peaks[0]).toEqual({
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.peaks).toHaveLength(1);
+    expect(data.peaks[0]).toEqual({
       name: "Alice",
       days: 14,
       hasDrafts: true,
@@ -178,7 +195,8 @@ describe("GET /api/analytics/days-to-peak", () => {
 
     const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.peaks[0]).toEqual({
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.peaks[0]).toEqual({
       name: "bob",
       days: 0,
       hasDrafts: false,
@@ -191,7 +209,7 @@ describe("GET /api/analytics/days-to-peak", () => {
 
     const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.peaks).toEqual([]);
+    expect(expectSuccessResponse<any>(res.body).peaks).toEqual([]);
   });
 
   it("sorts results by days ascending", async () => {
@@ -225,10 +243,11 @@ describe("GET /api/analytics/days-to-peak", () => {
 
     const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.peaks).toHaveLength(3);
-    expect(res.body.peaks[0].name).toBe("none");     // 0 days (no drafts)
-    expect(res.body.peaks[1].name).toBe("Fast Learner"); // 4 days
-    expect(res.body.peaks[2].name).toBe("Slow Starter"); // 31 days
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.peaks).toHaveLength(3);
+    expect(data.peaks[0].name).toBe("none");     // 0 days (no drafts)
+    expect(data.peaks[1].name).toBe("Fast Learner"); // 4 days
+    expect(data.peaks[2].name).toBe("Slow Starter"); // 31 days
   });
 
   it("uses handle as fallback when displayName is null", async () => {
@@ -238,6 +257,6 @@ describe("GET /api/analytics/days-to-peak", () => {
     ]);
 
     const res = await request(app).get("/api/analytics/days-to-peak").set(AUTH);
-    expect(res.body.peaks[0].name).toBe("fallback_handle");
+    expect(expectSuccessResponse<any>(res.body).peaks[0].name).toBe("fallback_handle");
   });
 });

@@ -8,6 +8,7 @@ import request from "supertest";
 import express from "express";
 import { imagesRouter } from "../../routes/images";
 import { requestIdMiddleware } from "../../middleware/requestId";
+import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
 
 jest.mock("../../middleware/auth", () => ({
   authenticate: jest.fn((req: any, res: any, next: any) => {
@@ -84,7 +85,7 @@ describe("POST /api/images/generate", () => {
   it("returns 400 for missing prompt", async () => {
     const res = await request(app).post("/api/images/generate").set(AUTH).send({});
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Invalid request");
+    expectErrorResponse(res.body, "Invalid request");
   });
 
   it("generates image concept and returns it", async () => {
@@ -98,8 +99,9 @@ describe("POST /api/images/generate", () => {
       .send({ prompt: "BTC is mooning", style: "quote_card" });
 
     expect(res.status).toBe(200);
-    expect(res.body.image.id).toBe("img-1");
-    expect(res.body.image.concept).toEqual(mockConcept);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.image.id).toBe("img-1");
+    expect(data.image.concept).toEqual(mockConcept);
   });
 
   it("returns 502 when AI generation fails", async () => {
@@ -111,7 +113,7 @@ describe("POST /api/images/generate", () => {
       .send({ prompt: "BTC is mooning" });
 
     expect(res.status).toBe(502);
-    expect(res.body.error).toBe("Image generation failed");
+    expectErrorResponse(res.body, "Image generation failed");
   });
 });
 
@@ -133,7 +135,7 @@ describe("POST /api/images/generate-for-draft", () => {
       .send({ draftId: "nonexistent" });
 
     expect(res.status).toBe(404);
-    expect(res.body.error).toBe("Draft not found");
+    expectErrorResponse(res.body, "Draft not found");
   });
 
   it("generates image for a draft", async () => {
@@ -150,7 +152,7 @@ describe("POST /api/images/generate-for-draft", () => {
       .send({ draftId: "draft-1" });
 
     expect(res.status).toBe(200);
-    expect(res.body.image.concept).toEqual(mockConcept);
+    expect(expectSuccessResponse<any>(res.body).image.concept).toEqual(mockConcept);
   });
 });
 
@@ -165,7 +167,16 @@ describe("GET /api/images/for-draft/:draftId", () => {
 
     const res = await request(app).get("/api/images/for-draft/draft-1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.images).toHaveLength(1);
+    expect(expectSuccessResponse<any>(res.body).images).toHaveLength(1);
+  });
+
+  it("returns 500 when loading images fails", async () => {
+    (mockPrisma.generatedImage.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app).get("/api/images/for-draft/draft-1").set(AUTH);
+
+    expect(res.status).toBe(500);
+    expect(expectErrorResponse(res.body, "Failed to load images").details.message).toBe("db down");
   });
 
   it("returns 500 when loading images fails", async () => {
@@ -175,6 +186,6 @@ describe("GET /api/images/for-draft/:draftId", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Failed to load images");
-    expect(res.body.message).toBe("db down");
+    expect(res.body.ok).toBe(false);
   });
 });

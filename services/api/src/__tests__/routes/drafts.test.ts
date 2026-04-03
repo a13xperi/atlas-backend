@@ -155,7 +155,7 @@ describe("GET /api/drafts", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Failed to load drafts");
-    expect(res.body.message).toBe("db down");
+    expect(res.body.requestId).toBeDefined();
   });
 });
 
@@ -209,7 +209,7 @@ describe("GET /api/drafts/:id", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Failed to get draft");
-    expect(res.body.message).toBe("db down");
+    expect(res.body.requestId).toBeDefined();
   });
 });
 
@@ -254,7 +254,7 @@ describe("POST /api/drafts", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Failed to create draft");
-    expect(res.body.message).toBe("db down");
+    expect(res.body.requestId).toBeDefined();
   });
 });
 
@@ -341,7 +341,7 @@ describe("PATCH /api/drafts/:id", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Failed to update draft");
-    expect(res.body.message).toBe("db down");
+    expect(res.body.requestId).toBeDefined();
   });
 });
 
@@ -380,7 +380,7 @@ describe("DELETE /api/drafts/:id", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Failed to delete draft");
-    expect(res.body.message).toBe("db down");
+    expect(res.body.requestId).toBeDefined();
   });
 });
 

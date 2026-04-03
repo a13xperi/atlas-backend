@@ -32,6 +32,10 @@ jest.mock("../../lib/prisma", () => ({
     },
     alert: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
     },
   },
 }));
@@ -214,5 +218,67 @@ describe("GET /api/alerts/feed", () => {
     expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 5, skip: 2 })
     );
+  });
+
+  it("only returns current user's alerts", async () => {
+    (mockPrisma.alert.findMany as jest.Mock).mockResolvedValueOnce([]);
+    await request(app).get("/api/alerts/feed").set(AUTH);
+    expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: "user-123" } })
+    );
+  });
+});
+
+describe("GET /api/alerts/:id", () => {
+  it("returns 404 for another user's alert", async () => {
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(null);
+    const res = await request(app).get("/api/alerts/other-alert-id").set(AUTH);
+    expect(res.status).toBe(404);
+    expect(mockPrisma.alert.findFirst).toHaveBeenCalledWith({
+      where: { id: "other-alert-id", userId: "user-123" },
+    });
+  });
+
+  it("returns alert owned by user", async () => {
+    const alert = { id: "a-1", userId: "user-123", title: "My Alert" };
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(alert);
+    const res = await request(app).get("/api/alerts/a-1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.alert.id).toBe("a-1");
+  });
+});
+
+describe("PATCH /api/alerts/:id", () => {
+  it("returns 404 for another user's alert", async () => {
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(null);
+    const res = await request(app).patch("/api/alerts/other-alert-id").set(AUTH).send({});
+    expect(res.status).toBe(404);
+  });
+
+  it("dismisses alert owned by user", async () => {
+    const alert = { id: "a-1", userId: "user-123", title: "My Alert" };
+    const dismissed = { ...alert, expiresAt: new Date() };
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(alert);
+    (mockPrisma.alert.update as jest.Mock).mockResolvedValueOnce(dismissed);
+    const res = await request(app).patch("/api/alerts/a-1").set(AUTH).send({});
+    expect(res.status).toBe(200);
+    expect(res.body.alert.expiresAt).toBeDefined();
+  });
+});
+
+describe("DELETE /api/alerts/:id", () => {
+  it("returns 404 for another user's alert", async () => {
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(null);
+    const res = await request(app).delete("/api/alerts/other-alert-id").set(AUTH);
+    expect(res.status).toBe(404);
+  });
+
+  it("deletes alert owned by user", async () => {
+    const alert = { id: "a-1", userId: "user-123", title: "My Alert" };
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(alert);
+    (mockPrisma.alert.delete as jest.Mock).mockResolvedValueOnce(alert);
+    const res = await request(app).delete("/api/alerts/a-1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
   });
 });

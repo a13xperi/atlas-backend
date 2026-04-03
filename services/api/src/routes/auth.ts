@@ -6,8 +6,8 @@ import { prisma } from "../lib/prisma";
 import { supabaseAdmin } from "../lib/supabase";
 import { config } from "../lib/config";
 import { logger } from "../lib/logger";
+import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
-import { buildErrorResponse } from "../middleware/requestId";
 import { rateLimit } from "../middleware/rateLimit";
 import { setAuthCookies, clearAuthCookies, getRefreshToken } from "../lib/cookies";
 
@@ -36,8 +36,10 @@ const loginSchema = z.object({
 });
 
 const refreshSchema = z.object({
-  refresh_token: z.string().min(1),
+  refresh_token: z.string().min(1).optional(),
 });
+
+const emptyBodySchema = z.object({}).passthrough();
 
 const linkAccountSchema = z.object({
   handle: z.string().min(1),
@@ -53,10 +55,10 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
     const body = registerSchema.parse(req.body);
 
     const existingHandle = await prisma.user.findUnique({ where: { handle: body.handle } });
-    if (existingHandle) return res.status(409).json(buildErrorResponse(req, "Handle already taken"));
+    if (existingHandle) return res.status(409).json(error("Handle already taken"));
 
     const existingEmail = await prisma.user.findUnique({ where: { email: body.email } });
-    if (existingEmail) return res.status(409).json(buildErrorResponse(req, "Email already registered"));
+    if (existingEmail) return res.status(409).json(error("Email already registered"));
 
     let supabaseId: string | undefined;
     let token: string;
@@ -118,17 +120,17 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
       setAuthCookies(res, token, refreshToken);
     }
 
-    res.json({
+    res.json(success({
       user: { id: user.id, handle: user.handle, role: user.role },
       token,
       refresh_token: refreshToken || null,
-    });
+    }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     logger.error({ err: err.message }, "Register error");
-    res.status(500).json(buildErrorResponse(req, "Registration failed"));
+    res.status(500).json(error("Registration failed"));
   }
 });
 
@@ -139,12 +141,12 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
 
     // Path 1: Try Supabase auth
     if (supabaseAdmin) {
-      const { data: session, error } = await supabaseAdmin.auth.signInWithPassword({
+      const { data: session, error: signInError } = await supabaseAdmin.auth.signInWithPassword({
         email: body.email,
         password: body.password,
       });
 
-      if (!error && session.session) {
+      if (!signInError && session.session) {
         let user = await prisma.user.findFirst({ where: { supabaseId: session.user.id } });
 
         // Lazy migration: link by email if supabaseId not set
@@ -160,11 +162,11 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
 
         if (user) {
           setAuthCookies(res, session.session.access_token, session.session.refresh_token);
-          return res.json({
+          return res.json(success({
             user: { id: user.id, handle: user.handle, role: user.role },
             token: session.session.access_token,
             refresh_token: session.session.refresh_token,
-          });
+          }));
         }
       }
       // Supabase failed — fall through to legacy path
@@ -173,30 +175,32 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
     // Path 2: Legacy bcrypt + JWT fallback
     const user = await prisma.user.findUnique({ where: { email: body.email } });
     if (!user) {
-      return res.status(401).json(buildErrorResponse(req, "Invalid credentials"));
+      return res.status(401).json(error("Invalid credentials"));
     }
 
     if (!user.passwordHash) {
-      return res.status(401).json(buildErrorResponse(req, "Invalid credentials. Try registering with email + password."));
+      return res
+        .status(401)
+        .json(error("Invalid credentials. Try registering with email + password."));
     }
 
     const valid = await bcrypt.compare(body.password, user.passwordHash);
     if (!valid) {
-      return res.status(401).json(buildErrorResponse(req, "Invalid credentials"));
+      return res.status(401).json(error("Invalid credentials"));
     }
 
     const token = signLegacyToken(user.id);
-    res.json({
+    res.json(success({
       user: { id: user.id, handle: user.handle, role: user.role },
       token,
       refresh_token: null,
-    });
+    }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     logger.error({ err: err.message }, "Login error:", err.message);
-    res.status(500).json(buildErrorResponse(req, "Login failed", {}));
+    res.status(500).json(error("Login failed"));
   }
 });
 
@@ -204,7 +208,8 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
 authRouter.post("/refresh", async (req, res) => {
   try {
     const cookieRefresh = getRefreshToken(req);
-    const bodyRefresh = req.body?.refresh_token;
+    const body = refreshSchema.parse(req.body ?? {});
+    const bodyRefresh = body.refresh_token;
     const refreshToken = cookieRefresh || bodyRefresh;
 
     if (!refreshToken) {
@@ -214,34 +219,37 @@ authRouter.post("/refresh", async (req, res) => {
         try {
           const decoded = jwt.verify(authHeader.slice(7), config.JWT_SECRET) as { userId: string };
           const newToken = signLegacyToken(decoded.userId);
-          return res.json({ token: newToken, refresh_token: null });
+          return res.json(success({ token: newToken, refresh_token: null }));
         } catch {
-          return res.status(400).json(buildErrorResponse(req, "Missing refresh token"));
+          return res.status(400).json(error("Missing refresh token"));
         }
       }
-      return res.status(400).json(buildErrorResponse(req, "Missing refresh token"));
+      return res.status(400).json(error("Missing refresh token"));
     }
 
     if (!supabaseAdmin) {
-      return res.status(503).json(buildErrorResponse(req, "Auth service unavailable"));
+      return res.status(503).json(error("Auth service unavailable"));
     }
 
-    const { data, error } = await supabaseAdmin.auth.refreshSession({
+    const { data, error: refreshError } = await supabaseAdmin.auth.refreshSession({
       refresh_token: refreshToken,
     });
 
-    if (error || !data.session) {
+    if (refreshError || !data.session) {
       clearAuthCookies(res);
-      return res.status(401).json(buildErrorResponse(req, "Invalid refresh token"));
+      return res.status(401).json(error("Invalid refresh token"));
     }
 
     setAuthCookies(res, data.session.access_token, data.session.refresh_token);
-    res.json({
+    res.json(success({
       token: data.session.access_token,
       refresh_token: data.session.refresh_token,
-    });
+    }));
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Token refresh failed"));
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Token refresh failed"));
   }
 });
 
@@ -251,12 +259,12 @@ authRouter.post("/link-account", async (req, res) => {
     const body = linkAccountSchema.parse(req.body);
 
     if (!supabaseAdmin) {
-      return res.status(503).json(buildErrorResponse(req, "Auth service unavailable"));
+      return res.status(503).json(error("Auth service unavailable"));
     }
 
     const user = await prisma.user.findUnique({ where: { handle: body.handle } });
-    if (!user) return res.status(404).json(buildErrorResponse(req, "No account found with this handle"));
-    if (user.supabaseId) return res.status(409).json(buildErrorResponse(req, "Account already linked"));
+    if (!user) return res.status(404).json(error("No account found with this handle"));
+    if (user.supabaseId) return res.status(409).json(error("Account already linked"));
 
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: body.email,
@@ -266,7 +274,9 @@ authRouter.post("/link-account", async (req, res) => {
 
     if (authError) {
       logger.error({ err: authError.message }, "Supabase createUser error:", authError.message);
-      return res.status(500).json(buildErrorResponse(req, "Failed to create auth account", { message: authError.message }));
+      return res
+        .status(500)
+        .json(error("Failed to create auth account", 500, { message: authError.message }));
     }
 
     await prisma.user.update({
@@ -274,20 +284,29 @@ authRouter.post("/link-account", async (req, res) => {
       data: { supabaseId: authData.user.id, email: body.email },
     });
 
-    res.json({ message: "Account linked. You can now log in with email + password." });
+    res.json(success({ message: "Account linked. You can now log in with email + password." }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     logger.error({ err: err.message }, "Link account error:", err.message);
-    res.status(500).json(buildErrorResponse(req, "Account linking failed", {}));
+    res.status(500).json(error("Account linking failed"));
   }
 });
 
 // Logout — clear HttpOnly cookies
-authRouter.post("/logout", authenticate, async (_req: AuthRequest, res) => {
-  clearAuthCookies(res);
-  res.json({ success: true });
+authRouter.post("/logout", authenticate, async (req: AuthRequest, res) => {
+  try {
+    emptyBodySchema.parse(req.body ?? {});
+
+    clearAuthCookies(res);
+    res.json(success({ success: true }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Logout failed"));
+  }
 });
 
 // Get current user
@@ -297,14 +316,14 @@ authRouter.get("/me", authenticate, async (req: AuthRequest, res) => {
       where: { id: req.userId },
       include: { voiceProfile: true },
     });
-    if (!user) return res.status(404).json(buildErrorResponse(req, "User not found"));
+    if (!user) return res.status(404).json(error("User not found"));
 
-    res.json({
+    res.json(success({
       user: { id: user.id, handle: user.handle, role: user.role, voiceProfile: user.voiceProfile },
-    });
+    }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Me error:", err.message);
-    res.status(500).json(buildErrorResponse(req, "Failed to get user", {}));
+    res.status(500).json(error("Failed to get user"));
   }
 });
 
@@ -316,9 +335,9 @@ authRouter.get("/sessions", authenticate, async (req: AuthRequest, res) => {
       select: { id: true, createdAt: true, expiresAt: true },
       orderBy: { createdAt: "desc" },
     });
-    res.json({ sessions });
+    res.json(success({ sessions }));
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to list sessions", {}));
+    res.status(500).json(error("Failed to list sessions"));
   }
 });
 
@@ -329,11 +348,11 @@ authRouter.delete("/sessions/:id", authenticate, async (req: AuthRequest, res) =
     const session = await prisma.session.findFirst({
       where: { id: sessionId, userId: req.userId },
     });
-    if (!session) return res.status(404).json(buildErrorResponse(req, "Session not found"));
+    if (!session) return res.status(404).json(error("Session not found"));
 
     await prisma.session.delete({ where: { id: sessionId } });
-    res.json({ success: true });
+    res.json(success({ success: true }));
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to revoke session", {}));
+    res.status(500).json(error("Failed to revoke session"));
   }
 });

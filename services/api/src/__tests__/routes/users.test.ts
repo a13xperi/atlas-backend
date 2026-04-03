@@ -8,6 +8,7 @@ import request from "supertest";
 import express from "express";
 import { usersRouter } from "../../routes/users";
 import { requestIdMiddleware } from "../../middleware/requestId";
+import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
 
 jest.mock("../../middleware/auth", () => ({
   authenticate: jest.fn((req: any, res: any, next: any) => {
@@ -71,15 +72,16 @@ describe("GET /api/users/profile", () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
     const res = await request(app).get("/api/users/profile").set(AUTH);
     expect(res.status).toBe(404);
-    expect(res.body.error).toBe("User not found");
+    expectErrorResponse(res.body, "User not found");
   });
 
   it("returns user without passwordHash", async () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(mockUser);
     const res = await request(app).get("/api/users/profile").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.user.id).toBe("user-123");
-    expect(res.body.user.passwordHash).toBeUndefined();
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.user.id).toBe("user-123");
+    expect(data.user.passwordHash).toBeUndefined();
   });
 });
 
@@ -99,8 +101,9 @@ describe("PATCH /api/users/profile", () => {
       .send({ displayName: "New Name" });
 
     expect(res.status).toBe(200);
-    expect(res.body.user.displayName).toBe("New Name");
-    expect(res.body.user.passwordHash).toBeUndefined();
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.user.displayName).toBe("New Name");
+    expect(data.user.passwordHash).toBeUndefined();
   });
 });
 
@@ -114,7 +117,7 @@ describe("GET /api/users/team", () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ ...mockUser, role: "ANALYST" });
     const res = await request(app).get("/api/users/team").set(AUTH);
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Manager access required");
+    expectErrorResponse(res.body, "Manager access required");
   });
 
   it("returns team list for MANAGER role", async () => {
@@ -123,14 +126,28 @@ describe("GET /api/users/team", () => {
 
     const res = await request(app).get("/api/users/team").set(AUTH);
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.team)).toBe(true);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(Array.isArray(data.team)).toBe(true);
     // passwordHash should be stripped
-    expect(res.body.team[0].passwordHash).toBeUndefined();
+    expect(data.team[0].passwordHash).toBeUndefined();
   });
 
   it("returns 403 when user not found in DB", async () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
     const res = await request(app).get("/api/users/team").set(AUTH);
     expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /api/users/push-top-profiles", () => {
+  it("returns 400 for an invalid action payload", async () => {
+    const res = await request(app)
+      .post("/api/users/push-top-profiles")
+      .set(AUTH)
+      .send([]);
+
+    expect(res.status).toBe(400);
+    const body = expectErrorResponse(res.body, "Invalid request");
+    expect(Array.isArray(body.details)).toBe(true);
   });
 });

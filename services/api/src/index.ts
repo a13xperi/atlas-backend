@@ -5,6 +5,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import dotenv from "dotenv";
+import packageJson from "../../../package.json";
 import { config } from "./lib/config";
 import { authRouter } from "./routes/auth";
 import { voiceRouter } from "./routes/voice";
@@ -16,6 +17,7 @@ import { researchRouter } from "./routes/research";
 import { trendingRouter } from "./routes/trending";
 import { imagesRouter } from "./routes/images";
 import { loopRouter } from "./routes/loop";
+import { docsRouter } from "./routes/docs";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
@@ -30,6 +32,62 @@ dotenv.config();
 
 const app = express();
 const PORT = config.PORT;
+
+type HealthCheckStatus = "ok" | "error";
+
+type TimedHealthCheck = {
+  status: HealthCheckStatus;
+  latencyMs: number;
+};
+
+function toMegabytes(bytes: number): number {
+  return Number((bytes / 1024 / 1024).toFixed(2));
+}
+
+async function runDatabaseHealthCheck(): Promise<TimedHealthCheck> {
+  const startedAt = Date.now();
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+
+    return {
+      status: "ok",
+      latencyMs: Date.now() - startedAt,
+    };
+  } catch {
+    return {
+      status: "error",
+      latencyMs: Date.now() - startedAt,
+    };
+  }
+}
+
+async function runRedisHealthCheck(): Promise<TimedHealthCheck> {
+  const startedAt = Date.now();
+
+  try {
+    const redis = getRedis();
+
+    if (!redis) {
+      return {
+        status: "error",
+        latencyMs: Date.now() - startedAt,
+      };
+    }
+
+    await redis.ping();
+
+    return {
+      status: "ok",
+      latencyMs: Date.now() - startedAt,
+    };
+  } catch {
+    return {
+      status: "error",
+      latencyMs: Date.now() - startedAt,
+    };
+  }
+}
 
 const allowedOrigins = [
   ...config.FRONTEND_URL.split(",").map((o) => o.trim()),
@@ -49,11 +107,7 @@ app.use(
           ? new RegExp("^" + ao.replace(/\*/g, ".*") + "$").test(origin)
           : ao === origin
       );
-      if (allowed) {
-        callback(null, true);
-      } else {
-        callback(new Error(`Origin ${origin} not allowed by CORS`));
-      }
+      callback(null, allowed || undefined);
     },
     credentials: true,
   })
@@ -66,40 +120,59 @@ app.use(rateLimit(100, 60 * 1000)); // Global: 100 req/min per IP
 
 // Health check
 app.get("/health", async (_req, res) => {
-  const checks: Record<string, string> = {};
-
-  // Database check
   try {
-    await prisma.$queryRaw`SELECT 1`;
-    checks.db = "ok";
-  } catch {
-    checks.db = "error";
-  }
+    const [database, redis] = await Promise.all([
+      runDatabaseHealthCheck(),
+      runRedisHealthCheck(),
+    ]);
+    const memoryUsage = process.memoryUsage();
+    const status =
+      database.status === "ok" && redis.status === "ok" ? "ok" : "degraded";
 
-  // Redis check
-  try {
-    const redis = getRedis();
-    if (redis) {
-      await redis.ping();
-      checks.redis = "ok";
-    } else {
-      checks.redis = "not_configured";
-    }
+    res.status(200).json({
+      status,
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(process.uptime()),
+      version: packageJson.version,
+      checks: {
+        database,
+        redis,
+        memory: {
+          heapUsedMB: toMegabytes(memoryUsage.heapUsed),
+          heapTotalMB: toMegabytes(memoryUsage.heapTotal),
+          rss: memoryUsage.rss,
+        },
+      },
+    });
   } catch {
-    checks.redis = "error";
-  }
+    const memoryUsage = process.memoryUsage();
 
-  const allOk = Object.values(checks).every((v) => v === "ok" || v === "not_configured");
-  res.status(allOk ? 200 : 503).json({
-    status: allOk ? "ok" : "degraded",
-    service: "atlas-api",
-    timestamp: new Date().toISOString(),
-    uptime: Math.floor(process.uptime()),
-    checks,
-  });
+    res.status(200).json({
+      status: "degraded",
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(process.uptime()),
+      version: packageJson.version,
+      checks: {
+        database: {
+          status: "error",
+          latencyMs: 0,
+        },
+        redis: {
+          status: "error",
+          latencyMs: 0,
+        },
+        memory: {
+          heapUsedMB: toMegabytes(memoryUsage.heapUsed),
+          heapTotalMB: toMegabytes(memoryUsage.heapTotal),
+          rss: memoryUsage.rss,
+        },
+      },
+    });
+  }
 });
 
 // Routes
+app.use("/api/docs", docsRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/voice", voiceRouter);
