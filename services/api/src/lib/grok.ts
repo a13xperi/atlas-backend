@@ -70,7 +70,7 @@ export async function searchTrending(params: TrendingSearchParams): Promise<Tren
   const response = await withRetry(
     () =>
       client.chat.completions.create({
-        model: "grok-3",
+        model: "grok-3-latest",
         max_tokens: 2000,
         temperature: 0.5,
         messages: [
