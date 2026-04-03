@@ -6,6 +6,7 @@ import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
 import { emitToUser } from "../lib/socket";
+import { success } from "../lib/response";
 
 export const alertsRouter = Router();
 alertsRouter.use(authenticate);
@@ -33,7 +34,7 @@ alertsRouter.get("/subscriptions", async (req: AuthRequest, res) => {
       take,
       skip,
     });
-    res.json({ subscriptions });
+    res.json(success({ subscriptions }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to load subscriptions");
     res
@@ -60,7 +61,7 @@ alertsRouter.post("/subscriptions", async (req: AuthRequest, res) => {
       },
     });
 
-    res.json({ subscription });
+    res.json(success({ subscription }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       if (req.body?.type === undefined || req.body?.value === undefined) {
@@ -94,7 +95,7 @@ alertsRouter.patch("/subscriptions/:id", async (req: AuthRequest, res) => {
       },
     });
 
-    res.json({ subscription: updated });
+    res.json(success({ subscription: updated }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res
@@ -116,7 +117,7 @@ alertsRouter.delete("/subscriptions/:id", async (req: AuthRequest, res) => {
     if (!sub) return res.status(404).json(buildErrorResponse(req, "Subscription not found"));
 
     await prisma.alertSubscription.delete({ where: { id: req.params.id as string } });
-    res.json({ success: true });
+    res.json(success({ success: true }));
   } catch (err: any) {
     res
       .status(500)
@@ -148,7 +149,7 @@ alertsRouter.get("/feed", async (req: AuthRequest, res) => {
       }
     });
 
-    res.json({ alerts });
+    res.json(success({ alerts }));
   } catch (err: any) {
     res.status(500).json(buildErrorResponse(req, "Failed to load alert feed"));
   }
@@ -162,7 +163,7 @@ alertsRouter.get("/:id", async (req: AuthRequest, res) => {
       where: { id: alertId, userId: req.userId },
     });
     if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
-    res.json({ alert });
+    res.json(success({ alert }));
   } catch (err: any) {
     res.status(500).json(buildErrorResponse(req, "Failed to get alert"));
   }
@@ -181,7 +182,7 @@ alertsRouter.patch("/:id", async (req: AuthRequest, res) => {
       where: { id: alertId },
       data: { expiresAt: new Date() },
     });
-    res.json({ alert: updated });
+    res.json(success({ alert: updated }));
   } catch (err: any) {
     res.status(500).json(buildErrorResponse(req, "Failed to update alert"));
   }
@@ -197,7 +198,7 @@ alertsRouter.delete("/:id", async (req: AuthRequest, res) => {
     if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
 
     await prisma.alert.delete({ where: { id: alertId } });
-    res.json({ success: true });
+    res.json(success({ success: true }));
   } catch (err: any) {
     res.status(500).json(buildErrorResponse(req, "Failed to delete alert"));
   }

@@ -116,8 +116,8 @@ describe("GET /api/drafts", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.drafts).toHaveLength(1);
-    expect(res.body.drafts[0].id).toBe("draft-1");
+    expect(res.body.data.drafts).toHaveLength(1);
+    expect(res.body.data.drafts[0].id).toBe("draft-1");
   });
 
   it("passes status filter to Prisma", async () => {
@@ -197,7 +197,7 @@ describe("GET /api/drafts/:id", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.id).toBe("draft-1");
+    expect(res.body.data.draft.id).toBe("draft-1");
   });
 
   it("returns 500 when loading a draft fails", async () => {
@@ -236,7 +236,7 @@ describe("POST /api/drafts", () => {
       .send({ content: "Hello crypto world!", sourceType: "MANUAL" });
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.content).toBe("Hello crypto world!");
+    expect(res.body.data.draft.content).toBe("Hello crypto world!");
     expect(mockPrisma.analyticsEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ type: "DRAFT_CREATED" }),
@@ -283,7 +283,7 @@ describe("PATCH /api/drafts/:id", () => {
       .send({ content: "updated content" });
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.content).toBe("updated content");
+    expect(res.body.data.draft.content).toBe("updated content");
   });
 
   it("logs FEEDBACK_GIVEN event when feedback is provided", async () => {
@@ -367,7 +367,7 @@ describe("DELETE /api/drafts/:id", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.body.data.success).toBe(true);
   });
 
   it("returns 500 when deleting a draft fails", async () => {
@@ -432,7 +432,7 @@ describe("POST /api/drafts/generate", () => {
       .send({ sourceContent: "BTC hits ATH", sourceType: "TWEET" });
 
     expect(res.status).toBe(200);
-    expect(res.body.draft).toBeDefined();
+    expect(res.body.data.draft).toBeDefined();
     expect(mockRunPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "user-123",
@@ -516,7 +516,7 @@ describe("POST /api/drafts/:id/regenerate", () => {
       .send({});
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.version).toBe(2);
+    expect(res.body.data.draft.version).toBe(2);
   });
 
   it("logs FEEDBACK_GIVEN when feedback is provided on regenerate", async () => {

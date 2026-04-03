@@ -4,6 +4,7 @@ import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateOAuthUrl, exchangeCodeForTokens, lookupUser } from "../lib/twitter";
 import { logger } from "../lib/logger";
 import { buildErrorResponse } from "../middleware/requestId";
+import { success } from "../lib/response";
 
 export const xAuthRouter = Router();
 
@@ -27,7 +28,7 @@ xAuthRouter.post("/authorize", authenticate, async (req: AuthRequest, res) => {
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
 
-    res.json({ url, state });
+    res.json(success({ url, state }));
   } catch (err: any) {
     logger.error({ err: err.message }, "X OAuth authorize failed");
     res.status(500).json(buildErrorResponse(req, "Failed to generate X authorization URL"));
@@ -85,7 +86,7 @@ xAuthRouter.post("/callback", authenticate, async (req: AuthRequest, res) => {
     });
 
     logger.info({ userId: req.userId, xHandle }, "X account linked");
-    res.json({ linked: true, xHandle: xHandle || null });
+    res.json(success({ linked: true, xHandle: xHandle || null }));
   } catch (err: any) {
     logger.error({ err: err.message }, "X OAuth callback failed");
     res.status(500).json(buildErrorResponse(req, "Failed to link X account"));
@@ -102,11 +103,11 @@ xAuthRouter.get("/status", authenticate, async (req: AuthRequest, res) => {
     select: { xHandle: true, xAccessToken: true, xTokenExpiresAt: true },
   });
 
-  res.json({
+  res.json(success({
     linked: !!user?.xAccessToken,
     xHandle: user?.xHandle || null,
     tokenExpired: user?.xTokenExpiresAt ? user.xTokenExpiresAt < new Date() : true,
-  });
+  }));
 });
 
 /**
@@ -118,7 +119,7 @@ xAuthRouter.post("/disconnect", authenticate, async (req: AuthRequest, res) => {
     where: { id: req.userId! },
     data: { xAccessToken: null, xRefreshToken: null, xTokenExpiresAt: null, xHandle: null },
   });
-  res.json({ linked: false });
+  res.json(success({ linked: false }));
 });
 
 // Cleanup expired pending OAuth entries periodically

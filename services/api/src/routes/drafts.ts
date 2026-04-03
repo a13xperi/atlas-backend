@@ -453,7 +453,7 @@ draftsRouter.post("/:id/engagement", async (req: AuthRequest, res) => {
       },
     });
 
-    res.json({ draft: updated });
+    res.json(success({ draft: updated }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res
@@ -494,7 +494,7 @@ draftsRouter.post("/:id/thread", authenticate, async (req: AuthRequest, res) => 
     const total = tweets.length;
     const thread = tweets.map((text, i) => `${i + 1}/${total} ${text}`);
 
-    res.json({ thread, count: total });
+    res.json(success({ thread, count: total }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to create thread");
     res.status(500).json(buildErrorResponse(req, "Failed to create thread"));
@@ -551,7 +551,7 @@ draftsRouter.post("/:id/post", authenticate, async (req: AuthRequest, res) => {
     });
 
     logger.info({ userId: req.userId, tweetId: tweet.id, draftId }, "Draft posted to X");
-    res.json({ draft: updated, tweet: { id: tweet.id, text: tweet.text } });
+    res.json(success({ draft: updated, tweet: { id: tweet.id, text: tweet.text } }));
   } catch (err: any) {
     logger.error({ err: err.message, stack: err.stack }, "Failed to post to X");
     res.status(502).json(buildErrorResponse(req, `Failed to post to X: ${err.message}`));
@@ -587,7 +587,7 @@ draftsRouter.post("/:id/schedule", authenticate, async (req: AuthRequest, res) =
     });
 
     logger.info({ userId: req.userId, draftId: draft.id, scheduledAt: body.scheduledAt }, "Draft scheduled");
-    res.json({ draft: updated });
+    res.json(success({ draft: updated }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
@@ -607,7 +607,7 @@ draftsRouter.post("/process-scheduled", authenticate, async (req: AuthRequest, r
     });
 
     if (dueDrafts.length === 0) {
-      return res.json({ processed: 0, message: "No drafts due for posting" });
+      return res.json(success({ processed: 0, message: "No drafts due for posting" }));
     }
 
     const { postTweet, refreshAccessToken } = await import("../lib/twitter");
@@ -651,7 +651,7 @@ draftsRouter.post("/process-scheduled", authenticate, async (req: AuthRequest, r
       }
     }
 
-    res.json({ processed: dueDrafts.length, posted, failed });
+    res.json(success({ processed: dueDrafts.length, posted, failed }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to process scheduled drafts");
     res.status(500).json(buildErrorResponse(req, "Failed to process scheduled drafts"));
