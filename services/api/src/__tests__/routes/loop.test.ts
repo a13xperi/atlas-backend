@@ -147,7 +147,7 @@ describe("POST /api/loop/create-pr", () => {
       .set("Authorization", AUTH)
       .send({ branch: "codex/loop-pr", taskId: "task-123" });
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
     expect(res.body.error).toBe("GitHub token not configured");
     expect(res.body.requestId).toBeDefined();
   });
