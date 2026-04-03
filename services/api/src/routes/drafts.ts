@@ -400,8 +400,9 @@ draftsRouter.post("/:id/engagement", async (req: AuthRequest, res) => {
 // Split a draft into a numbered thread
 draftsRouter.post("/:id/thread", authenticate, async (req: AuthRequest, res) => {
   try {
+    const draftId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const draft = await prisma.tweetDraft.findUnique({
-      where: { id: req.params.id },
+      where: { id: draftId },
     });
     if (!draft || draft.userId !== req.userId!) {
       return res.status(404).json(buildErrorResponse(req, "Draft not found"));
