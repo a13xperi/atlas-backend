@@ -100,12 +100,10 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
         handle: body.handle,
         email: body.email,
         passwordHash,
-        onboardingTrack:
-          body.onboardingTrack === "A"
-            ? "TRACK_A"
-            : body.onboardingTrack === "B"
-              ? "TRACK_B"
-              : undefined,
+        ...(body.onboardingTrack && {
+          onboardingTrack:
+            body.onboardingTrack === "A" ? "TRACK_A" : "TRACK_B",
+        }),
         voiceProfile: { create: {} },
       },
       include: { voiceProfile: true },
