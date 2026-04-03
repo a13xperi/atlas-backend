@@ -1,8 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
+import { parsePagination } from "../lib/pagination";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
+import { logger } from "../lib/logger";
 
 export const alertsRouter = Router();
 alertsRouter.use(authenticate);
@@ -23,14 +25,19 @@ const updateSubscriptionSchema = z.object({
 // Get user's alert subscriptions
 alertsRouter.get("/subscriptions", async (req: AuthRequest, res) => {
   try {
+    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
+
     const subscriptions = await prisma.alertSubscription.findMany({
       where: { userId: req.userId },
+      take,
+      skip,
     });
     res.json({ subscriptions });
   } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to load subscriptions");
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load subscriptions"));
+      .json(buildErrorResponse(req, "Failed to load subscriptions", { message: err.message }));
   }
 });
 
@@ -119,13 +126,13 @@ alertsRouter.delete("/subscriptions/:id", async (req: AuthRequest, res) => {
 // Get recent alerts (feed) — must be before /:id to avoid matching "feed" as an ID
 alertsRouter.get("/feed", async (req: AuthRequest, res) => {
   try {
-    const { limit = "20", offset = "0" } = req.query;
+    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
 
     const alerts = await prisma.alert.findMany({
       where: { userId: req.userId },
       orderBy: { createdAt: "desc" },
-      take: parseInt(limit as string),
-      skip: parseInt(offset as string),
+      take,
+      skip,
     });
 
     alerts.forEach((alert: any) => {

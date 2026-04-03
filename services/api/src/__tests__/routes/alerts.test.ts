@@ -78,6 +78,37 @@ describe("GET /api/alerts/subscriptions", () => {
     const res = await request(app).get("/api/alerts/subscriptions").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.subscriptions).toHaveLength(1);
+    expect(mockPrisma.alertSubscription.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-123" },
+        take: 20,
+        skip: 0,
+      })
+    );
+  });
+
+  it("applies pagination to subscriptions", async () => {
+    (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    await request(app).get("/api/alerts/subscriptions?limit=5&offset=2").set(AUTH);
+
+    expect(mockPrisma.alertSubscription.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-123" },
+        take: 5,
+        skip: 2,
+      })
+    );
+  });
+
+  it("returns 500 when loading subscriptions fails", async () => {
+    (mockPrisma.alertSubscription.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app).get("/api/alerts/subscriptions").set(AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to load subscriptions");
+    expect(res.body.message).toBe("db down");
   });
 });
 
@@ -160,6 +191,9 @@ describe("GET /api/alerts/feed", () => {
     const res = await request(app).get("/api/alerts/feed").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.alerts).toHaveLength(1);
+    expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 20, skip: 0 })
+    );
   });
 
   it("respects limit query param", async () => {
