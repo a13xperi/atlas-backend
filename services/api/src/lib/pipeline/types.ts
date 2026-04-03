@@ -32,6 +32,8 @@ export interface PipelineContext {
   // --- Accumulated by steps ---
   voiceProfile?: VoiceDimensions;
   blendVoices?: { label: string; percentage: number }[];
+  /** Weighted-average dimensions computed from reference voice profiles in a blend */
+  blendedDimensions?: Partial<VoiceDimensions>;
   researchContext?: string;
   generatedContent?: string;
   confidence?: number;
