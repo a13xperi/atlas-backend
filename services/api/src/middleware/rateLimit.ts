@@ -67,6 +67,17 @@ function memIncr(key: string, windowMs: number): { count: number; remaining: num
   return { count: entry.count, remaining: 0, resetAt: entry.resetAt };
 }
 
+function setRateLimitHeaders(
+  res: Response,
+  maxRequests: number,
+  count: number,
+  resetAt: number
+) {
+  res.setHeader("X-RateLimit-Limit", maxRequests);
+  res.setHeader("X-RateLimit-Remaining", Math.max(0, maxRequests - count));
+  res.setHeader("X-RateLimit-Reset", Math.ceil(resetAt / 1000));
+}
+
 /**
  * Rate limiter factory. Keys by client IP + path.
  * Uses Redis if available, falls back to in-memory.
@@ -79,8 +90,7 @@ export function rateLimit(maxRequests: number, windowMs: number) {
 
     if (redisResult) {
       const { count, ttl } = redisResult;
-      res.setHeader("X-RateLimit-Limit", maxRequests);
-      res.setHeader("X-RateLimit-Remaining", Math.max(0, maxRequests - count));
+      setRateLimitHeaders(res, maxRequests, count, Date.now() + ttl);
       if (count > maxRequests) {
         const retryAfter = Math.ceil(ttl / 1000);
         res.setHeader("Retry-After", retryAfter);
@@ -93,8 +103,7 @@ export function rateLimit(maxRequests: number, windowMs: number) {
 
     // Fallback to in-memory
     const { count, resetAt } = memIncr(key, windowMs);
-    res.setHeader("X-RateLimit-Limit", maxRequests);
-    res.setHeader("X-RateLimit-Remaining", Math.max(0, maxRequests - count));
+    setRateLimitHeaders(res, maxRequests, count, resetAt);
 
     if (count > maxRequests) {
       const retryAfter = Math.ceil((resetAt - Date.now()) / 1000);
@@ -121,8 +130,7 @@ export function rateLimitByUser(maxRequests: number, windowMs: number) {
 
     if (redisResult) {
       const { count, ttl } = redisResult;
-      res.setHeader("X-RateLimit-Limit", maxRequests);
-      res.setHeader("X-RateLimit-Remaining", Math.max(0, maxRequests - count));
+      setRateLimitHeaders(res, maxRequests, count, Date.now() + ttl);
       if (count > maxRequests) {
         res.setHeader("Retry-After", Math.ceil(ttl / 1000));
         return res.status(429).json(
@@ -133,8 +141,7 @@ export function rateLimitByUser(maxRequests: number, windowMs: number) {
     }
 
     const { count, resetAt } = memIncr(key, windowMs);
-    res.setHeader("X-RateLimit-Limit", maxRequests);
-    res.setHeader("X-RateLimit-Remaining", Math.max(0, maxRequests - count));
+    setRateLimitHeaders(res, maxRequests, count, resetAt);
 
     if (count > maxRequests) {
       res.setHeader("Retry-After", Math.ceil((resetAt - Date.now()) / 1000));
