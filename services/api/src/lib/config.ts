@@ -26,8 +26,11 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   SUPABASE_JWT_SECRET: z.string().optional(),
 
-  // Twitter
+  // Twitter / X
   TWITTER_BEARER_TOKEN: z.string().optional(),
+  TWITTER_CLIENT_ID: z.string().optional(),
+  TWITTER_CLIENT_SECRET: z.string().optional(),
+  TWITTER_OAUTH_CALLBACK_URL: z.string().optional(),
 
   // Telegram
   TELEGRAM_BOT_TOKEN: z.string().optional(),
