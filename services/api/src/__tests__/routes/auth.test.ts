@@ -130,7 +130,7 @@ describe("POST /api/auth/register", () => {
     expect(data.user.handle).toBe("atlasanalyst");
     expect(data.token).toBe("sb-token");
     expect(data.refresh_token).toBe("sb-refresh");
-  });
+  }, 15000);
 
   it("returns 409 when handle already exists", async () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(mockUser);

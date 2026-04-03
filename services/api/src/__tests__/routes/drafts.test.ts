@@ -114,6 +114,15 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  (mockPrisma.tweetDraft.findMany as jest.Mock).mockReset();
+  (mockPrisma.tweetDraft.findFirst as jest.Mock).mockReset();
+  (mockPrisma.tweetDraft.count as jest.Mock).mockReset();
+  (mockPrisma.tweetDraft.create as jest.Mock).mockReset();
+  (mockPrisma.tweetDraft.update as jest.Mock).mockReset();
+  (mockPrisma.tweetDraft.delete as jest.Mock).mockReset();
+  (mockPrisma.user.findUnique as jest.Mock).mockReset();
+  (mockPrisma.savedBlend.findFirst as jest.Mock).mockReset();
+  (mockPrisma.analyticsEvent.create as jest.Mock).mockReset();
   mockRunPipeline.mockReset();
   mockConductResearch.mockReset();
   mockFetch.mockReset();
