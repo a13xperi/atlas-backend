@@ -70,8 +70,8 @@ describe("POST /api/drafts/:id/thread", () => {
       .post("/api/drafts/draft-1/thread")
       .set("Authorization", "Bearer test-token");
     expect(res.status).toBe(200);
-    expect(res.body.count).toBe(1);
-    expect(res.body.thread[0]).toBe("1/1 Short tweet.");
+    expect(res.body.data.count).toBe(1);
+    expect(res.body.data.thread[0]).toBe("1/1 Short tweet.");
   });
 
   it("splits long content into numbered tweets", async () => {
@@ -81,9 +81,9 @@ describe("POST /api/drafts/:id/thread", () => {
       .post("/api/drafts/draft-1/thread")
       .set("Authorization", "Bearer test-token");
     expect(res.status).toBe(200);
-    expect(res.body.count).toBeGreaterThan(1);
-    expect(res.body.thread[0]).toMatch(/^1\//);
-    for (const tweet of res.body.thread) {
+    expect(res.body.data.count).toBeGreaterThan(1);
+    expect(res.body.data.thread[0]).toMatch(/^1\//);
+    for (const tweet of res.body.data.thread) {
       expect(tweet.length).toBeLessThanOrEqual(280);
     }
   });
