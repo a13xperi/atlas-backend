@@ -1061,8 +1061,19 @@ async function seedUser(userSeed: DemoUserSeed, passwordHash: string) {
   }
 
   for (const subscription of userSeed.subscriptions ?? []) {
-    await prisma.alertSubscription.create({
-      data: {
+    await prisma.alertSubscription.upsert({
+      where: {
+        userId_type_value: {
+          userId: user.id,
+          type: subscription.type,
+          value: subscription.value,
+        },
+      },
+      update: {
+        delivery: subscription.delivery,
+        isActive: subscription.isActive ?? true,
+      },
+      create: {
         userId: user.id,
         type: subscription.type,
         value: subscription.value,
@@ -1103,10 +1114,13 @@ async function seedUser(userSeed: DemoUserSeed, passwordHash: string) {
   for (let index = 0; index < (userSeed.sessions ?? []).length; index += 1) {
     const session = userSeed.sessions![index];
     const createdAt = daysAgo(session.daysAgo, session.hour);
-    await prisma.session.create({
-      data: {
+    const sessionToken = `${SEED_TAG}:${userSeed.handle}:${session.suffix}:${index + 1}`;
+    await prisma.session.upsert({
+      where: { token: sessionToken },
+      update: {},
+      create: {
         userId: user.id,
-        token: `${SEED_TAG}:${userSeed.handle}:${session.suffix}:${index + 1}`,
+        token: sessionToken,
         expiresAt: addDays(createdAt, 30),
         createdAt,
       },
