@@ -1,59 +1,62 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
-import { logger } from "../lib/logger";
 
-export const briefingRouter = Router();
+const briefingRouter = Router();
 briefingRouter.use(authenticate);
 
-const preferencesSchema = z.object({
-  deliveryTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  topics: z.array(z.string()).optional(),
-  sources: z.array(z.string()).optional(),
-  channel: z.enum(["PORTAL", "TELEGRAM", "BOTH"]).optional(),
+const briefingPreferencesSchema = z.object({
+  deliveryTime: z.string(),
+  topics: z.array(z.string()),
+  sources: z.array(z.string()),
+  channel: z.string(),
 });
 
-// GET /api/briefing/preferences
 briefingRouter.get("/preferences", async (req: AuthRequest, res) => {
   try {
-    const pref = await prisma.briefingPreference.findUnique({
-      where: { userId: req.userId },
+    const userId = req.userId!;
+    const result = await prisma.briefingPreference.findUnique({
+      where: { userId },
     });
-    res.json({
-      ok: true,
-      data: {
-        preference: pref || {
-          deliveryTime: "08:00",
-          topics: [],
-          sources: [],
-          channel: "PORTAL",
-        },
-      },
-    });
-  } catch (err) {
-    logger.error({ err }, "Failed to fetch briefing preferences");
-    res.status(500).json({ ok: false, error: "Failed to fetch preferences" });
+
+    res.json(success({ preference: result || null }));
+  } catch (err: any) {
+    res.status(500).json(error("Failed to fetch briefing preferences"));
   }
 });
 
-// PUT /api/briefing/preferences
 briefingRouter.put("/preferences", async (req: AuthRequest, res) => {
   try {
-    const data = preferencesSchema.parse(req.body);
-    const pref = await prisma.briefingPreference.upsert({
-      where: { userId: req.userId },
-      update: data,
-      create: { userId: req.userId!, ...data },
+    const userId = req.userId!;
+    const body = briefingPreferencesSchema.parse(req.body);
+
+    const result = await prisma.briefingPreference.upsert({
+      where: { userId },
+      create: {
+        userId,
+        deliveryTime: body.deliveryTime,
+        topics: body.topics,
+        sources: body.sources,
+        channel: body.channel,
+      },
+      update: {
+        deliveryTime: body.deliveryTime,
+        topics: body.topics,
+        sources: body.sources,
+        channel: body.channel,
+      },
     });
-    res.json({ ok: true, data: { preference: pref } });
-  } catch (err) {
+
+    res.json(success({ preference: result }));
+  } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json({ ok: false, error: err.errors[0].message });
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    logger.error({ err }, "Failed to save briefing preferences");
-    res.status(500).json({ ok: false, error: "Failed to save preferences" });
+
+    res.status(500).json(error("Failed to save briefing preferences"));
   }
 });
+
+export default briefingRouter;
