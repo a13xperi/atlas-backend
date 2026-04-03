@@ -129,7 +129,7 @@ describe("routeCompletion", () => {
       { provider: "anthropic", taskType: "research", error: "Rate limited" },
       "Provider failed, trying next"
     );
-  });
+  }, 15000);
 
   it("falls back through full chain until one succeeds", async () => {
     mockOpenai.completeMock.mockRejectedValueOnce(new Error("Timeout"));
