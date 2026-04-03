@@ -19,6 +19,10 @@ const generateSchema = z.object({
   replyAngle: z.enum(["Direct", "Curious", "Concise"]).optional(),
 });
 
+const refineSchema = z.object({
+  instruction: z.string().min(1).max(1000),
+});
+
 const regenerateSchema = z.object({
   feedback: z.string().max(1000).optional(),
 });
@@ -177,6 +181,68 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
     }
     logger.error({ err: err.message }, "Regenerate failed");
     res.status(502).json(buildErrorResponse(req, "AI generation failed"));
+  }
+});
+
+// Refine a draft with a custom instruction
+draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
+  try {
+    const body = refineSchema.parse(req.body);
+
+    const existing = await prisma.tweetDraft.findFirst({
+      where: { id: req.params.id as string, userId: req.userId },
+    });
+    if (!existing) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+
+    // Build refined content: use the existing draft as source, instruction as feedback
+    const refinedSource = `Original draft: "${existing.content}"\n\nRefinement instruction: ${body.instruction}`;
+
+    const result = await withTimeout(
+      runGenerationPipeline({
+        userId: req.userId!,
+        sourceContent: refinedSource,
+        sourceType: "MANUAL",
+        blendId: existing.blendId || undefined,
+        feedback: body.instruction,
+      }),
+      90_000,
+      "refine-pipeline",
+    );
+
+    const draft = await prisma.tweetDraft.create({
+      data: {
+        userId: req.userId!,
+        content: result.ctx.generatedContent!,
+        sourceType: existing.sourceType,
+        sourceContent: existing.sourceContent,
+        blendId: existing.blendId,
+        confidence: result.ctx.confidence,
+        predictedEngagement: result.ctx.predictedEngagement,
+        version: existing.version + 1,
+        feedback: body.instruction,
+      },
+    });
+
+    await prisma.analyticsEvent.create({
+      data: { userId: req.userId!, type: "DRAFT_CREATED" },
+    });
+    await prisma.analyticsEvent.create({
+      data: { userId: req.userId!, type: "FEEDBACK_GIVEN" },
+    });
+
+    res.json({ draft });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    if (err instanceof TimeoutError) {
+      return res.status(504).json(buildErrorResponse(req, "Refinement timed out — please try again"));
+    }
+    if (err.message?.includes("Voice profile not found")) {
+      return res.status(400).json(buildErrorResponse(req, err.message));
+    }
+    logger.error({ err: err.message }, "Refine failed");
+    res.status(502).json(buildErrorResponse(req, "AI refinement failed"));
   }
 });
 
@@ -434,8 +500,8 @@ draftsRouter.post("/:id/thread", authenticate, async (req: AuthRequest, res) => 
   }
 });
 
-// Post a draft to X
-draftsRouter.post("/:id/post-to-x", authenticate, async (req: AuthRequest, res) => {
+// Post a draft to X (accepts both /post and /post-to-x for backwards compat)
+draftsRouter.post("/:id/post", authenticate, async (req: AuthRequest, res) => {
   try {
     const { postTweet, refreshAccessToken } = await import("../lib/twitter");
 
