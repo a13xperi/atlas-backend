@@ -77,7 +77,7 @@ describe("GET /api/alerts/subscriptions", () => {
     (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([mockSub]);
     const res = await request(app).get("/api/alerts/subscriptions").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.subscriptions).toHaveLength(1);
+    expect(res.body.data.subscriptions).toHaveLength(1);
     expect(mockPrisma.alertSubscription.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: "user-123" },
@@ -131,7 +131,7 @@ describe("POST /api/alerts/subscriptions", () => {
       .send({ type: "CATEGORY", value: "DeFi" });
 
     expect(res.status).toBe(200);
-    expect(res.body.subscription.value).toBe("DeFi");
+    expect(res.body.data.subscription.value).toBe("DeFi");
   });
 });
 
@@ -157,7 +157,7 @@ describe("PATCH /api/alerts/subscriptions/:id", () => {
       .send({ isActive: false });
 
     expect(res.status).toBe(200);
-    expect(res.body.subscription.isActive).toBe(false);
+    expect(res.body.data.subscription.isActive).toBe(false);
   });
 });
 
@@ -179,7 +179,7 @@ describe("DELETE /api/alerts/subscriptions/:id", () => {
       .set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.body.data.success).toBe(true);
   });
 });
 
@@ -190,7 +190,7 @@ describe("GET /api/alerts/feed", () => {
 
     const res = await request(app).get("/api/alerts/feed").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.alerts).toHaveLength(1);
+    expect(res.body.data.alerts).toHaveLength(1);
     expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 20, skip: 0 })
     );
@@ -214,7 +214,7 @@ describe("GET /api/alerts/feed", () => {
     const res = await request(app).get("/api/alerts/feed?limit=5&offset=2").set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.alerts).toEqual(alerts);
+    expect(res.body.data.alerts).toEqual(alerts);
     expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 5, skip: 2 })
     );
@@ -244,7 +244,7 @@ describe("GET /api/alerts/:id", () => {
     (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(alert);
     const res = await request(app).get("/api/alerts/a-1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.alert.id).toBe("a-1");
+    expect(res.body.data.alert.id).toBe("a-1");
   });
 });
 
@@ -262,7 +262,7 @@ describe("PATCH /api/alerts/:id", () => {
     (mockPrisma.alert.update as jest.Mock).mockResolvedValueOnce(dismissed);
     const res = await request(app).patch("/api/alerts/a-1").set(AUTH).send({});
     expect(res.status).toBe(200);
-    expect(res.body.alert.expiresAt).toBeDefined();
+    expect(res.body.data.alert.expiresAt).toBeDefined();
   });
 });
 
@@ -279,6 +279,6 @@ describe("DELETE /api/alerts/:id", () => {
     (mockPrisma.alert.delete as jest.Mock).mockResolvedValueOnce(alert);
     const res = await request(app).delete("/api/alerts/a-1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.body.data.success).toBe(true);
   });
 });
