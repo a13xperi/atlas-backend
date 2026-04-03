@@ -137,8 +137,10 @@ function describeSelfPromotionalIntensity(v: number): string {
   return "High self-promotion. Lean into personal brand, authority, and status signals.";
 }
 
-function normalizeTenPointDimension(value?: number): number {
-  return value ?? 5;
+/** Convert a 0-100 stored value to 0-10 scale for prompt descriptions */
+function toTenPointScale(value?: number): number {
+  if (value === undefined || value === null) return 5;
+  return Math.round(value / 10);
 }
 
 function getSourceTypeInstruction(sourceType: string): string {
@@ -161,14 +163,14 @@ function getSourceTypeInstruction(sourceType: string): string {
 
 export function buildTweetPrompt(params: PromptParams): { system: string; userMessage: string } {
   const { voiceProfile, sourceContent, sourceType, blendVoices, feedback } = params;
-  const directness = normalizeTenPointDimension(voiceProfile.directness);
-  const warmth = normalizeTenPointDimension(voiceProfile.warmth);
-  const technicalDepth = normalizeTenPointDimension(voiceProfile.technicalDepth);
-  const confidence = normalizeTenPointDimension(voiceProfile.confidence);
-  const evidenceOrientation = normalizeTenPointDimension(voiceProfile.evidenceOrientation);
-  const solutionOrientation = normalizeTenPointDimension(voiceProfile.solutionOrientation);
-  const socialPosture = normalizeTenPointDimension(voiceProfile.socialPosture);
-  const selfPromotionalIntensity = normalizeTenPointDimension(voiceProfile.selfPromotionalIntensity);
+  const directness = toTenPointScale(voiceProfile.directness);
+  const warmth = toTenPointScale(voiceProfile.warmth);
+  const technicalDepth = toTenPointScale(voiceProfile.technicalDepth);
+  const confidence = toTenPointScale(voiceProfile.confidence);
+  const evidenceOrientation = toTenPointScale(voiceProfile.evidenceOrientation);
+  const solutionOrientation = toTenPointScale(voiceProfile.solutionOrientation);
+  const socialPosture = toTenPointScale(voiceProfile.socialPosture);
+  const selfPromotionalIntensity = toTenPointScale(voiceProfile.selfPromotionalIntensity);
 
   // Build the voice description with emphasis on extreme values
   const voiceDescription = [
