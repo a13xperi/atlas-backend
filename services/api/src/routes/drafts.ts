@@ -396,3 +396,37 @@ draftsRouter.post("/:id/engagement", async (req: AuthRequest, res) => {
       .json(buildErrorResponse(req, "Failed to record engagement"));
   }
 });
+
+// Split a draft into a numbered thread
+draftsRouter.post("/:id/thread", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const draft = await prisma.tweetDraft.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!draft || draft.userId !== req.userId!) {
+      return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+    }
+
+    const sentences = draft.content.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const tweets: string[] = [];
+    let current = "";
+
+    for (const sentence of sentences) {
+      if ((current + " " + sentence).trim().length > 270) {
+        if (current) tweets.push(current.trim());
+        current = sentence;
+      } else {
+        current = current ? current + " " + sentence : sentence;
+      }
+    }
+    if (current) tweets.push(current.trim());
+
+    const total = tweets.length;
+    const thread = tweets.map((text, i) => `${i + 1}/${total} ${text}`);
+
+    res.json({ thread, count: total });
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to create thread");
+    res.status(500).json(buildErrorResponse(req, "Failed to create thread"));
+  }
+});
