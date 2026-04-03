@@ -62,6 +62,17 @@ beforeAll(() => {
   process.env.JWT_SECRET = "test-secret";
 });
 
+beforeEach(() => {
+  (mockPrisma.alertSubscription.findMany as jest.Mock).mockReset();
+  (mockPrisma.alertSubscription.findFirst as jest.Mock).mockReset();
+  (mockPrisma.alertSubscription.upsert as jest.Mock).mockReset();
+  (mockPrisma.alertSubscription.update as jest.Mock).mockReset();
+  (mockPrisma.alertSubscription.delete as jest.Mock).mockReset();
+  (mockPrisma.alert.findMany as jest.Mock).mockReset();
+  (mockPrisma.alert.findUnique as jest.Mock).mockReset();
+  (mockPrisma.alert.update as jest.Mock).mockReset();
+});
+
 afterAll(() => {
   delete process.env.JWT_SECRET;
 });
