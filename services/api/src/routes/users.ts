@@ -196,6 +196,7 @@ usersRouter.post("/send-nudge", async (req: AuthRequest, res) => {
         type: "NUDGE",
         title: "Time to get back in the game!",
         context: `Your manager ${manager.displayName ?? manager.handle} noticed you haven't been active. Jump in and craft some tweets!`,
+        category: "NOTIFICATION" as const,
         userId: a.id,
       })),
     });

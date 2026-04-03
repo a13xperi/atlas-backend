@@ -222,6 +222,11 @@ enum AlertDelivery {
   TELEGRAM
 }
 
+enum AlertCategory {
+  SIGNAL
+  NOTIFICATION
+}
+
 model Alert {
   id          String      @id @default(cuid())
   type        String
@@ -231,6 +236,7 @@ model Alert {
   sourceUrl   String?
   sentiment   String?
   relevance   Float?
+  category    AlertCategory @default(SIGNAL)
   userId      String?
   expiresAt   DateTime?
   createdAt   DateTime    @default(now())
