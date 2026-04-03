@@ -55,20 +55,23 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
   }
 });
 
+const learningLogSchema = z.object({
+  event: z.string().min(1),
+  impact: z.string().min(1),
+  positive: z.boolean().default(true),
+});
+
 // Create learning log entry
 analyticsRouter.post("/learning-log", async (req: AuthRequest, res) => {
   try {
-    const { event, impact, positive } = req.body;
-    if (!event) {
-      return res.status(400).json(buildErrorResponse(req, "Event description is required"));
-    }
+    const { event, impact, positive } = learningLogSchema.parse(req.body);
 
     const entry = await prisma.learningLogEntry.create({
       data: {
         userId: req.userId!,
         event,
-        impact: impact || null,
-        positive: positive !== undefined ? positive : true,
+        impact,
+        positive,
       },
     });
 

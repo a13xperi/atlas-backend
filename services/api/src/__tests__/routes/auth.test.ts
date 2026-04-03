@@ -8,6 +8,10 @@ import request from "supertest";
 import express from "express";
 import { requestIdMiddleware } from "../../middleware/requestId";
 
+process.env.NODE_ENV = "test";
+process.env.JWT_SECRET = "test-secret";
+process.env.DATABASE_URL = "postgresql://localhost:5432/atlas_test";
+
 const mockSupabaseAuth = {
   admin: {
     createUser: jest.fn(),
@@ -42,6 +46,14 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("jsonwebtoken", () => ({
   sign: jest.fn().mockReturnValue("mock_token"),
   verify: jest.fn().mockReturnValue({ userId: "user-123" }),
+}));
+
+jest.mock("bcryptjs", () => ({
+  __esModule: true,
+  default: {
+    hash: jest.fn().mockResolvedValue("hashed-password"),
+    compare: jest.fn().mockResolvedValue(true),
+  },
 }));
 
 // Must import AFTER mocks
@@ -85,13 +97,8 @@ const mockSession = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env.JWT_SECRET = "test-secret";
   // Default: getUser fails so authenticate falls through to JWT path
   mockSupabaseAuth.getUser.mockResolvedValue({ data: { user: null }, error: { message: "invalid" } });
-});
-
-afterEach(() => {
-  delete process.env.JWT_SECRET;
 });
 
 describe("POST /api/auth/register", () => {

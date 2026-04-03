@@ -1,11 +1,19 @@
 import { Router } from "express";
 import { z } from "zod";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 import { supabaseAdmin } from "../lib/supabase";
+import { config } from "../lib/config";
+import { logger } from "../lib/logger";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
 import { rateLimit } from "../middleware/rateLimit";
 import { setAuthCookies, clearAuthCookies, getRefreshToken } from "../lib/cookies";
+
+function signLegacyToken(userId: string): string {
+  return jwt.sign({ userId }, config.JWT_SECRET, { expiresIn: "7d" });
+}
 
 export const authRouter = Router();
 
@@ -39,14 +47,10 @@ const linkAccountSchema = z.object({
 
 // --- Routes ---
 
-// Register — create Supabase auth user + Prisma user, return session
+// Register — Supabase auth with legacy bcrypt fallback
 authRouter.post("/register", registerLimiter, async (req, res) => {
   try {
     const body = registerSchema.parse(req.body);
-
-    if (!supabaseAdmin) {
-      return res.status(503).json(buildErrorResponse(req, "Auth service unavailable"));
-    }
 
     const existingHandle = await prisma.user.findUnique({ where: { handle: body.handle } });
     if (existingHandle) return res.status(409).json(buildErrorResponse(req, "Handle already taken"));
@@ -54,25 +58,46 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
     const existingEmail = await prisma.user.findUnique({ where: { email: body.email } });
     if (existingEmail) return res.status(409).json(buildErrorResponse(req, "Email already registered"));
 
-    // Create Supabase auth user
-    const { data: supabaseUser, error: createError } =
-      await supabaseAdmin.auth.admin.createUser({
-        email: body.email,
-        password: body.password,
-        email_confirm: true,
-      });
+    let supabaseId: string | undefined;
+    let token: string;
+    let refreshToken: string | undefined;
 
-    if (createError || !supabaseUser.user) {
-      console.error("Supabase createUser error:", createError);
-      return res.status(400).json(buildErrorResponse(req, createError?.message || "Failed to create auth user"));
+    // Try Supabase auth first
+    if (supabaseAdmin) {
+      const { data: supabaseUser, error: createError } =
+        await supabaseAdmin.auth.admin.createUser({
+          email: body.email,
+          password: body.password,
+          email_confirm: true,
+        });
+
+      if (!createError && supabaseUser.user) {
+        supabaseId = supabaseUser.user.id;
+
+        // Sign in to get Supabase tokens
+        const { data: session } = await supabaseAdmin.auth.signInWithPassword({
+          email: body.email,
+          password: body.password,
+        });
+
+        if (session?.session) {
+          token = session.session.access_token;
+          refreshToken = session.session.refresh_token;
+        }
+      } else {
+        logger.warn({ err: createError?.message }, "Supabase createUser failed, using legacy auth");
+      }
     }
 
-    // Create Prisma user linked to Supabase
+    // Hash password for legacy fallback (always store for dual-mode support)
+    const passwordHash = await bcrypt.hash(body.password, 10);
+
     const user = await prisma.user.create({
       data: {
-        supabaseId: supabaseUser.user.id,
+        supabaseId,
         handle: body.handle,
         email: body.email,
+        passwordHash,
         onboardingTrack:
           body.onboardingTrack === "A"
             ? "TRACK_A"
@@ -84,89 +109,98 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
       include: { voiceProfile: true },
     });
 
-    // Sign in to get tokens
-    const { data: session, error: signInError } =
-      await supabaseAdmin.auth.signInWithPassword({
-        email: body.email,
-        password: body.password,
-      });
-
-    if (signInError || !session.session) {
-      console.error("Sign-in after register failed:", signInError);
-      return res.status(201).json({
-        user: { id: user.id, handle: user.handle, role: user.role },
-        token: null,
-        message: "Account created. Please log in.",
-      });
+    // If no Supabase token, generate legacy JWT
+    if (!token!) {
+      token = signLegacyToken(user.id);
     }
 
-    setAuthCookies(res, session.session.access_token, session.session.refresh_token);
+    if (refreshToken) {
+      setAuthCookies(res, token, refreshToken);
+    }
+
     res.json({
       user: { id: user.id, handle: user.handle, role: user.role },
-      token: session.session.access_token,
-      refresh_token: session.session.refresh_token,
+      token,
+      refresh_token: refreshToken || null,
     });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Register error:", err.message);
+    logger.error({ err: err.message }, "Register error");
     res.status(500).json(buildErrorResponse(req, "Registration failed"));
   }
 });
 
-// Login — authenticate via Supabase, return session
+// Login — Supabase auth with legacy bcrypt fallback
 authRouter.post("/login", loginLimiter, async (req, res) => {
   try {
     const body = loginSchema.parse(req.body);
 
-    if (!supabaseAdmin) {
-      return res.status(503).json(buildErrorResponse(req, "Auth service unavailable"));
+    // Path 1: Try Supabase auth
+    if (supabaseAdmin) {
+      const { data: session, error } = await supabaseAdmin.auth.signInWithPassword({
+        email: body.email,
+        password: body.password,
+      });
+
+      if (!error && session.session) {
+        let user = await prisma.user.findFirst({ where: { supabaseId: session.user.id } });
+
+        // Lazy migration: link by email if supabaseId not set
+        if (!user) {
+          user = await prisma.user.findUnique({ where: { email: body.email } });
+          if (user && !user.supabaseId) {
+            user = await prisma.user.update({
+              where: { id: user.id },
+              data: { supabaseId: session.user.id },
+            });
+          }
+        }
+
+        if (user) {
+          setAuthCookies(res, session.session.access_token, session.session.refresh_token);
+          return res.json({
+            user: { id: user.id, handle: user.handle, role: user.role },
+            token: session.session.access_token,
+            refresh_token: session.session.refresh_token,
+          });
+        }
+      }
+      // Supabase failed — fall through to legacy path
     }
 
-    const { data: session, error } = await supabaseAdmin.auth.signInWithPassword({
-      email: body.email,
-      password: body.password,
-    });
-
-    if (error || !session.session) {
+    // Path 2: Legacy bcrypt + JWT fallback
+    const user = await prisma.user.findUnique({ where: { email: body.email } });
+    if (!user) {
       return res.status(401).json(buildErrorResponse(req, "Invalid credentials"));
     }
 
-    // Resolve Prisma user
-    let user = await prisma.user.findFirst({ where: { supabaseId: session.user.id } });
-
-    // Lazy migration: link by email if supabaseId not set
-    if (!user) {
-      user = await prisma.user.findUnique({ where: { email: body.email } });
-      if (user && !user.supabaseId) {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: { supabaseId: session.user.id },
-        });
-      }
+    if (!user.passwordHash) {
+      return res.status(401).json(buildErrorResponse(req, "Invalid credentials. Try registering with email + password."));
     }
 
-    if (!user) {
-      return res.status(404).json(buildErrorResponse(req, "No account found. Please register first."));
+    const valid = await bcrypt.compare(body.password, user.passwordHash);
+    if (!valid) {
+      return res.status(401).json(buildErrorResponse(req, "Invalid credentials"));
     }
 
-    setAuthCookies(res, session.session.access_token, session.session.refresh_token);
+    const token = signLegacyToken(user.id);
     res.json({
       user: { id: user.id, handle: user.handle, role: user.role },
-      token: session.session.access_token,
-      refresh_token: session.session.refresh_token,
+      token,
+      refresh_token: null,
     });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Login error:", err.message);
+    logger.error({ err: err.message }, "Login error:", err.message);
     res.status(500).json(buildErrorResponse(req, "Login failed", {}));
   }
 });
 
-// Refresh token — reads from cookie first, falls back to request body
+// Refresh token — Supabase refresh with legacy JWT re-sign fallback
 authRouter.post("/refresh", async (req, res) => {
   try {
     const cookieRefresh = getRefreshToken(req);
@@ -174,6 +208,17 @@ authRouter.post("/refresh", async (req, res) => {
     const refreshToken = cookieRefresh || bodyRefresh;
 
     if (!refreshToken) {
+      // For legacy JWT users: check Authorization header and re-sign
+      const authHeader = req.headers.authorization;
+      if (authHeader?.startsWith("Bearer ")) {
+        try {
+          const decoded = jwt.verify(authHeader.slice(7), config.JWT_SECRET) as { userId: string };
+          const newToken = signLegacyToken(decoded.userId);
+          return res.json({ token: newToken, refresh_token: null });
+        } catch {
+          return res.status(400).json(buildErrorResponse(req, "Missing refresh token"));
+        }
+      }
       return res.status(400).json(buildErrorResponse(req, "Missing refresh token"));
     }
 
@@ -220,7 +265,7 @@ authRouter.post("/link-account", async (req, res) => {
     });
 
     if (authError) {
-      console.error("Supabase createUser error:", authError.message);
+      logger.error({ err: authError.message }, "Supabase createUser error:", authError.message);
       return res.status(500).json(buildErrorResponse(req, "Failed to create auth account", { message: authError.message }));
     }
 
@@ -234,7 +279,7 @@ authRouter.post("/link-account", async (req, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
     }
-    console.error("Link account error:", err.message);
+    logger.error({ err: err.message }, "Link account error:", err.message);
     res.status(500).json(buildErrorResponse(req, "Account linking failed", {}));
   }
 });
@@ -258,7 +303,7 @@ authRouter.get("/me", authenticate, async (req: AuthRequest, res) => {
       user: { id: user.id, handle: user.handle, role: user.role, voiceProfile: user.voiceProfile },
     });
   } catch (err: any) {
-    console.error("Me error:", err.message);
+    logger.error({ err: err.message }, "Me error:", err.message);
     res.status(500).json(buildErrorResponse(req, "Failed to get user", {}));
   }
 });

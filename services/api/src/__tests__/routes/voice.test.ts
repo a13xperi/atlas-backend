@@ -111,6 +111,37 @@ describe("GET /api/voice/references", () => {
     const res = await request(app).get("/api/voice/references").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.voices).toHaveLength(1);
+    expect(mockPrisma.referenceVoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-123", isActive: true },
+        take: 20,
+        skip: 0,
+      })
+    );
+  });
+
+  it("applies pagination to reference voices", async () => {
+    (mockPrisma.referenceVoice.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    await request(app).get("/api/voice/references?limit=5&offset=2").set(AUTH);
+
+    expect(mockPrisma.referenceVoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-123", isActive: true },
+        take: 5,
+        skip: 2,
+      })
+    );
+  });
+
+  it("returns 500 when loading reference voices fails", async () => {
+    (mockPrisma.referenceVoice.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app).get("/api/voice/references").set(AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to load reference voices");
+    expect(res.body.message).toBe("db down");
   });
 });
 
@@ -146,6 +177,37 @@ describe("GET /api/voice/blends", () => {
     const res = await request(app).get("/api/voice/blends").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.blends).toHaveLength(1);
+    expect(mockPrisma.savedBlend.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-123" },
+        take: 20,
+        skip: 0,
+      })
+    );
+  });
+
+  it("applies pagination to saved blends", async () => {
+    (mockPrisma.savedBlend.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    await request(app).get("/api/voice/blends?limit=5&offset=2").set(AUTH);
+
+    expect(mockPrisma.savedBlend.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-123" },
+        take: 5,
+        skip: 2,
+      })
+    );
+  });
+
+  it("returns 500 when loading blends fails", async () => {
+    (mockPrisma.savedBlend.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app).get("/api/voice/blends").set(AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to load blends");
+    expect(res.body.message).toBe("db down");
   });
 });
 

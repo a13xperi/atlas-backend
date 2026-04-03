@@ -1,8 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
+import { parsePagination } from "../lib/pagination";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
+import { fetchTweetsByHandle } from "../lib/twitter";
+import { calibrateFromTweets } from "../lib/calibrate";
+import { logger } from "../lib/logger";
 
 export const voiceRouter = Router();
 voiceRouter.use(authenticate);
@@ -107,14 +111,19 @@ voiceRouter.patch("/profile", async (req: AuthRequest, res) => {
 // List reference voices
 voiceRouter.get("/references", async (req: AuthRequest, res) => {
   try {
+    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
+
     const voices = await prisma.referenceVoice.findMany({
       where: { userId: req.userId, isActive: true },
+      take,
+      skip,
     });
     res.json({ voices });
   } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to load reference voices");
     res
       .status(500)
-      .json(buildErrorResponse(req, "Failed to load reference voices"));
+      .json(buildErrorResponse(req, "Failed to load reference voices", { message: err.message }));
   }
 });
 
@@ -145,13 +154,18 @@ voiceRouter.post("/references", async (req: AuthRequest, res) => {
 // List saved blends
 voiceRouter.get("/blends", async (req: AuthRequest, res) => {
   try {
+    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
+
     const blends = await prisma.savedBlend.findMany({
       where: { userId: req.userId },
+      take,
+      skip,
       include: { voices: { include: { referenceVoice: true } } },
     });
     res.json({ blends });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load blends"));
+    logger.error({ err: err.message }, "Failed to load blends");
+    res.status(500).json(buildErrorResponse(req, "Failed to load blends", { message: err.message }));
   }
 });
 
@@ -246,5 +260,72 @@ voiceRouter.delete("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, 
     res
       .status(500)
       .json(buildErrorResponse(req, "Failed to delete blend voice"));
+  }
+});
+
+// Calibrate voice profile from a Twitter handle's tweets
+const calibrateSchema = z.object({
+  handle: z.string().min(1).max(50),
+});
+
+voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
+  try {
+    const body = calibrateSchema.parse(req.body);
+
+    // Fetch tweets from Twitter/X
+    const { user: twitterUser, tweets } = await fetchTweetsByHandle(body.handle);
+
+    if (tweets.length === 0) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, `No tweets found for @${body.handle}`));
+    }
+
+    // Run calibration via Claude
+    const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
+
+    // Update voice profile with calibrated dimensions
+    const profile = await prisma.voiceProfile.upsert({
+      where: { userId: req.userId! },
+      update: {
+        humor: calibration.humor,
+        formality: calibration.formality,
+        brevity: calibration.brevity,
+        contrarianTone: calibration.contrarianTone,
+        tweetsAnalyzed: calibration.tweetsAnalyzed,
+        maturity: calibration.tweetsAnalyzed >= 20 ? "INTERMEDIATE" : "BEGINNER",
+      },
+      create: {
+        userId: req.userId!,
+        humor: calibration.humor,
+        formality: calibration.formality,
+        brevity: calibration.brevity,
+        contrarianTone: calibration.contrarianTone,
+        tweetsAnalyzed: calibration.tweetsAnalyzed,
+      },
+    });
+
+    // Log analytics
+    await prisma.analyticsEvent.create({
+      data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
+    });
+
+    res.json({
+      profile,
+      calibration: {
+        confidence: calibration.confidence,
+        analysis: calibration.analysis,
+        tweetsAnalyzed: calibration.tweetsAnalyzed,
+        twitterUser: { username: twitterUser.username, name: twitterUser.name },
+      },
+    });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    logger.error({ err: err.message }, "Calibration failed");
+    res.status(502).json(buildErrorResponse(req, "Voice calibration failed"));
   }
 });

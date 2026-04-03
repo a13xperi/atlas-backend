@@ -125,5 +125,38 @@ describe("GET /api/research/history", () => {
     const res = await request(app).get("/api/research/history").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
+    expect(mockPrisma.researchResult.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-123" },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+        skip: 0,
+      })
+    );
+  });
+
+  it("applies pagination to research history", async () => {
+    (mockPrisma.researchResult.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    await request(app).get("/api/research/history?limit=5&offset=2").set(AUTH);
+
+    expect(mockPrisma.researchResult.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-123" },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        skip: 2,
+      })
+    );
+  });
+
+  it("returns 500 when loading research history fails", async () => {
+    (mockPrisma.researchResult.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app).get("/api/research/history").set(AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to load research history");
+    expect(res.body.message).toBe("db down");
   });
 });

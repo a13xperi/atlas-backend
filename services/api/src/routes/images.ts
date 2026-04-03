@@ -109,6 +109,9 @@ imagesRouter.get("/for-draft/:draftId", async (req: AuthRequest, res) => {
     });
     res.json({ images });
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load images"));
+    logger.error({ err: err.message }, "Failed to load images");
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load images", { message: err.message }));
   }
 });

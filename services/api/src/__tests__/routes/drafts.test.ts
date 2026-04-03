@@ -145,6 +145,34 @@ describe("GET /api/drafts", () => {
       expect.objectContaining({ take: 20, skip: 0 })
     );
   });
+
+  it("returns 500 when listing drafts fails", async () => {
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .get("/api/drafts")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to load drafts");
+    expect(res.body.message).toBe("db down");
+  });
+});
+
+describe("GET /api/drafts/team", () => {
+  it("uses default pagination for team drafts", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ role: "MANAGER" });
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    const res = await request(app)
+      .get("/api/drafts/team")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.tweetDraft.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 50, skip: 0 })
+    );
+  });
 });
 
 // --- GET /:id ---
@@ -171,6 +199,18 @@ describe("GET /api/drafts/:id", () => {
     expect(res.status).toBe(200);
     expect(res.body.draft.id).toBe("draft-1");
   });
+
+  it("returns 500 when loading a draft fails", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .get("/api/drafts/draft-1")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to get draft");
+    expect(res.body.message).toBe("db down");
+  });
 });
 
 // --- POST / ---
@@ -183,7 +223,7 @@ describe("POST /api/drafts", () => {
       .send({});
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Content is required");
+    expect(res.body.error).toBe("Invalid request");
   });
 
   it("creates draft and logs analytics event", async () => {
@@ -202,6 +242,19 @@ describe("POST /api/drafts", () => {
         data: expect.objectContaining({ type: "DRAFT_CREATED" }),
       })
     );
+  });
+
+  it("returns 500 when creating a draft fails", async () => {
+    (mockPrisma.tweetDraft.create as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .post("/api/drafts")
+      .set("Authorization", AUTH)
+      .send({ content: "Hello crypto world!" });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to create draft");
+    expect(res.body.message).toBe("db down");
   });
 });
 
@@ -266,6 +319,30 @@ describe("PATCH /api/drafts/:id", () => {
       })
     );
   });
+
+  it("returns 400 for invalid patch payloads", async () => {
+    const res = await request(app)
+      .patch("/api/drafts/draft-1")
+      .set("Authorization", AUTH)
+      .send({ status: "NOT_A_STATUS" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Invalid request");
+  });
+
+  it("returns 500 when updating a draft fails", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(mockDraft);
+    (mockPrisma.tweetDraft.update as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .patch("/api/drafts/draft-1")
+      .set("Authorization", AUTH)
+      .send({ content: "updated content" });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to update draft");
+    expect(res.body.message).toBe("db down");
+  });
 });
 
 // --- DELETE /:id ---
@@ -291,6 +368,19 @@ describe("DELETE /api/drafts/:id", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+  });
+
+  it("returns 500 when deleting a draft fails", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(mockDraft);
+    (mockPrisma.tweetDraft.delete as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .delete("/api/drafts/draft-1")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to delete draft");
+    expect(res.body.message).toBe("db down");
   });
 });
 

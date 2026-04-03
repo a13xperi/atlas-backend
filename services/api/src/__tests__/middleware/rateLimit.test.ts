@@ -141,6 +141,19 @@ describe("rateLimit middleware", () => {
     expect(redisClient.pexpire).not.toHaveBeenCalled();
   });
 
+  it("initializes the Redis expiry when the key has no ttl yet", async () => {
+    const redisClient = createRedisClient([[null, 1], [null, -1]]);
+    const { rateLimit } = loadRateLimitModule({ redisClient });
+    const app = createIpLimitedApp(rateLimit(2, 60 * 1000));
+
+    const res = await request(app).get("/limited").set("X-Forwarded-For", "3.3.3.4");
+
+    expect(res.status).toBe(200);
+    expect(redisClient.pexpire).toHaveBeenCalledWith("rl:3.3.3.4:/limited", 60 * 1000);
+    expect(res.headers["x-ratelimit-limit"]).toBe("2");
+    expect(res.headers["x-ratelimit-remaining"]).toBe("1");
+  });
+
   it("keys authenticated requests by userId instead of shared IP", async () => {
     const { rateLimitByUser, clearRateLimitStore } = loadRateLimitModule();
     clearRateLimitStore();
@@ -162,6 +175,23 @@ describe("rateLimit middleware", () => {
     expect(firstUser.status).toBe(200);
     expect(secondUser.status).toBe(200);
     expect(firstUserAgain.status).toBe(429);
+  });
+
+  it("lets an authenticated request bypass an exhausted anonymous IP bucket", async () => {
+    const { rateLimitByUser, clearRateLimitStore } = loadRateLimitModule();
+    clearRateLimitStore();
+    const app = createUserLimitedApp(rateLimitByUser(1, 60 * 1000));
+
+    const anonymousFirst = await request(app).get("/limited").set("X-Forwarded-For", "4.4.4.5");
+    const anonymousSecond = await request(app).get("/limited").set("X-Forwarded-For", "4.4.4.5");
+    const authenticated = await request(app)
+      .get("/limited")
+      .set("X-Forwarded-For", "4.4.4.5")
+      .set("Authorization", "Bearer token-c");
+
+    expect(anonymousFirst.status).toBe(200);
+    expect(anonymousSecond.status).toBe(429);
+    expect(authenticated.status).toBe(200);
   });
 
   it("falls back to IP bucketing when userId is not available", async () => {

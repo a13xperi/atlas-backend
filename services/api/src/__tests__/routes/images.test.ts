@@ -167,4 +167,14 @@ describe("GET /api/images/for-draft/:draftId", () => {
     expect(res.status).toBe(200);
     expect(res.body.images).toHaveLength(1);
   });
+
+  it("returns 500 when loading images fails", async () => {
+    (mockPrisma.generatedImage.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app).get("/api/images/for-draft/draft-1").set(AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to load images");
+    expect(res.body.message).toBe("db down");
+  });
 });
