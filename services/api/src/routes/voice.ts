@@ -17,14 +17,14 @@ const profileSchema = z.object({
   formality: z.number().min(0).max(100).optional(),
   brevity: z.number().min(0).max(100).optional(),
   contrarianTone: z.number().min(0).max(100).optional(),
-  directness: z.number().min(0).max(10).optional(),
-  warmth: z.number().min(0).max(10).optional(),
-  technicalDepth: z.number().min(0).max(10).optional(),
-  confidence: z.number().min(0).max(10).optional(),
-  evidenceOrientation: z.number().min(0).max(10).optional(),
-  solutionOrientation: z.number().min(0).max(10).optional(),
-  socialPosture: z.number().min(0).max(10).optional(),
-  selfPromotionalIntensity: z.number().min(0).max(10).optional(),
+  directness: z.number().min(0).max(100).optional(),
+  warmth: z.number().min(0).max(100).optional(),
+  technicalDepth: z.number().min(0).max(100).optional(),
+  confidence: z.number().min(0).max(100).optional(),
+  evidenceOrientation: z.number().min(0).max(100).optional(),
+  solutionOrientation: z.number().min(0).max(100).optional(),
+  socialPosture: z.number().min(0).max(100).optional(),
+  selfPromotionalIntensity: z.number().min(0).max(100).optional(),
 });
 
 type ProfileInput = z.infer<typeof profileSchema>;
