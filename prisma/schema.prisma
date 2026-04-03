@@ -31,6 +31,7 @@ model User {
   researchResults   ResearchResult[]
   generatedImages   GeneratedImage[]
   alerts            Alert[]
+  briefingPreference BriefingPreference?
 
   @@map("users")
 }
@@ -277,6 +278,19 @@ model ResearchResult {
 
   @@index([userId, createdAt])
   @@map("research_results")
+}
+
+model BriefingPreference {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  deliveryTime String   @default("08:00")
+  topics       String[]
+  sources      String[]
+  channel      String   @default("PORTAL")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  updatedAt    DateTime @updatedAt
+
+  @@map("briefing_preferences")
 }
 
 model GeneratedImage {

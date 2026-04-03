@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
+import { emitToUser } from "../lib/socket";
 
 export const alertsRouter = Router();
 alertsRouter.use(authenticate);

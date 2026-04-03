@@ -17,6 +17,7 @@ import { researchRouter } from "./routes/research";
 import { trendingRouter } from "./routes/trending";
 import { imagesRouter } from "./routes/images";
 import { loopRouter } from "./routes/loop";
+import { briefingRouter } from "./routes/briefing";
 import { docsRouter } from "./routes/docs";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
@@ -183,6 +184,7 @@ app.use("/api/research", researchRouter);
 app.use("/api/trending", trendingRouter);
 app.use("/api/images", imagesRouter);
 app.use("/api/loop", loopRouter);
+app.use("/api/briefing", briefingRouter);
 
 // 404 handler — catch unknown routes before error handlers
 app.use((req, res) => {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { emitToUser } from "../lib/socket";
 
 export const usersRouter = Router();
 usersRouter.use(authenticate);
@@ -200,6 +201,17 @@ usersRouter.post("/send-nudge", async (req: AuthRequest, res) => {
         userId: a.id,
       })),
     });
+
+    // Emit real-time WebSocket alerts to each inactive analyst
+    for (const analyst of inactive) {
+      emitToUser(analyst.id, "new-alert", {
+        type: "NUDGE",
+        title: "Time to get back in the game!",
+        context: `Your manager ${manager.displayName ?? manager.handle} noticed you haven't been active. Jump in and craft some tweets!`,
+        category: "NOTIFICATION",
+        userId: analyst.id,
+      });
+    }
 
     res.json(
       success({
