@@ -6,6 +6,7 @@ import { runGenerationPipeline } from "../lib/pipeline";
 import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
 import { withTimeout, TimeoutError } from "../lib/timeout";
+import { success } from "../lib/response";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
@@ -83,7 +84,7 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
       data: { userId: req.userId!, type: "DRAFT_CREATED" },
     });
 
-    res.json({ draft });
+    res.json(success({ draft }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res
@@ -161,7 +162,7 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
       });
     }
 
-    res.json({ draft });
+    res.json(success({ draft }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res
@@ -230,7 +231,7 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
       data: { userId: req.userId!, type: "FEEDBACK_GIVEN" },
     });
 
-    res.json({ draft });
+    res.json(success({ draft }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
@@ -263,7 +264,7 @@ draftsRouter.get("/", async (req: AuthRequest, res) => {
       skip: parseInt(offset as string),
     });
 
-    res.json({ drafts });
+    res.json(success({ drafts }));
   } catch (err: any) {
     res.status(500).json(buildErrorResponse(req, "Failed to load drafts"));
   }
@@ -307,7 +308,7 @@ draftsRouter.get("/team", async (req: AuthRequest, res) => {
       blendName: d.blendId ? (blendMap[d.blendId] ?? null) : null,
     }));
 
-    res.json({ drafts: result, total: result.length });
+    res.json(success({ drafts: result, total: result.length }));
   } catch (err: any) {
     res.status(500).json(buildErrorResponse(req, "Failed to load team drafts"));
   }
@@ -320,7 +321,7 @@ draftsRouter.get("/:id", async (req: AuthRequest, res) => {
       where: { id: req.params.id as string, userId: req.userId },
     });
     if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
-    res.json({ draft });
+    res.json(success({ draft }));
   } catch (err: any) {
     res.status(500).json(buildErrorResponse(req, "Failed to get draft"));
   }
@@ -346,7 +347,7 @@ draftsRouter.post("/", async (req: AuthRequest, res) => {
       data: { userId: req.userId!, type: "DRAFT_CREATED" },
     });
 
-    res.json({ draft });
+    res.json(success({ draft }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
@@ -386,7 +387,7 @@ draftsRouter.patch("/:id", async (req: AuthRequest, res) => {
       });
     }
 
-    res.json({ draft });
+    res.json(success({ draft }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
@@ -404,7 +405,7 @@ draftsRouter.delete("/:id", async (req: AuthRequest, res) => {
     if (!existing) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
 
     await prisma.tweetDraft.delete({ where: { id: req.params.id as string } });
-    res.json({ success: true });
+    res.json(success({ success: true }));
   } catch (err: any) {
     res.status(500).json(buildErrorResponse(req, "Failed to delete draft"));
   }
@@ -554,5 +555,105 @@ draftsRouter.post("/:id/post", authenticate, async (req: AuthRequest, res) => {
   } catch (err: any) {
     logger.error({ err: err.message, stack: err.stack }, "Failed to post to X");
     res.status(502).json(buildErrorResponse(req, `Failed to post to X: ${err.message}`));
+  }
+});
+
+// Schedule a draft for future posting
+const scheduleSchema = z.object({
+  scheduledAt: z.string().datetime(),
+});
+
+draftsRouter.post("/:id/schedule", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const body = scheduleSchema.parse(req.body);
+    const scheduledDate = new Date(body.scheduledAt);
+
+    if (scheduledDate <= new Date()) {
+      return res.status(400).json(buildErrorResponse(req, "Scheduled time must be in the future"));
+    }
+
+    const draft = await prisma.tweetDraft.findFirst({
+      where: { id: req.params.id as string, userId: req.userId },
+    });
+    if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+
+    const updated = await prisma.tweetDraft.update({
+      where: { id: draft.id },
+      data: { status: "SCHEDULED", scheduledAt: scheduledDate },
+    });
+
+    await prisma.analyticsEvent.create({
+      data: { userId: req.userId!, type: "DRAFT_CREATED", metadata: { scheduled: true } },
+    });
+
+    logger.info({ userId: req.userId, draftId: draft.id, scheduledAt: body.scheduledAt }, "Draft scheduled");
+    res.json({ draft: updated });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    logger.error({ err: err.message }, "Failed to schedule draft");
+    res.status(500).json(buildErrorResponse(req, "Failed to schedule draft"));
+  }
+});
+
+// Process scheduled drafts (called by cron or manually)
+draftsRouter.post("/process-scheduled", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const now = new Date();
+    const dueDrafts = await prisma.tweetDraft.findMany({
+      where: { status: "SCHEDULED", scheduledAt: { lte: now } },
+      include: { user: { select: { id: true, xAccessToken: true, xRefreshToken: true, xTokenExpiresAt: true } } },
+    });
+
+    if (dueDrafts.length === 0) {
+      return res.json({ processed: 0, message: "No drafts due for posting" });
+    }
+
+    const { postTweet, refreshAccessToken } = await import("../lib/twitter");
+    let posted = 0;
+    let failed = 0;
+
+    for (const draft of dueDrafts) {
+      try {
+        if (!draft.user.xAccessToken) {
+          logger.warn({ draftId: draft.id, userId: draft.userId }, "Scheduled draft skipped — no X token");
+          failed++;
+          continue;
+        }
+
+        let accessToken = draft.user.xAccessToken;
+        if (draft.user.xTokenExpiresAt && draft.user.xTokenExpiresAt < now && draft.user.xRefreshToken) {
+          const refreshed = await refreshAccessToken(draft.user.xRefreshToken);
+          accessToken = refreshed.accessToken;
+          await prisma.user.update({
+            where: { id: draft.userId },
+            data: {
+              xAccessToken: refreshed.accessToken,
+              xRefreshToken: refreshed.refreshToken,
+              xTokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+            },
+          });
+        }
+
+        const tweet = await postTweet(accessToken, draft.content);
+        await prisma.tweetDraft.update({
+          where: { id: draft.id },
+          data: { status: "POSTED" },
+        });
+        await prisma.analyticsEvent.create({
+          data: { userId: draft.userId, type: "DRAFT_POSTED", metadata: { tweetId: tweet.id, scheduled: true } },
+        });
+        posted++;
+      } catch (err: any) {
+        logger.error({ err: err.message, draftId: draft.id }, "Failed to post scheduled draft");
+        failed++;
+      }
+    }
+
+    res.json({ processed: dueDrafts.length, posted, failed });
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to process scheduled drafts");
+    res.status(500).json(buildErrorResponse(req, "Failed to process scheduled drafts"));
   }
 });

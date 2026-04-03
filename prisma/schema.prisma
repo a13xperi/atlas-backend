@@ -149,18 +149,21 @@ model TweetDraft {
   sourceContent String?
   blendId       String?
   feedback      String?
+  scheduledAt   DateTime?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
   user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   images GeneratedImage[]
 
+  @@index([status, scheduledAt])
   @@map("tweet_drafts")
 }
 
 enum DraftStatus {
   DRAFT
   APPROVED
+  SCHEDULED
   POSTED
   ARCHIVED
 }
