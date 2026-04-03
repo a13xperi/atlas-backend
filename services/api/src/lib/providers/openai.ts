@@ -6,7 +6,7 @@ let client: OpenAI | null = null;
 
 function getClient(): OpenAI {
   if (!client) {
-    client = new OpenAI({ timeout: 20_000, maxRetries: 1 });
+    client = new OpenAI({ timeout: 20_000, maxRetries: 0 });
   }
   return client;
 }

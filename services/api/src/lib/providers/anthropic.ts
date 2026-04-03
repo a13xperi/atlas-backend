@@ -6,7 +6,7 @@ let client: Anthropic | null = null;
 
 function getClient(): Anthropic {
   if (!client) {
-    client = new Anthropic({ timeout: 20_000, maxRetries: 1 });
+    client = new Anthropic({ timeout: 20_000, maxRetries: 0 });
   }
   return client;
 }

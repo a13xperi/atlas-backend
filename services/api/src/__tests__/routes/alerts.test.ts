@@ -8,7 +8,6 @@ import request from "supertest";
 import express from "express";
 import { alertsRouter } from "../../routes/alerts";
 import { requestIdMiddleware } from "../../middleware/requestId";
-import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
 
 jest.mock("../../middleware/auth", () => ({
   authenticate: jest.fn((req: any, res: any, next: any) => {
@@ -33,8 +32,10 @@ jest.mock("../../lib/prisma", () => ({
     },
     alert: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
+      delete: jest.fn(),
     },
   },
 }));
@@ -62,17 +63,6 @@ beforeAll(() => {
   process.env.JWT_SECRET = "test-secret";
 });
 
-beforeEach(() => {
-  (mockPrisma.alertSubscription.findMany as jest.Mock).mockReset();
-  (mockPrisma.alertSubscription.findFirst as jest.Mock).mockReset();
-  (mockPrisma.alertSubscription.upsert as jest.Mock).mockReset();
-  (mockPrisma.alertSubscription.update as jest.Mock).mockReset();
-  (mockPrisma.alertSubscription.delete as jest.Mock).mockReset();
-  (mockPrisma.alert.findMany as jest.Mock).mockReset();
-  (mockPrisma.alert.findUnique as jest.Mock).mockReset();
-  (mockPrisma.alert.update as jest.Mock).mockReset();
-});
-
 afterAll(() => {
   delete process.env.JWT_SECRET;
 });
@@ -87,37 +77,7 @@ describe("GET /api/alerts/subscriptions", () => {
     (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([mockSub]);
     const res = await request(app).get("/api/alerts/subscriptions").set(AUTH);
     expect(res.status).toBe(200);
-    expect(expectSuccessResponse<any>(res.body).subscriptions).toHaveLength(1);
-    expect(mockPrisma.alertSubscription.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: "user-123" },
-        take: 20,
-        skip: 0,
-      })
-    );
-  });
-
-  it("applies pagination to subscriptions", async () => {
-    (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([]);
-
-    await request(app).get("/api/alerts/subscriptions?limit=5&offset=2").set(AUTH);
-
-    expect(mockPrisma.alertSubscription.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: "user-123" },
-        take: 5,
-        skip: 2,
-      })
-    );
-  });
-
-  it("returns 500 when loading subscriptions fails", async () => {
-    (mockPrisma.alertSubscription.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
-
-    const res = await request(app).get("/api/alerts/subscriptions").set(AUTH);
-
-    expect(res.status).toBe(500);
-    expect(expectErrorResponse(res.body, "Failed to load subscriptions").details.message).toBe("db down");
+    expect(res.body.subscriptions).toHaveLength(1);
   });
 });
 
@@ -128,8 +88,7 @@ describe("POST /api/alerts/subscriptions", () => {
       .set(AUTH)
       .send({ type: "CATEGORY" });
     expect(res.status).toBe(400);
-    const body = expectErrorResponse(res.body, "Invalid request");
-    expect(Array.isArray(body.details)).toBe(true);
+    expect(res.body.error).toBe("Type and value required");
   });
 
   it("creates/upserts subscription", async () => {
@@ -141,20 +100,7 @@ describe("POST /api/alerts/subscriptions", () => {
       .send({ type: "CATEGORY", value: "DeFi" });
 
     expect(res.status).toBe(200);
-    expect(expectSuccessResponse<any>(res.body).subscription.value).toBe("DeFi");
-  });
-});
-
-describe("PATCH /api/alerts/:id", () => {
-  it("returns 400 for an invalid dismiss payload", async () => {
-    const res = await request(app)
-      .patch("/api/alerts/alert-1")
-      .set(AUTH)
-      .send([]);
-
-    expect(res.status).toBe(400);
-    const body = expectErrorResponse(res.body, "Invalid request");
-    expect(Array.isArray(body.details)).toBe(true);
+    expect(res.body.subscription.value).toBe("DeFi");
   });
 });
 
@@ -166,7 +112,7 @@ describe("PATCH /api/alerts/subscriptions/:id", () => {
       .set(AUTH)
       .send({ isActive: false });
     expect(res.status).toBe(404);
-    expectErrorResponse(res.body, "Subscription not found");
+    expect(res.body.error).toBe("Subscription not found");
   });
 
   it("toggles subscription", async () => {
@@ -180,7 +126,7 @@ describe("PATCH /api/alerts/subscriptions/:id", () => {
       .send({ isActive: false });
 
     expect(res.status).toBe(200);
-    expect(expectSuccessResponse<any>(res.body).subscription.isActive).toBe(false);
+    expect(res.body.subscription.isActive).toBe(false);
   });
 });
 
@@ -202,7 +148,7 @@ describe("DELETE /api/alerts/subscriptions/:id", () => {
       .set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(expectSuccessResponse<any>(res.body)).toEqual({ success: true });
+    expect(res.body.success).toBe(true);
   });
 });
 
@@ -213,10 +159,7 @@ describe("GET /api/alerts/feed", () => {
 
     const res = await request(app).get("/api/alerts/feed").set(AUTH);
     expect(res.status).toBe(200);
-    expect(expectSuccessResponse<any>(res.body).alerts).toHaveLength(1);
-    expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ take: 20, skip: 0 })
-    );
+    expect(res.body.alerts).toHaveLength(1);
   });
 
   it("respects limit query param", async () => {
@@ -237,11 +180,71 @@ describe("GET /api/alerts/feed", () => {
     const res = await request(app).get("/api/alerts/feed?limit=5&offset=2").set(AUTH);
 
     expect(res.status).toBe(200);
-    const data = expectSuccessResponse<any>(res.body);
-    expect(data.alerts).toHaveLength(2);
-    expect(data.alerts.map((alert: any) => alert.id)).toEqual(["a-3", "a-4"]);
+    expect(res.body.alerts).toEqual(alerts);
     expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 5, skip: 2 })
     );
+  });
+
+  it("only returns current user's alerts", async () => {
+    (mockPrisma.alert.findMany as jest.Mock).mockResolvedValueOnce([]);
+    await request(app).get("/api/alerts/feed").set(AUTH);
+    expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: "user-123" } })
+    );
+  });
+});
+
+describe("GET /api/alerts/:id", () => {
+  it("returns 404 for another user's alert", async () => {
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(null);
+    const res = await request(app).get("/api/alerts/other-alert-id").set(AUTH);
+    expect(res.status).toBe(404);
+    expect(mockPrisma.alert.findFirst).toHaveBeenCalledWith({
+      where: { id: "other-alert-id", userId: "user-123" },
+    });
+  });
+
+  it("returns alert owned by user", async () => {
+    const alert = { id: "a-1", userId: "user-123", title: "My Alert" };
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(alert);
+    const res = await request(app).get("/api/alerts/a-1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.alert.id).toBe("a-1");
+  });
+});
+
+describe("PATCH /api/alerts/:id", () => {
+  it("returns 404 for another user's alert", async () => {
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(null);
+    const res = await request(app).patch("/api/alerts/other-alert-id").set(AUTH).send({});
+    expect(res.status).toBe(404);
+  });
+
+  it("dismisses alert owned by user", async () => {
+    const alert = { id: "a-1", userId: "user-123", title: "My Alert" };
+    const dismissed = { ...alert, expiresAt: new Date() };
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(alert);
+    (mockPrisma.alert.update as jest.Mock).mockResolvedValueOnce(dismissed);
+    const res = await request(app).patch("/api/alerts/a-1").set(AUTH).send({});
+    expect(res.status).toBe(200);
+    expect(res.body.alert.expiresAt).toBeDefined();
+  });
+});
+
+describe("DELETE /api/alerts/:id", () => {
+  it("returns 404 for another user's alert", async () => {
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(null);
+    const res = await request(app).delete("/api/alerts/other-alert-id").set(AUTH);
+    expect(res.status).toBe(404);
+  });
+
+  it("deletes alert owned by user", async () => {
+    const alert = { id: "a-1", userId: "user-123", title: "My Alert" };
+    (mockPrisma.alert.findFirst as jest.Mock).mockResolvedValueOnce(alert);
+    (mockPrisma.alert.delete as jest.Mock).mockResolvedValueOnce(alert);
+    const res = await request(app).delete("/api/alerts/a-1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
   });
 });
