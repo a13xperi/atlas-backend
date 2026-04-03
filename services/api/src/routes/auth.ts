@@ -17,9 +17,9 @@ function signLegacyToken(userId: string): string {
 
 export const authRouter = Router();
 
-// Rate limits: 5 login attempts/min, 3 registrations/min per IP
-const loginLimiter = rateLimit(5, 60 * 1000);
-const registerLimiter = rateLimit(3, 60 * 1000);
+// Rate limits: 20 login attempts/min, 10 registrations/min per IP
+const loginLimiter = rateLimit(20, 60 * 1000);
+const registerLimiter = rateLimit(10, 60 * 1000);
 
 // --- Schemas ---
 
