@@ -6,7 +6,10 @@ let client: GoogleGenerativeAI | null = null;
 
 export function getGeminiClient(): GoogleGenerativeAI {
   if (!client) {
-    client = new GoogleGenerativeAI(config.GOOGLE_AI_API_KEY!);
+    if (!config.GOOGLE_AI_API_KEY) {
+      throw new Error("GOOGLE_AI_API_KEY is not set — image generation requires a Google AI API key");
+    }
+    client = new GoogleGenerativeAI(config.GOOGLE_AI_API_KEY);
   }
   return client;
 }
@@ -108,13 +111,13 @@ Use the Atlas brand palette: primary #4ecdc4 (teal), bg #1a1a2e, surface #2d3748
       }]
     }],
     generationConfig: {
-      maxOutputTokens: 500,
+      maxOutputTokens: 2048,
+      responseMimeType: "application/json",
     },
   }),
     "gemini:generateVisualConcept",
   );
 
   const text = result.response.text();
-  const jsonStr = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-  return JSON.parse(jsonStr);
+  return JSON.parse(text);
 }

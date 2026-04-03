@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { config } from "../lib/config";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateVisualConcept, ImageStyle } from "../lib/gemini";
@@ -22,6 +23,10 @@ const generateForDraftSchema = z.object({
 // Standalone image concept generation
 imagesRouter.post("/generate", async (req: AuthRequest, res) => {
   try {
+    if (!config.GOOGLE_AI_API_KEY) {
+      return res.status(503).json(error("Image generation is not configured — GOOGLE_AI_API_KEY missing", 503));
+    }
+
     const body = generateSchema.parse(req.body);
 
     const concept = await generateVisualConcept(body.prompt, body.style as ImageStyle);
@@ -47,7 +52,7 @@ imagesRouter.post("/generate", async (req: AuthRequest, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    logger.error({ err: err.message }, "Image generation failed");
+    logger.error({ err: err.message, stack: err.stack }, "Image generation failed");
     res.status(502).json(error("Image generation failed"));
   }
 });
@@ -55,6 +60,10 @@ imagesRouter.post("/generate", async (req: AuthRequest, res) => {
 // Generate companion visual for an existing draft
 imagesRouter.post("/generate-for-draft", async (req: AuthRequest, res) => {
   try {
+    if (!config.GOOGLE_AI_API_KEY) {
+      return res.status(503).json(error("Image generation is not configured — GOOGLE_AI_API_KEY missing", 503));
+    }
+
     const body = generateForDraftSchema.parse(req.body);
 
     // Fetch the draft
@@ -87,7 +96,7 @@ imagesRouter.post("/generate-for-draft", async (req: AuthRequest, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    logger.error({ err: err.message }, "Image generation failed");
+    logger.error({ err: err.message, stack: err.stack }, "Image generation failed");
     res.status(502).json(error("Image generation failed"));
   }
 });
