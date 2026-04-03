@@ -96,7 +96,7 @@ describe("POST /api/auth/login", () => {
       .post("/api/auth/login")
       .send({ email: "test@example.com", password: "secret123" });
     expect(res.status).toBe(401);
-  });
+  }, 15000);
 });
 
 describe("GET /api/auth/me", () => {

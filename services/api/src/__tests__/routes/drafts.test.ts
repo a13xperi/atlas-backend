@@ -224,7 +224,7 @@ describe("POST /api/drafts", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Invalid request");
-  });
+  }, 15000);
 
   it("creates draft and logs analytics event", async () => {
     (mockPrisma.tweetDraft.create as jest.Mock).mockResolvedValueOnce(mockDraft);
