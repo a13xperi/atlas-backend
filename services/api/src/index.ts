@@ -17,7 +17,7 @@ import { researchRouter } from "./routes/research";
 import { trendingRouter } from "./routes/trending";
 import { imagesRouter } from "./routes/images";
 import { loopRouter } from "./routes/loop";
-import { briefingRouter } from "./routes/briefing";
+import briefingRouter from "./routes/briefing";
 import { docsRouter } from "./routes/docs";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
