@@ -7,6 +7,7 @@
     "dev": "cd services/api && npx tsx watch src/index.ts",
     "build": "rm -rf dist && npx prisma generate && npx tsc",
     "start": "npx prisma db push --accept-data-loss && node dist/services/api/src/index.js",
+    "seed": "npx ts-node scripts/seed-demo.ts",
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
     "db:migrate": "npx prisma migrate dev",
@@ -36,7 +37,9 @@
     "openai": "^6.33.0",
     "pino": "^10.3.1",
     "socket.io": "^4.8.3",
+    "swagger-ui-express": "^5.0.1",
     "telegraf": "^4.16.3",
+    "yamljs": "^0.3.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -48,10 +51,14 @@
     "@types/jsonwebtoken": "^9.0.9",
     "@types/node": "^22.13.10",
     "@types/supertest": "^7.2.0",
+    "@types/swagger-ui-express": "^4.1.8",
+    "@types/yamljs": "^0.2.34",
+    "ioredis-mock": "^8.13.1",
     "jest": "^30.3.0",
     "prisma": "^6.5.0",
     "supertest": "^7.2.2",
     "ts-jest": "^29.4.6",
+    "ts-node": "^10.9.2",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   },

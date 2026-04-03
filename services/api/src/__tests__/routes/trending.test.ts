@@ -8,6 +8,7 @@ import request from "supertest";
 import express from "express";
 import { trendingRouter } from "../../routes/trending";
 import { requestIdMiddleware } from "../../middleware/requestId";
+import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
 
 jest.mock("../../middleware/auth", () => ({
   authenticate: jest.fn((req: any, res: any, next: any) => {
@@ -96,7 +97,7 @@ describe("POST /api/trending/scan", () => {
 
     const res = await request(app).post("/api/trending/scan").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.alerts).toHaveLength(1);
+    expect(expectSuccessResponse<any>(res.body).alerts).toHaveLength(1);
   });
 
   it("uses default topics when user has no subscriptions", async () => {
@@ -117,7 +118,7 @@ describe("POST /api/trending/scan", () => {
 
     const res = await request(app).post("/api/trending/scan").set(AUTH);
     expect(res.status).toBe(502);
-    expect(res.body.error).toBe("Twitter scan failed");
+    expectErrorResponse(res.body, "Twitter scan failed");
   });
 });
 
@@ -132,8 +133,9 @@ describe("GET /api/trending/topics", () => {
 
     const res = await request(app).get("/api/trending/topics").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.topics).toHaveLength(1);
-    expect(res.body.topics[0].headline).toBe("DeFi TVL hits record high");
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.topics).toHaveLength(1);
+    expect(data.topics[0].headline).toBe("DeFi TVL hits record high");
   });
 
   it("returns 500 on DB error", async () => {
@@ -141,6 +143,6 @@ describe("GET /api/trending/topics", () => {
 
     const res = await request(app).get("/api/trending/topics").set(AUTH);
     expect(res.status).toBe(500);
-    expect(res.body.error).toBe("Failed to load trending topics");
+    expectErrorResponse(res.body, "Failed to load trending topics");
   });
 });

@@ -8,6 +8,7 @@ import request from "supertest";
 import express from "express";
 import { alertsRouter } from "../../routes/alerts";
 import { requestIdMiddleware } from "../../middleware/requestId";
+import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
 
 jest.mock("../../middleware/auth", () => ({
   authenticate: jest.fn((req: any, res: any, next: any) => {
@@ -32,6 +33,8 @@ jest.mock("../../lib/prisma", () => ({
     },
     alert: {
       findMany: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
     },
   },
 }));
@@ -73,7 +76,7 @@ describe("GET /api/alerts/subscriptions", () => {
     (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([mockSub]);
     const res = await request(app).get("/api/alerts/subscriptions").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.subscriptions).toHaveLength(1);
+    expect(expectSuccessResponse<any>(res.body).subscriptions).toHaveLength(1);
     expect(mockPrisma.alertSubscription.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: "user-123" },
@@ -103,8 +106,7 @@ describe("GET /api/alerts/subscriptions", () => {
     const res = await request(app).get("/api/alerts/subscriptions").set(AUTH);
 
     expect(res.status).toBe(500);
-    expect(res.body.error).toBe("Failed to load subscriptions");
-    expect(res.body.message).toBe("db down");
+    expect(expectErrorResponse(res.body, "Failed to load subscriptions").details.message).toBe("db down");
   });
 });
 
@@ -115,7 +117,8 @@ describe("POST /api/alerts/subscriptions", () => {
       .set(AUTH)
       .send({ type: "CATEGORY" });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Type and value required");
+    const body = expectErrorResponse(res.body, "Invalid request");
+    expect(Array.isArray(body.details)).toBe(true);
   });
 
   it("creates/upserts subscription", async () => {
@@ -127,7 +130,20 @@ describe("POST /api/alerts/subscriptions", () => {
       .send({ type: "CATEGORY", value: "DeFi" });
 
     expect(res.status).toBe(200);
-    expect(res.body.subscription.value).toBe("DeFi");
+    expect(expectSuccessResponse<any>(res.body).subscription.value).toBe("DeFi");
+  });
+});
+
+describe("PATCH /api/alerts/:id", () => {
+  it("returns 400 for an invalid dismiss payload", async () => {
+    const res = await request(app)
+      .patch("/api/alerts/alert-1")
+      .set(AUTH)
+      .send([]);
+
+    expect(res.status).toBe(400);
+    const body = expectErrorResponse(res.body, "Invalid request");
+    expect(Array.isArray(body.details)).toBe(true);
   });
 });
 
@@ -139,7 +155,7 @@ describe("PATCH /api/alerts/subscriptions/:id", () => {
       .set(AUTH)
       .send({ isActive: false });
     expect(res.status).toBe(404);
-    expect(res.body.error).toBe("Subscription not found");
+    expectErrorResponse(res.body, "Subscription not found");
   });
 
   it("toggles subscription", async () => {
@@ -153,7 +169,7 @@ describe("PATCH /api/alerts/subscriptions/:id", () => {
       .send({ isActive: false });
 
     expect(res.status).toBe(200);
-    expect(res.body.subscription.isActive).toBe(false);
+    expect(expectSuccessResponse<any>(res.body).subscription.isActive).toBe(false);
   });
 });
 
@@ -175,7 +191,7 @@ describe("DELETE /api/alerts/subscriptions/:id", () => {
       .set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(expectSuccessResponse<any>(res.body)).toEqual({ success: true });
   });
 });
 
@@ -186,7 +202,7 @@ describe("GET /api/alerts/feed", () => {
 
     const res = await request(app).get("/api/alerts/feed").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.alerts).toHaveLength(1);
+    expect(expectSuccessResponse<any>(res.body).alerts).toHaveLength(1);
     expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 20, skip: 0 })
     );
@@ -210,7 +226,9 @@ describe("GET /api/alerts/feed", () => {
     const res = await request(app).get("/api/alerts/feed?limit=5&offset=2").set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.alerts).toEqual(alerts);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.alerts).toHaveLength(2);
+    expect(data.alerts.map((alert: any) => alert.id)).toEqual(["a-3", "a-4"]);
     expect(mockPrisma.alert.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 5, skip: 2 })
     );

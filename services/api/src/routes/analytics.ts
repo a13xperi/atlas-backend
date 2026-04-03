@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
-import { buildErrorResponse } from "../middleware/requestId";
 
 export const analyticsRouter = Router();
 analyticsRouter.use(authenticate);
@@ -35,7 +35,7 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
         }),
       ]);
 
-    res.json({
+    res.json(success({
       summary: {
         draftsCreated,
         draftsPosted,
@@ -44,14 +44,12 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
         reportsIngested,
         period: "30d",
       },
-    });
+    }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res.status(500).json(buildErrorResponse(req, "Failed to load summary"));
+    res.status(500).json(error("Failed to load summary", 500));
   }
 });
 
@@ -75,11 +73,12 @@ analyticsRouter.post("/learning-log", async (req: AuthRequest, res) => {
       },
     });
 
-    res.json({ entry });
+    res.json(success({ entry }));
   } catch (err: any) {
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to create learning log entry"));
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Failed to create learning log entry", 500));
   }
 });
 
@@ -93,16 +92,12 @@ analyticsRouter.get("/learning-log", async (req: AuthRequest, res) => {
       orderBy: { createdAt: "desc" },
       take: 20,
     });
-    res.json({ entries });
+    res.json(success({ entries }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load learning log"));
+    res.status(500).json(error("Failed to load learning log", 500));
   }
 });
 
@@ -122,16 +117,12 @@ analyticsRouter.get("/engagement", async (req: AuthRequest, res) => {
       orderBy: { createdAt: "asc" },
     });
 
-    res.json({ events });
+    res.json(success({ events }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load engagement history"));
+    res.status(500).json(error("Failed to load engagement history", 500));
   }
 });
 
@@ -189,16 +180,12 @@ analyticsRouter.get("/engagement-daily", async (req: AuthRequest, res) => {
       actual: bucket.hasActual ? bucket.actual : null,
     }));
 
-    res.json({ days: result });
+    res.json(success({ days: result }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load daily engagement"));
+    res.status(500).json(error("Failed to load daily engagement", 500));
   }
 });
 
@@ -242,16 +229,12 @@ analyticsRouter.get("/activity-daily", async (req: AuthRequest, res) => {
       count,
     }));
 
-    res.json({ days });
+    res.json(success({ days }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load daily activity"));
+    res.status(500).json(error("Failed to load daily activity", 500));
   }
 });
 
@@ -262,7 +245,7 @@ analyticsRouter.get("/team-engagement-daily", async (req: AuthRequest, res) => {
 
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user || user.role === "ANALYST") {
-      return res.status(403).json(buildErrorResponse(req, "Manager access required"));
+      return res.status(403).json(error("Manager access required", 403));
     }
 
     const now = new Date();
@@ -308,16 +291,12 @@ analyticsRouter.get("/team-engagement-daily", async (req: AuthRequest, res) => {
       teamActual: bucket.count > 0 ? Math.round(bucket.actual / bucket.count) : 0,
     }));
 
-    res.json({ days });
+    res.json(success({ days }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load team engagement daily"));
+    res.status(500).json(error("Failed to load team engagement daily", 500));
   }
 });
 
@@ -328,7 +307,7 @@ analyticsRouter.get("/days-to-peak", async (req: AuthRequest, res) => {
 
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user || user.role === "ANALYST") {
-      return res.status(403).json(buildErrorResponse(req, "Manager access required"));
+      return res.status(403).json(error("Manager access required", 403));
     }
 
     const analysts = await prisma.user.findMany({
@@ -375,16 +354,12 @@ analyticsRouter.get("/days-to-peak", async (req: AuthRequest, res) => {
     });
 
     peaks.sort((a, b) => a.days - b.days);
-    res.json({ peaks });
+    res.json(success({ peaks }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load days-to-peak"));
+    res.status(500).json(error("Failed to load days-to-peak", 500));
   }
 });
 
@@ -395,7 +370,7 @@ analyticsRouter.get("/team", async (req: AuthRequest, res) => {
 
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user || user.role === "ANALYST") {
-      return res.status(403).json(buildErrorResponse(req, "Manager access required"));
+      return res.status(403).json(error("Manager access required", 403));
     }
 
     const analysts = await prisma.user.findMany({
@@ -412,17 +387,13 @@ analyticsRouter.get("/team", async (req: AuthRequest, res) => {
       },
     });
 
-    res.json({
+    res.json(success({
       analysts: analysts.map(({ passwordHash, ...a }) => a),
-    });
+    }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load team analytics"));
+    res.status(500).json(error("Failed to load team analytics", 500));
   }
 });

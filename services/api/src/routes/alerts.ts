@@ -2,8 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { parsePagination } from "../lib/pagination";
 import { prisma } from "../lib/prisma";
+import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
-import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
 
 export const alertsRouter = Router();
@@ -22,6 +22,8 @@ const updateSubscriptionSchema = z.object({
   delivery: deliverySchema,
 });
 
+const dismissAlertSchema = z.object({}).passthrough();
+
 // Get user's alert subscriptions
 alertsRouter.get("/subscriptions", async (req: AuthRequest, res) => {
   try {
@@ -32,12 +34,10 @@ alertsRouter.get("/subscriptions", async (req: AuthRequest, res) => {
       take,
       skip,
     });
-    res.json({ subscriptions });
+    res.json(success({ subscriptions }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to load subscriptions");
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load subscriptions", { message: err.message }));
+    res.status(500).json(error("Failed to load subscriptions", 500, { message: err.message }));
   }
 });
 
@@ -59,19 +59,12 @@ alertsRouter.post("/subscriptions", async (req: AuthRequest, res) => {
       },
     });
 
-    res.json({ subscription });
+    res.json(success({ subscription }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      if (req.body?.type === undefined || req.body?.value === undefined) {
-        return res.status(400).json(buildErrorResponse(req, "Type and value required"));
-      }
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to save subscription"));
+    res.status(500).json(error("Failed to save subscription"));
   }
 });
 
@@ -83,7 +76,7 @@ alertsRouter.patch("/subscriptions/:id", async (req: AuthRequest, res) => {
     const sub = await prisma.alertSubscription.findFirst({
       where: { id: req.params.id as string, userId: req.userId },
     });
-    if (!sub) return res.status(404).json(buildErrorResponse(req, "Subscription not found"));
+    if (!sub) return res.status(404).json(error("Subscription not found"));
 
     const updated = await prisma.alertSubscription.update({
       where: { id: req.params.id as string },
@@ -93,16 +86,12 @@ alertsRouter.patch("/subscriptions/:id", async (req: AuthRequest, res) => {
       },
     });
 
-    res.json({ subscription: updated });
+    res.json(success({ subscription: updated }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to update subscription"));
+    res.status(500).json(error("Failed to update subscription"));
   }
 });
 
@@ -112,14 +101,12 @@ alertsRouter.delete("/subscriptions/:id", async (req: AuthRequest, res) => {
     const sub = await prisma.alertSubscription.findFirst({
       where: { id: req.params.id as string, userId: req.userId },
     });
-    if (!sub) return res.status(404).json(buildErrorResponse(req, "Subscription not found"));
+    if (!sub) return res.status(404).json(error("Subscription not found"));
 
     await prisma.alertSubscription.delete({ where: { id: req.params.id as string } });
-    res.json({ success: true });
+    res.json(success({ success: true }));
   } catch (err: any) {
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to delete subscription"));
+    res.status(500).json(error("Failed to delete subscription"));
   }
 });
 
@@ -141,9 +128,9 @@ alertsRouter.get("/feed", async (req: AuthRequest, res) => {
       }
     });
 
-    res.json({ alerts });
+    res.json(success({ alerts }));
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load alert feed"));
+    res.status(500).json(error("Failed to load alert feed"));
   }
 });
 
@@ -152,27 +139,32 @@ alertsRouter.get("/:id", async (req: AuthRequest, res) => {
   try {
     const alertId = req.params.id as string;
     const alert = await prisma.alert.findUnique({ where: { id: alertId } });
-    if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
-    res.json({ alert });
+    if (!alert) return res.status(404).json(error("Alert not found"));
+    res.json(success({ alert }));
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to get alert"));
+    res.status(500).json(error("Failed to get alert"));
   }
 });
 
 // Dismiss/acknowledge alert (set expiresAt to now)
 alertsRouter.patch("/:id", async (req: AuthRequest, res) => {
   try {
+    dismissAlertSchema.parse(req.body ?? {});
+
     const alertId = req.params.id as string;
     const alert = await prisma.alert.findUnique({ where: { id: alertId } });
-    if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
+    if (!alert) return res.status(404).json(error("Alert not found"));
 
     const updated = await prisma.alert.update({
       where: { id: alertId },
       data: { expiresAt: new Date() },
     });
-    res.json({ alert: updated });
+    res.json(success({ alert: updated }));
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to update alert"));
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Failed to update alert"));
   }
 });
 
@@ -181,11 +173,11 @@ alertsRouter.delete("/:id", async (req: AuthRequest, res) => {
   try {
     const alertId = req.params.id as string;
     const alert = await prisma.alert.findUnique({ where: { id: alertId } });
-    if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
+    if (!alert) return res.status(404).json(error("Alert not found"));
 
     await prisma.alert.delete({ where: { id: alertId } });
-    res.json({ success: true });
+    res.json(success({ success: true }));
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to delete alert"));
+    res.status(500).json(error("Failed to delete alert"));
   }
 });

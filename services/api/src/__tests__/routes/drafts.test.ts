@@ -1,13 +1,14 @@
 /**
  * Drafts routes test suite
- * Tests: GET /, GET /:id, POST /, PATCH /:id, DELETE /:id, POST /generate, POST /:id/regenerate
- * Mocks: Prisma, pipeline (runGenerationPipeline), JWT
+ * Tests: CRUD routes, POST /generate, POST /from-article, POST /reply, POST /:id/regenerate
+ * Mocks: Prisma, pipeline (runGenerationPipeline), research, fetch, JWT
  */
 
 import request from "supertest";
 import express from "express";
 import { draftsRouter } from "../../routes/drafts";
 import { requestIdMiddleware } from "../../middleware/requestId";
+import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
 
 // --- Mocks ---
 
@@ -28,6 +29,7 @@ jest.mock("../../lib/prisma", () => ({
     tweetDraft: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
+      count: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
@@ -51,11 +53,19 @@ jest.mock("../../lib/pipeline", () => ({
   runGenerationPipeline: jest.fn(),
 }));
 
+jest.mock("../../lib/research", () => ({
+  conductResearch: jest.fn(),
+}));
+
 import { prisma } from "../../lib/prisma";
 import { runGenerationPipeline } from "../../lib/pipeline";
+import { conductResearch } from "../../lib/research";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 const mockRunPipeline = runGenerationPipeline as jest.Mock;
+const mockConductResearch = conductResearch as jest.Mock;
+const originalFetch = global.fetch;
+const mockFetch = jest.fn();
 
 // --- App setup ---
 
@@ -65,6 +75,10 @@ app.use(requestIdMiddleware);
 app.use("/api/drafts", draftsRouter);
 
 const AUTH = "Bearer mock_token";
+
+const responseData = (res: any) => expectSuccessResponse<any>(res.body);
+const responseError = (res: any, message?: string) => expectErrorResponse(res.body, message);
+const responseMessage = (res: any) => res.body.details?.message;
 
 const mockDraft = {
   id: "draft-1",
@@ -96,10 +110,20 @@ const mockVoiceProfile = {
 
 beforeAll(() => {
   process.env.JWT_SECRET = "test-secret";
+  global.fetch = mockFetch as typeof fetch;
+});
+
+beforeEach(() => {
+  mockRunPipeline.mockReset();
+  mockConductResearch.mockReset();
+  mockFetch.mockReset();
+  delete process.env.TWITTER_BEARER_TOKEN;
 });
 
 afterAll(() => {
   delete process.env.JWT_SECRET;
+  delete process.env.TWITTER_BEARER_TOKEN;
+  global.fetch = originalFetch;
 });
 
 describe("GET /api/drafts", () => {
@@ -116,8 +140,45 @@ describe("GET /api/drafts", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.drafts).toHaveLength(1);
-    expect(res.body.drafts[0].id).toBe("draft-1");
+    expect(responseData(res).drafts).toHaveLength(1);
+    expect(responseData(res).drafts[0].id).toBe("draft-1");
+  });
+
+  it("computes lastAction for posted, approved, edited, and fresh drafts", async () => {
+    const createdAt = new Date("2026-04-03T10:00:00.000Z");
+
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockResolvedValueOnce([
+      { ...mockDraft, id: "posted-draft", status: "POSTED", createdAt, updatedAt: createdAt },
+      { ...mockDraft, id: "approved-draft", status: "APPROVED", createdAt, updatedAt: createdAt },
+      {
+        ...mockDraft,
+        id: "edited-draft",
+        status: "DRAFT",
+        createdAt,
+        updatedAt: new Date(createdAt.getTime() + 61_000),
+      },
+      {
+        ...mockDraft,
+        id: "fresh-draft",
+        status: "DRAFT",
+        createdAt,
+        updatedAt: new Date(createdAt.getTime() + 60_000),
+      },
+    ]);
+
+    const res = await request(app)
+      .get("/api/drafts")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(200);
+    expect(responseData(res).drafts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "posted-draft", lastAction: "posted" }),
+        expect.objectContaining({ id: "approved-draft", lastAction: "approved" }),
+        expect.objectContaining({ id: "edited-draft", lastAction: "edited" }),
+        expect.objectContaining({ id: "fresh-draft", lastAction: "draft" }),
+      ])
+    );
   });
 
   it("passes status filter to Prisma", async () => {
@@ -154,8 +215,111 @@ describe("GET /api/drafts", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(500);
-    expect(res.body.error).toBe("Failed to load drafts");
-    expect(res.body.message).toBe("db down");
+    responseError(res, "Failed to load drafts");
+    expect(responseMessage(res)).toBe("db down");
+  });
+});
+
+describe("GET /api/drafts/stats", () => {
+  it("returns per-user draft counts", async () => {
+    (mockPrisma.tweetDraft.count as jest.Mock)
+      .mockResolvedValueOnce(7)
+      .mockResolvedValueOnce(3)
+      .mockResolvedValueOnce(2)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(1);
+
+    const res = await request(app)
+      .get("/api/drafts/stats")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(200);
+    expect(responseData(res)).toEqual({
+      total: 7,
+      drafts: 3,
+      approved: 2,
+      posted: 1,
+      archived: 1,
+    });
+    expect(mockPrisma.tweetDraft.count).toHaveBeenNthCalledWith(1, {
+      where: { userId: "user-123" },
+    });
+    expect(mockPrisma.tweetDraft.count).toHaveBeenNthCalledWith(2, {
+      where: { userId: "user-123", status: "DRAFT" },
+    });
+    expect(mockPrisma.tweetDraft.count).toHaveBeenNthCalledWith(3, {
+      where: { userId: "user-123", status: "APPROVED" },
+    });
+    expect(mockPrisma.tweetDraft.count).toHaveBeenNthCalledWith(4, {
+      where: { userId: "user-123", status: "POSTED" },
+    });
+    expect(mockPrisma.tweetDraft.count).toHaveBeenNthCalledWith(5, {
+      where: { userId: "user-123", status: "ARCHIVED" },
+    });
+  });
+
+  it("returns 500 when loading stats fails", async () => {
+    (mockPrisma.tweetDraft.count as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .get("/api/drafts/stats")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(500);
+    responseError(res, "Failed to load draft stats");
+    expect(responseMessage(res)).toBe("db down");
+  });
+});
+
+describe("GET /api/drafts/history", () => {
+  it("returns the 20 most recent drafts with characterCount", async () => {
+    const createdAt = new Date("2026-04-03T12:00:00.000Z");
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: "draft-history-1",
+        content: "Alpha thread",
+        status: "POSTED",
+        createdAt,
+      },
+    ]);
+
+    const res = await request(app)
+      .get("/api/drafts/history")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.tweetDraft.findMany).toHaveBeenCalledWith({
+      where: { userId: "user-123" },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: {
+        id: true,
+        content: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+
+    expect(responseData(res).drafts).toEqual([
+      {
+        id: "draft-history-1",
+        content: "Alpha thread",
+        status: "POSTED",
+        createdAt: createdAt.toISOString(),
+        characterCount: "Alpha thread".length,
+      },
+    ]);
+  });
+
+  it("returns 500 when loading draft history fails", async () => {
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .get("/api/drafts/history")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(500);
+    responseError(res, "Failed to load draft history");
   });
 });
 
@@ -186,7 +350,7 @@ describe("GET /api/drafts/:id", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(404);
-    expect(res.body.error).toBe("Draft not found");
+    responseError(res, "Draft not found");
   });
 
   it("returns draft when found", async () => {
@@ -197,7 +361,8 @@ describe("GET /api/drafts/:id", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.id).toBe("draft-1");
+    expect(responseData(res).draft.id).toBe("draft-1");
+    expect(responseData(res).draft.lastAction).toBe("draft");
   });
 
   it("returns 500 when loading a draft fails", async () => {
@@ -208,8 +373,8 @@ describe("GET /api/drafts/:id", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(500);
-    expect(res.body.error).toBe("Failed to get draft");
-    expect(res.body.message).toBe("db down");
+    responseError(res, "Failed to get draft");
+    expect(responseMessage(res)).toBe("db down");
   });
 });
 
@@ -223,7 +388,7 @@ describe("POST /api/drafts", () => {
       .send({});
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Invalid request");
+    responseError(res, "Invalid request");
   });
 
   it("creates draft and logs analytics event", async () => {
@@ -236,7 +401,7 @@ describe("POST /api/drafts", () => {
       .send({ content: "Hello crypto world!", sourceType: "MANUAL" });
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.content).toBe("Hello crypto world!");
+    expect(responseData(res).draft.content).toBe("Hello crypto world!");
     expect(mockPrisma.analyticsEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ type: "DRAFT_CREATED" }),
@@ -253,8 +418,8 @@ describe("POST /api/drafts", () => {
       .send({ content: "Hello crypto world!" });
 
     expect(res.status).toBe(500);
-    expect(res.body.error).toBe("Failed to create draft");
-    expect(res.body.message).toBe("db down");
+    responseError(res, "Failed to create draft");
+    expect(responseMessage(res)).toBe("db down");
   });
 });
 
@@ -283,7 +448,7 @@ describe("PATCH /api/drafts/:id", () => {
       .send({ content: "updated content" });
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.content).toBe("updated content");
+    expect(responseData(res).draft.content).toBe("updated content");
   });
 
   it("logs FEEDBACK_GIVEN event when feedback is provided", async () => {
@@ -327,7 +492,7 @@ describe("PATCH /api/drafts/:id", () => {
       .send({ status: "NOT_A_STATUS" });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Invalid request");
+    responseError(res, "Invalid request");
   });
 
   it("returns 500 when updating a draft fails", async () => {
@@ -340,8 +505,79 @@ describe("PATCH /api/drafts/:id", () => {
       .send({ content: "updated content" });
 
     expect(res.status).toBe(500);
-    expect(res.body.error).toBe("Failed to update draft");
-    expect(res.body.message).toBe("db down");
+    responseError(res, "Failed to update draft");
+    expect(responseMessage(res)).toBe("db down");
+  });
+});
+
+describe("PATCH /api/drafts/:id/status", () => {
+  it("returns 404 when draft not found", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .patch("/api/drafts/nonexistent/status")
+      .set("Authorization", AUTH)
+      .send({ status: "posted" });
+
+    expect(res.status).toBe(404);
+    responseError(res, "Draft not found");
+  });
+
+  it("updates draft status and normalizes lowercase values", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(mockDraft);
+    (mockPrisma.tweetDraft.update as jest.Mock).mockResolvedValueOnce({ ...mockDraft, status: "ARCHIVED" });
+
+    const res = await request(app)
+      .patch("/api/drafts/draft-1/status")
+      .set("Authorization", AUTH)
+      .send({ status: "archived" });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.tweetDraft.update).toHaveBeenCalledWith({
+      where: { id: "draft-1" },
+      data: { status: "ARCHIVED" },
+    });
+    expect(responseData(res).draft.status).toBe("ARCHIVED");
+  });
+
+  it("logs DRAFT_POSTED when status is POSTED", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(mockDraft);
+    (mockPrisma.tweetDraft.update as jest.Mock).mockResolvedValueOnce({ ...mockDraft, status: "POSTED" });
+    (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValue({});
+
+    await request(app)
+      .patch("/api/drafts/draft-1/status")
+      .set("Authorization", AUTH)
+      .send({ status: "posted" });
+
+    expect(mockPrisma.analyticsEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ type: "DRAFT_POSTED" }),
+      })
+    );
+  });
+
+  it("returns 400 for invalid status payloads", async () => {
+    const res = await request(app)
+      .patch("/api/drafts/draft-1/status")
+      .set("Authorization", AUTH)
+      .send({ status: "copied" });
+
+    expect(res.status).toBe(400);
+    responseError(res, "Invalid request");
+  });
+
+  it("returns 500 when updating draft status fails", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(mockDraft);
+    (mockPrisma.tweetDraft.update as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .patch("/api/drafts/draft-1/status")
+      .set("Authorization", AUTH)
+      .send({ status: "POSTED" });
+
+    expect(res.status).toBe(500);
+    responseError(res, "Failed to update draft status");
   });
 });
 
@@ -367,7 +603,7 @@ describe("DELETE /api/drafts/:id", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(responseData(res).success).toBe(true);
   });
 
   it("returns 500 when deleting a draft fails", async () => {
@@ -379,8 +615,8 @@ describe("DELETE /api/drafts/:id", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(500);
-    expect(res.body.error).toBe("Failed to delete draft");
-    expect(res.body.message).toBe("db down");
+    responseError(res, "Failed to delete draft");
+    expect(responseMessage(res)).toBe("db down");
   });
 });
 
@@ -394,7 +630,7 @@ describe("POST /api/drafts/generate", () => {
       .send({});
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Invalid request");
+    responseError(res, "Invalid request");
   });
 
   it("returns 400 when voice profile not found", async () => {
@@ -406,7 +642,7 @@ describe("POST /api/drafts/generate", () => {
       .send({ sourceContent: "BTC hits ATH", sourceType: "TWEET" });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Voice profile not found/);
+    expect(responseError(res).error).toMatch(/Voice profile not found/);
   });
 
   it("generates tweet, saves draft, logs analytics event", async () => {
@@ -432,7 +668,7 @@ describe("POST /api/drafts/generate", () => {
       .send({ sourceContent: "BTC hits ATH", sourceType: "TWEET" });
 
     expect(res.status).toBe(200);
-    expect(res.body.draft).toBeDefined();
+    expect(responseData(res).draft).toBeDefined();
     expect(mockRunPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "user-123",
@@ -456,7 +692,275 @@ describe("POST /api/drafts/generate", () => {
       .send({ sourceContent: "BTC hits ATH", sourceType: "TWEET" });
 
     expect(res.status).toBe(502);
-    expect(res.body.error).toBe("AI generation failed");
+    responseError(res, "AI generation failed");
+  });
+});
+
+describe("POST /api/drafts/from-article", () => {
+  it("returns 400 when articleUrl is missing", async () => {
+    const res = await request(app)
+      .post("/api/drafts/from-article")
+      .set("Authorization", AUTH)
+      .send({});
+
+    expect(res.status).toBe(400);
+    responseError(res, "Invalid request");
+  });
+
+  it("uses articleText directly when provided", async () => {
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent: "Bitcoin upside still looks underpriced if the bid stays this sticky.",
+        confidence: 0.83,
+        predictedEngagement: 1800,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 350,
+    });
+
+    const res = await request(app)
+      .post("/api/drafts/from-article")
+      .set("Authorization", AUTH)
+      .send({
+        articleUrl: "https://www.example.com/articles/btc-outlook?utm_source=x",
+        articleText: "Bitcoin demand keeps broadening while exchange balances remain tight.",
+      });
+
+    expect(res.status).toBe(200);
+    expect(responseData(res)).toEqual({
+      draft:
+        "Bitcoin upside still looks underpriced if the bid stays this sticky. https://www.example.com/articles/btc-outlook",
+      sourceUrl: "https://www.example.com/articles/btc-outlook",
+      characterCount:
+        "Bitcoin upside still looks underpriced if the bid stays this sticky. https://www.example.com/articles/btc-outlook"
+          .length,
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockConductResearch).not.toHaveBeenCalled();
+    expect(mockRunPipeline).toHaveBeenCalledWith({
+      userId: "user-123",
+      sourceContent: "Bitcoin demand keeps broadening while exchange balances remain tight.",
+      sourceType: "ARTICLE",
+    });
+  });
+
+  it("fetches the article and researches key points when articleText is not provided", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: {
+        get: () => "text/html; charset=utf-8",
+      },
+      text: async () =>
+        "<html><body><article><h1>ETH treasury adoption</h1><p>Public companies are still absorbing ETH supply faster than the market expected.</p></article></body></html>",
+    } as any);
+    mockConductResearch.mockResolvedValueOnce({
+      summary: "ETH treasury demand is broadening beyond the early adopters.",
+      keyFacts: ["Public companies are adding ETH", "Supply remains tight"],
+      sentiment: "bullish",
+      relatedTopics: [],
+      sources: ["https://example.com/eth-treasury"],
+      confidence: 0.91,
+    });
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent: "ETH treasury demand keeps widening faster than consensus expects.",
+        confidence: 0.87,
+        predictedEngagement: 1900,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 420,
+    });
+
+    const res = await request(app)
+      .post("/api/drafts/from-article")
+      .set("Authorization", AUTH)
+      .send({
+        articleUrl: "https://example.com/eth-treasury?ref=feed",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockFetch).toHaveBeenCalledWith("https://example.com/eth-treasury?ref=feed");
+    expect(mockConductResearch).toHaveBeenCalledWith({
+      query: expect.stringContaining("Public companies are still absorbing ETH supply"),
+      context: "ARTICLE",
+    });
+    expect(mockRunPipeline).toHaveBeenCalledWith({
+      userId: "user-123",
+      sourceContent: expect.stringContaining("Summary: ETH treasury demand is broadening beyond the early adopters."),
+      sourceType: "ARTICLE",
+    });
+    expect(responseData(res)).toEqual({
+      draft: "ETH treasury demand keeps widening faster than consensus expects. https://example.com/eth-treasury",
+      sourceUrl: "https://example.com/eth-treasury",
+      characterCount:
+        "ETH treasury demand keeps widening faster than consensus expects. https://example.com/eth-treasury".length,
+    });
+  });
+
+  it("truncates the generated post so the source URL still fits under 280 characters", async () => {
+    const generatedContent = "a".repeat(260);
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent,
+        confidence: 0.79,
+        predictedEngagement: 1400,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 300,
+    });
+
+    const res = await request(app)
+      .post("/api/drafts/from-article")
+      .set("Authorization", AUTH)
+      .send({
+        articleUrl: "https://example.com/very-long-article",
+        articleText: "Macro liquidity is shifting faster than price is discounting.",
+      });
+
+    expect(res.status).toBe(200);
+    expect(responseData(res).characterCount).toBeLessThanOrEqual(280);
+    expect(responseData(res).draft.endsWith("https://example.com/very-long-article")).toBe(true);
+  });
+
+  it("returns 400 when voice profile is missing", async () => {
+    mockRunPipeline.mockRejectedValueOnce(new Error("Voice profile not found. Complete onboarding first."));
+
+    const res = await request(app)
+      .post("/api/drafts/from-article")
+      .set("Authorization", AUTH)
+      .send({
+        articleUrl: "https://example.com/btc-article",
+        articleText: "BTC adoption keeps compounding through every pullback.",
+      });
+
+    expect(res.status).toBe(400);
+    responseError(res, "Voice profile not found. Complete onboarding first.");
+  });
+});
+
+describe("POST /api/drafts/reply", () => {
+  it("returns 400 when tweetUrl and tweetText are both missing", async () => {
+    const res = await request(app)
+      .post("/api/drafts/reply")
+      .set("Authorization", AUTH)
+      .send({});
+
+    expect(res.status).toBe(400);
+    responseError(res, "Invalid request");
+  });
+
+  it("fetches tweet content from x.com and generates a contextual reply", async () => {
+    process.env.TWITTER_BEARER_TOKEN = "twitter-token";
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          text: "ETH ETF demand still looks underpriced relative to how sticky these inflows are.",
+        },
+      }),
+    } as any);
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent: "Yep. The market's still pricing the headline, not the durability of the bid.",
+        confidence: 0.84,
+        predictedEngagement: 1700,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 320,
+    });
+
+    const res = await request(app)
+      .post("/api/drafts/reply")
+      .set("Authorization", AUTH)
+      .send({
+        tweetUrl: "https://x.com/atlas/status/1908123456789012345?s=20",
+        angle: "highlight that the market is underestimating persistent flows",
+      });
+
+    expect(res.status).toBe(200);
+    expect(responseData(res).reply).toBe("Yep. The market's still pricing the headline, not the durability of the bid.");
+    expect(responseData(res).originalTweet).toBe(
+      "ETH ETF demand still looks underpriced relative to how sticky these inflows are."
+    );
+    expect(responseData(res).characterCount).toBe(responseData(res).reply.length);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.twitter.com/2/tweets/1908123456789012345?tweet.fields=text",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer twitter-token",
+        }),
+      })
+    );
+    expect(mockRunPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-123",
+        sourceContent: "ETH ETF demand still looks underpriced relative to how sticky these inflows are.",
+        sourceType: "TWEET",
+        feedback: expect.stringContaining("direct reply"),
+      })
+    );
+    expect(mockRunPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feedback: expect.stringContaining("highlight that the market is underestimating persistent flows"),
+      })
+    );
+  });
+
+  it("falls back to tweetText when the tweet cannot be fetched", async () => {
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent: "True, but the re-rate probably comes from positioning catching up, not the first print.",
+        confidence: 0.81,
+        predictedEngagement: 1500,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 280,
+    });
+
+    const res = await request(app)
+      .post("/api/drafts/reply")
+      .set("Authorization", AUTH)
+      .send({
+        tweetUrl: "https://twitter.com/atlas/status/1908123456789012345",
+        tweetText: "SOL is getting repriced faster than most people expected.",
+      });
+
+    expect(res.status).toBe(200);
+    expect(responseData(res).originalTweet).toBe("SOL is getting repriced faster than most people expected.");
+    expect(mockRunPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceContent: "SOL is getting repriced faster than most people expected.",
+      })
+    );
+  });
+
+  it("returns 400 for invalid tweet URLs when no fallback text is provided", async () => {
+    const res = await request(app)
+      .post("/api/drafts/reply")
+      .set("Authorization", AUTH)
+      .send({
+        tweetUrl: "https://example.com/atlas/status/1908123456789012345",
+      });
+
+    expect(res.status).toBe(400);
+    responseError(res, "Invalid tweet URL");
+  });
+
+  it("returns 502 when tweet fetch fails and no fallback text is provided", async () => {
+    const res = await request(app)
+      .post("/api/drafts/reply")
+      .set("Authorization", AUTH)
+      .send({
+        tweetUrl: "https://x.com/atlas/status/1908123456789012345",
+      });
+
+    expect(res.status).toBe(502);
+    responseError(res, "Failed to fetch tweet content — provide tweetText as fallback");
   });
 });
 
@@ -472,7 +976,7 @@ describe("POST /api/drafts/:id/regenerate", () => {
       .send({});
 
     expect(res.status).toBe(404);
-    expect(res.body.error).toBe("Draft not found");
+    responseError(res, "Draft not found");
   });
 
   it("returns 400 when original draft has no sourceContent", async () => {
@@ -487,7 +991,7 @@ describe("POST /api/drafts/:id/regenerate", () => {
       .send({});
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Cannot regenerate a manual draft/);
+    expect(responseError(res).error).toMatch(/Cannot regenerate a manual draft/);
   });
 
   it("regenerates with new version number", async () => {
@@ -516,7 +1020,7 @@ describe("POST /api/drafts/:id/regenerate", () => {
       .send({});
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.version).toBe(2);
+    expect(responseData(res).draft.version).toBe(2);
   });
 
   it("logs FEEDBACK_GIVEN when feedback is provided on regenerate", async () => {
@@ -557,6 +1061,6 @@ describe("POST /api/drafts/:id/regenerate", () => {
       .send({});
 
     expect(res.status).toBe(502);
-    expect(res.body.error).toBe("AI generation failed");
+    responseError(res, "AI generation failed");
   });
 });

@@ -8,6 +8,7 @@
 import request from "supertest";
 import express from "express";
 import { requestIdMiddleware } from "../middleware/requestId";
+import { expectSuccessResponse } from "./helpers/response";
 
 jest.mock("../lib/supabase", () => ({ supabaseAdmin: null }));
 
@@ -79,7 +80,7 @@ describe("POST /api/auth/register", () => {
       .post("/api/auth/register")
       .send({ handle: "testuser", email: "test@example.com", password: "secret123" });
     expect(res.status).toBe(200);
-    expect(res.body.token).toBeDefined();
+    expect(expectSuccessResponse<any>(res.body).token).toBeDefined();
   }, 15000);
 
   it("returns 400 when handle is missing", async () => {
@@ -127,7 +128,8 @@ describe("GET /api/auth/me", () => {
       .set("Authorization", validToken);
 
     expect(res.status).toBe(200);
-    expect(res.body.user.id).toBe("user-123");
-    expect(res.body.user.voiceProfile).toBeDefined();
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.user.id).toBe("user-123");
+    expect(data.user.voiceProfile).toBeDefined();
   });
 });

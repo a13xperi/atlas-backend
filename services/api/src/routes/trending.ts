@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { searchTrending } from "../lib/grok";
-import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
 
 export const trendingRouter = Router();
@@ -53,15 +53,13 @@ trendingRouter.post("/scan", async (req: AuthRequest, res) => {
       data: { userId: req.userId!, type: "ALERT_GENERATED", value: alerts.length },
     });
 
-    res.json({ alerts });
+    res.json(success({ alerts }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     logger.error({ err: err.message }, "Trending scan failed");
-    res.status(502).json(buildErrorResponse(req, "Twitter scan failed"));
+    res.status(502).json(error("Twitter scan failed"));
   }
 });
 
@@ -90,16 +88,12 @@ trendingRouter.get("/topics", async (req: AuthRequest, res) => {
       relevance: a.relevance,
     }));
 
-    res.json({ topics });
+    res.json(success({ topics }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     logger.error({ err: err.message }, "Failed to get topics");
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load trending topics"));
+    res.status(500).json(error("Failed to load trending topics"));
   }
 });
