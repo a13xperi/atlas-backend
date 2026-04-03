@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { VoiceMaturity } from "@prisma/client";
 import { parsePagination } from "../lib/pagination";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
@@ -356,25 +357,30 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
     // Run calibration via Claude
     const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
 
-    // Update voice profile with calibrated dimensions
+    // Update voice profile with all 12 calibrated dimensions
+    const dimensionData = {
+      humor: calibration.humor,
+      formality: calibration.formality,
+      brevity: calibration.brevity,
+      contrarianTone: calibration.contrarianTone,
+      directness: calibration.directness,
+      warmth: calibration.warmth,
+      technicalDepth: calibration.technicalDepth,
+      confidence: calibration.confidence,
+      evidenceOrientation: calibration.evidenceOrientation,
+      solutionOrientation: calibration.solutionOrientation,
+      socialPosture: calibration.socialPosture,
+      selfPromotionalIntensity: calibration.selfPromotionalIntensity,
+      tweetsAnalyzed: calibration.tweetsAnalyzed,
+      maturity: calibration.tweetsAnalyzed >= 100 ? VoiceMaturity.ADVANCED
+        : calibration.tweetsAnalyzed >= 20 ? VoiceMaturity.INTERMEDIATE
+        : VoiceMaturity.BEGINNER,
+    };
+
     const profile = await prisma.voiceProfile.upsert({
       where: { userId: req.userId! },
-      update: {
-        humor: calibration.humor,
-        formality: calibration.formality,
-        brevity: calibration.brevity,
-        contrarianTone: calibration.contrarianTone,
-        tweetsAnalyzed: calibration.tweetsAnalyzed,
-        maturity: calibration.tweetsAnalyzed >= 20 ? "INTERMEDIATE" : "BEGINNER",
-      },
-      create: {
-        userId: req.userId!,
-        humor: calibration.humor,
-        formality: calibration.formality,
-        brevity: calibration.brevity,
-        contrarianTone: calibration.contrarianTone,
-        tweetsAnalyzed: calibration.tweetsAnalyzed,
-      },
+      update: dimensionData,
+      create: { userId: req.userId!, ...dimensionData },
     });
 
     // Log analytics
@@ -385,7 +391,7 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
     res.json(success({
       profile,
       calibration: {
-        confidence: calibration.confidence,
+        confidence: calibration.calibrationConfidence,
         analysis: calibration.analysis,
         tweetsAnalyzed: calibration.tweetsAnalyzed,
         twitterUser: { username: twitterUser.username, name: twitterUser.name },
