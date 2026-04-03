@@ -16,6 +16,7 @@ const generateSchema = z.object({
   sourceContent: z.string().min(1).max(10000),
   sourceType: z.enum(["REPORT", "ARTICLE", "TWEET", "TRENDING_TOPIC", "VOICE_NOTE", "MANUAL"]),
   blendId: z.string().optional(),
+  replyAngle: z.enum(["Direct", "Curious", "Concise"]).optional(),
 });
 
 const regenerateSchema = z.object({
@@ -53,6 +54,7 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
         sourceContent: body.sourceContent,
         sourceType: body.sourceType,
         blendId: body.blendId,
+        replyAngle: body.replyAngle,
       }),
       90_000,
       "generate-pipeline",
@@ -429,5 +431,62 @@ draftsRouter.post("/:id/thread", authenticate, async (req: AuthRequest, res) => 
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to create thread");
     res.status(500).json(buildErrorResponse(req, "Failed to create thread"));
+  }
+});
+
+// Post a draft to X
+draftsRouter.post("/:id/post-to-x", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { postTweet, refreshAccessToken } = await import("../lib/twitter");
+
+    const draftId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const draft = await prisma.tweetDraft.findUnique({ where: { id: draftId } });
+    if (!draft || draft.userId !== req.userId!) {
+      return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      select: { xAccessToken: true, xRefreshToken: true, xTokenExpiresAt: true },
+    });
+
+    if (!user?.xAccessToken) {
+      return res.status(400).json(buildErrorResponse(req, "X account not linked. Connect your X account first."));
+    }
+
+    // Refresh token if expired
+    let accessToken = user.xAccessToken;
+    if (user.xTokenExpiresAt && user.xTokenExpiresAt < new Date() && user.xRefreshToken) {
+      const refreshed = await refreshAccessToken(user.xRefreshToken);
+      accessToken = refreshed.accessToken;
+      await prisma.user.update({
+        where: { id: req.userId! },
+        data: {
+          xAccessToken: refreshed.accessToken,
+          xRefreshToken: refreshed.refreshToken,
+          xTokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+        },
+      });
+    }
+
+    // Post to X
+    const tweet = await postTweet(accessToken, draft.content);
+
+    // Update draft status
+    const updated = await prisma.tweetDraft.update({
+      where: { id: draftId },
+      data: { status: "POSTED" },
+    });
+
+    // Log analytics
+    await prisma.analyticsEvent.create({
+      data: { userId: req.userId!, type: "DRAFT_POSTED", metadata: { tweetId: tweet.id, draftId } },
+    });
+
+    logger.info({ userId: req.userId, tweetId: tweet.id, draftId }, "Draft posted to X");
+    res.json({ draft: updated, tweet: { id: tweet.id, text: tweet.text } });
+  } catch (err: any) {
+    logger.error({ err: err.message, stack: err.stack }, "Failed to post to X");
+    res.status(502).json(buildErrorResponse(req, `Failed to post to X: ${err.message}`));
   }
 });

@@ -30,6 +30,7 @@ interface GenerationInput {
   sourceType: string;
   blendId?: string;
   feedback?: string;
+  replyAngle?: string;
 }
 
 export async function runGenerationPipeline(input: GenerationInput): Promise<PipelineResult> {

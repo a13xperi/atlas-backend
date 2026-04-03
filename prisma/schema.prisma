@@ -17,9 +17,13 @@ model User {
   avatarUrl     String?
   role          Role     @default(ANALYST)
   onboardingTrack OnboardingTrack?
-  telegramChatId  String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  telegramChatId    String?
+  xHandle           String?
+  xAccessToken      String?
+  xRefreshToken     String?
+  xTokenExpiresAt   DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   voiceProfile      VoiceProfile?
   referenceVoices   ReferenceVoice[]
