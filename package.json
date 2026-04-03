@@ -7,7 +7,7 @@
     "dev": "cd services/api && npx tsx watch src/index.ts",
     "build": "rm -rf dist && npx prisma generate && npx tsc",
     "start": "npx prisma db push --accept-data-loss && node dist/services/api/src/index.js",
-    "seed": "npx ts-node scripts/seed-demo.ts",
+    "seed:demo": "npx ts-node scripts/seed-demo.ts",
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
     "db:migrate": "npx prisma migrate dev",
