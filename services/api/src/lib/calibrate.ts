@@ -8,17 +8,15 @@
 import { getAnthropicClient } from "./anthropic";
 
 export interface CalibrationResult {
-  // Core voice (0-100 scale)
+  // All dimensions stored as 0-100 scale
   humor: number;
   formality: number;
   brevity: number;
   contrarianTone: number;
-  // Communication style (0-10 scale)
   directness: number;
   warmth: number;
   technicalDepth: number;
   confidence: number;
-  // Content approach (0-10 scale)
   evidenceOrientation: number;
   solutionOrientation: number;
   socialPosture: number;
@@ -104,24 +102,25 @@ export async function calibrateFromTweets(
   const result = JSON.parse(content);
 
   const clamp100 = (v: number) => Math.min(Math.max(Math.round(v ?? 50), 0), 100);
-  const clamp10 = (v: number) => Math.min(Math.max(Number((v ?? 5).toFixed(1)), 0), 10);
+  /** AI returns 0-10 for extended dims; multiply by 10 for 0-100 storage */
+  const tenToHundred = (v: number) => clamp100(Math.round((v ?? 5) * 10));
 
   return {
-    // Core voice (0-100)
+    // Core voice (already 0-100)
     humor: clamp100(result.humor),
     formality: clamp100(result.formality),
     brevity: clamp100(result.brevity),
     contrarianTone: clamp100(result.contrarianTone),
-    // Communication style (0-10)
-    directness: clamp10(result.directness),
-    warmth: clamp10(result.warmth),
-    technicalDepth: clamp10(result.technicalDepth),
-    confidence: clamp10(result.confidence),
-    // Content approach (0-10)
-    evidenceOrientation: clamp10(result.evidenceOrientation),
-    solutionOrientation: clamp10(result.solutionOrientation),
-    socialPosture: clamp10(result.socialPosture),
-    selfPromotionalIntensity: clamp10(result.selfPromotionalIntensity),
+    // Communication style (AI returns 0-10, stored as 0-100)
+    directness: tenToHundred(result.directness),
+    warmth: tenToHundred(result.warmth),
+    technicalDepth: tenToHundred(result.technicalDepth),
+    confidence: tenToHundred(result.confidence),
+    // Content approach (AI returns 0-10, stored as 0-100)
+    evidenceOrientation: tenToHundred(result.evidenceOrientation),
+    solutionOrientation: tenToHundred(result.solutionOrientation),
+    socialPosture: tenToHundred(result.socialPosture),
+    selfPromotionalIntensity: tenToHundred(result.selfPromotionalIntensity),
     // Meta
     calibrationConfidence: Math.min(Math.max(result.calibrationConfidence ?? 0.5, 0), 1),
     analysis: result.analysis || "Voice profile calibrated from tweet analysis.",

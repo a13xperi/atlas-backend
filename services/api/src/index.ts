@@ -28,6 +28,7 @@ import { prisma } from "./lib/prisma";
 import { getRedis } from "./lib/redis";
 import { initBot } from "./lib/telegram";
 import { initSocket } from "./lib/socket";
+import { startScheduler } from "./lib/scheduler";
 
 dotenv.config();
 
@@ -137,6 +138,7 @@ initSocket(server, allowedOrigins);
 
 server.listen(PORT, () => {
   logger.info({ port: PORT }, `Atlas API running on port ${PORT}`);
+  startScheduler();
 });
 
 export default app;
