@@ -30,6 +30,15 @@ interface PromptParams {
   blendVoices?: BlendVoice[];
   feedback?: string;
   researchContext?: string;
+  replyAngle?: string;
+}
+
+/** Prefix extreme dimension values with IMPORTANT for LLM emphasis */
+function emphasize(line: string, value: number, scale: 100 | 10): string {
+  const isExtreme = scale === 100
+    ? (value > 80 || value < 20)
+    : (value > 8 || value < 2);
+  return isExtreme ? `IMPORTANT: ${line}` : line;
 }
 
 function describeHumor(v: number): string {
@@ -161,20 +170,20 @@ export function buildTweetPrompt(params: PromptParams): { system: string; userMe
   const socialPosture = normalizeTenPointDimension(voiceProfile.socialPosture);
   const selfPromotionalIntensity = normalizeTenPointDimension(voiceProfile.selfPromotionalIntensity);
 
-  // Build the voice description
+  // Build the voice description with emphasis on extreme values
   const voiceDescription = [
-    `- Humor (${voiceProfile.humor}/100): ${describeHumor(voiceProfile.humor)}`,
-    `- Formality (${voiceProfile.formality}/100): ${describeFormality(voiceProfile.formality)}`,
-    `- Brevity (${voiceProfile.brevity}/100): ${describeBrevity(voiceProfile.brevity)}`,
-    `- Contrarian tone (${voiceProfile.contrarianTone}/100): ${describeContrarian(voiceProfile.contrarianTone)}`,
-    `- Directness (${directness}/10): ${describeDirectness(directness)}`,
-    `- Warmth (${warmth}/10): ${describeWarmth(warmth)}`,
-    `- Technical depth (${technicalDepth}/10): ${describeTechnicalDepth(technicalDepth)}`,
-    `- Confidence (${confidence}/10): ${describeConfidence(confidence)}`,
-    `- Evidence orientation (${evidenceOrientation}/10): ${describeEvidenceOrientation(evidenceOrientation)}`,
-    `- Solution orientation (${solutionOrientation}/10): ${describeSolutionOrientation(solutionOrientation)}`,
-    `- Social posture (${socialPosture}/10): ${describeSocialPosture(socialPosture)}`,
-    `- Self-promotional intensity (${selfPromotionalIntensity}/10): ${describeSelfPromotionalIntensity(selfPromotionalIntensity)}`,
+    emphasize(`- Humor (${voiceProfile.humor}/100): ${describeHumor(voiceProfile.humor)}`, voiceProfile.humor, 100),
+    emphasize(`- Formality (${voiceProfile.formality}/100): ${describeFormality(voiceProfile.formality)}`, voiceProfile.formality, 100),
+    emphasize(`- Brevity (${voiceProfile.brevity}/100): ${describeBrevity(voiceProfile.brevity)}`, voiceProfile.brevity, 100),
+    emphasize(`- Contrarian tone (${voiceProfile.contrarianTone}/100): ${describeContrarian(voiceProfile.contrarianTone)}`, voiceProfile.contrarianTone, 100),
+    emphasize(`- Directness (${directness}/10): ${describeDirectness(directness)}`, directness, 10),
+    emphasize(`- Warmth (${warmth}/10): ${describeWarmth(warmth)}`, warmth, 10),
+    emphasize(`- Technical depth (${technicalDepth}/10): ${describeTechnicalDepth(technicalDepth)}`, technicalDepth, 10),
+    emphasize(`- Confidence (${confidence}/10): ${describeConfidence(confidence)}`, confidence, 10),
+    emphasize(`- Evidence orientation (${evidenceOrientation}/10): ${describeEvidenceOrientation(evidenceOrientation)}`, evidenceOrientation, 10),
+    emphasize(`- Solution orientation (${solutionOrientation}/10): ${describeSolutionOrientation(solutionOrientation)}`, solutionOrientation, 10),
+    emphasize(`- Social posture (${socialPosture}/10): ${describeSocialPosture(socialPosture)}`, socialPosture, 10),
+    emphasize(`- Self-promotional intensity (${selfPromotionalIntensity}/10): ${describeSelfPromotionalIntensity(selfPromotionalIntensity)}`, selfPromotionalIntensity, 10),
   ].join("\n");
 
   let system = `You are Atlas, a crypto analyst's tweet-crafting AI. You generate tweets styled to the user's voice profile.
@@ -200,6 +209,16 @@ ${voiceDescription}
   // Add research context if available (from OpenAI deep research)
   if (params.researchContext) {
     system += `\n\n## Research Context\n${params.researchContext}\nUse these facts to make your tweet more insightful and data-driven. Don't cite sources — just weave the knowledge in naturally.`;
+  }
+
+  // Add reply angle if specified
+  if (params.replyAngle) {
+    const angleInstructions: Record<string, string> = {
+      Direct: "State your position clearly and firmly. No hedging.",
+      Curious: "Ask a thoughtful question that adds to the discussion. Show genuine interest.",
+      Concise: "Keep it short — one punchy line that lands. Maximum impact, minimum words.",
+    };
+    system += `\n\n## Reply Angle\nApproach this as a "${params.replyAngle}" reply. ${angleInstructions[params.replyAngle] || ""}`;
   }
 
   // Add feedback if this is a refinement

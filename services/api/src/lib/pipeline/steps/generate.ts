@@ -17,6 +17,7 @@ export const generateStep: PipelineStep = {
       blendVoices: ctx.blendVoices,
       feedback: ctx.feedback,
       researchContext: ctx.researchContext,
+      replyAngle: ctx.replyAngle,
     });
 
     ctx.generatedContent = result.content;
