@@ -5,7 +5,6 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import dotenv from "dotenv";
-import packageJson from "../../../package.json";
 import { config } from "./lib/config";
 import { authRouter } from "./routes/auth";
 import { voiceRouter } from "./routes/voice";
@@ -33,62 +32,6 @@ dotenv.config();
 
 const app = express();
 const PORT = config.PORT;
-
-type HealthCheckStatus = "ok" | "error";
-
-type TimedHealthCheck = {
-  status: HealthCheckStatus;
-  latencyMs: number;
-};
-
-function toMegabytes(bytes: number): number {
-  return Number((bytes / 1024 / 1024).toFixed(2));
-}
-
-async function runDatabaseHealthCheck(): Promise<TimedHealthCheck> {
-  const startedAt = Date.now();
-
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-
-    return {
-      status: "ok",
-      latencyMs: Date.now() - startedAt,
-    };
-  } catch {
-    return {
-      status: "error",
-      latencyMs: Date.now() - startedAt,
-    };
-  }
-}
-
-async function runRedisHealthCheck(): Promise<TimedHealthCheck> {
-  const startedAt = Date.now();
-
-  try {
-    const redis = getRedis();
-
-    if (!redis) {
-      return {
-        status: "error",
-        latencyMs: Date.now() - startedAt,
-      };
-    }
-
-    await redis.ping();
-
-    return {
-      status: "ok",
-      latencyMs: Date.now() - startedAt,
-    };
-  } catch {
-    return {
-      status: "error",
-      latencyMs: Date.now() - startedAt,
-    };
-  }
-}
 
 const allowedOrigins = [
   ...config.FRONTEND_URL.split(",").map((o) => o.trim()),
@@ -121,55 +64,36 @@ app.use(rateLimit(100, 60 * 1000)); // Global: 100 req/min per IP
 
 // Health check
 app.get("/health", async (_req, res) => {
+  let database: "ok" | "error" = "ok";
+  let cache: "ok" | "unavailable" = "unavailable";
+
   try {
-    const [database, redis] = await Promise.all([
-      runDatabaseHealthCheck(),
-      runRedisHealthCheck(),
-    ]);
-    const memoryUsage = process.memoryUsage();
-    const status =
-      database.status === "ok" && redis.status === "ok" ? "ok" : "degraded";
-
-    res.status(200).json({
-      status,
-      timestamp: new Date().toISOString(),
-      uptime: Math.floor(process.uptime()),
-      version: packageJson.version,
-      checks: {
-        database,
-        redis,
-        memory: {
-          heapUsedMB: toMegabytes(memoryUsage.heapUsed),
-          heapTotalMB: toMegabytes(memoryUsage.heapTotal),
-          rss: memoryUsage.rss,
-        },
-      },
-    });
+    await prisma.$queryRaw`SELECT 1`;
+    database = "ok";
   } catch {
-    const memoryUsage = process.memoryUsage();
-
-    res.status(200).json({
-      status: "degraded",
-      timestamp: new Date().toISOString(),
-      uptime: Math.floor(process.uptime()),
-      version: packageJson.version,
-      checks: {
-        database: {
-          status: "error",
-          latencyMs: 0,
-        },
-        redis: {
-          status: "error",
-          latencyMs: 0,
-        },
-        memory: {
-          heapUsedMB: toMegabytes(memoryUsage.heapUsed),
-          heapTotalMB: toMegabytes(memoryUsage.heapTotal),
-          rss: memoryUsage.rss,
-        },
-      },
-    });
+    database = "error";
   }
+
+  try {
+    const redis = getRedis();
+    if (!redis) {
+      throw new Error("Redis unavailable");
+    }
+
+    await redis.ping();
+    cache = "ok";
+  } catch {
+    cache = "unavailable";
+  }
+
+  res.status(database === "error" ? 503 : 200).json({
+    status: "ok",
+    version: process.env.npm_package_version || "unknown",
+    uptime: process.uptime(),
+    database,
+    cache,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Routes
