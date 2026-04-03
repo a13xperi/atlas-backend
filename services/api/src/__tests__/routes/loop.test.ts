@@ -60,7 +60,7 @@ afterAll(() => {
   if (originalFetch) {
     global.fetch = originalFetch;
   } else {
-    delete (global as typeof globalThis & { fetch?: typeof fetch }).fetch;
+    (global as any).fetch = undefined;
   }
 });
 
