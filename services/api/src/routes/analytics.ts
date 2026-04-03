@@ -151,14 +151,14 @@ analyticsRouter.get("/engagement-daily", async (req: AuthRequest, res) => {
     });
 
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const buckets = new Map<string, { predicted: number; actual: number | null; hasActual: boolean }>();
+    const buckets = new Map<string, { predicted: number; actual: number }>();
 
     // Pre-populate all 7 days
     for (let i = 0; i < 7; i++) {
       const d = new Date(sevenDaysAgo);
       d.setDate(d.getDate() + i);
       const key = d.toISOString().slice(0, 10);
-      buckets.set(key, { predicted: 0, actual: 0, hasActual: false });
+      buckets.set(key, { predicted: 0, actual: 0 });
     }
 
     // Aggregate drafts into day buckets
@@ -167,17 +167,14 @@ analyticsRouter.get("/engagement-daily", async (req: AuthRequest, res) => {
       const bucket = buckets.get(key);
       if (!bucket) continue;
       bucket.predicted += draft.predictedEngagement ?? 0;
-      if (draft.actualEngagement !== null) {
-        bucket.actual = (bucket.actual ?? 0) + draft.actualEngagement;
-        bucket.hasActual = true;
-      }
+      bucket.actual += draft.actualEngagement ?? 0;
     }
 
     const result = Array.from(buckets.entries()).map(([date, bucket]) => ({
       date,
       dayLabel: dayNames[new Date(date + "T00:00:00").getDay()],
       predicted: bucket.predicted,
-      actual: bucket.hasActual ? bucket.actual : null,
+      actual: bucket.actual,
     }));
 
     res.json(success({ days: result }));

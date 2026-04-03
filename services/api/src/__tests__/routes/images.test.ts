@@ -41,6 +41,14 @@ jest.mock("../../lib/gemini", () => ({
   generateVisualConcept: jest.fn(),
 }));
 
+const mockConfig = {
+  GOOGLE_AI_API_KEY: "test-key",
+  GEMINI_MODEL: "gemini-2.5-flash",
+};
+jest.mock("../../lib/config", () => ({
+  get config() { return mockConfig; },
+}));
+
 import { prisma } from "../../lib/prisma";
 import { generateVisualConcept } from "../../lib/gemini";
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
@@ -114,6 +122,19 @@ describe("POST /api/images/generate", () => {
 
     expect(res.status).toBe(502);
     expectErrorResponse(res.body, "Image generation failed");
+  });
+
+  it("returns 503 when GOOGLE_AI_API_KEY is not configured", async () => {
+    const original = mockConfig.GOOGLE_AI_API_KEY;
+    mockConfig.GOOGLE_AI_API_KEY = "";
+
+    const res = await request(app)
+      .post("/api/images/generate")
+      .set(AUTH)
+      .send({ prompt: "BTC is mooning" });
+
+    expect(res.status).toBe(503);
+    mockConfig.GOOGLE_AI_API_KEY = original;
   });
 });
 
