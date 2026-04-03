@@ -128,8 +128,14 @@ alertsRouter.get("/feed", async (req: AuthRequest, res) => {
   try {
     const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
 
+    const category = req.query.category as string | undefined;
+    const where: any = { userId: req.userId };
+    if (category) {
+      where.category = category;
+    }
+
     const alerts = await prisma.alert.findMany({
-      where: { userId: req.userId },
+      where,
       orderBy: { createdAt: "desc" },
       take,
       skip,

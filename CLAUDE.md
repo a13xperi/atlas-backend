@@ -1,14 +1,25 @@
+## SESSION COORDINATION (read first)
+Multiple CC sessions + Codex tasks run concurrently on this repo.
+Before starting ANY work:
+1. Read `.coordination/STATUS.json` — check `do_not_touch` array
+2. Never modify a file listed in `do_not_touch` (another session owns it)
+3. Use `/claim-task` to atomically claim work (Supabase lock + Notion update)
+4. After completing a task, run `/sync-coordination` to update bridge files
+
+Session ID format: `CC-{N}-{repo}` (e.g. `CC-1-backend`)
+Coordination DB: Supabase project `zoirudjyqfqvpxsrxepr`, table `session_locks`
+
 ## MULTI-AGENT BUILD PROTOCOL
 This project uses multiple AI coding tools in parallel.
 READ ATLAS-BUILD-CONTEXT.md for full project context and architecture.
-READ TASK-STATUS.md for current task assignments and status.
+Check `.coordination/STATUS.json` for live task assignments (replaces TASK-STATUS.md).
 
 ## YOUR ROLE: Backend Lane (Claude Code)
 You ONLY modify: services/api/src/*, prisma/*, package.json, tsconfig.json
 DO NOT touch: frontend repo (atlas-portal), test files (Cursor lane)
 
 ## AFTER EVERY COMMIT
-1. Update TASK-STATUS.md with your task status
+1. Run `/sync-coordination` to update bridge files
 2. git add -A && git commit -m "[claude-code] type: description" && git push
 
 ---

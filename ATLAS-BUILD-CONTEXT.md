@@ -1,6 +1,15 @@
 # Atlas Build Context — Shared Multi-Agent Protocol
-# Last updated: 2026-04-02
+# Last updated: 2026-04-03
 # All AI tools: READ THIS FIRST before doing any work.
+
+## SESSION COORDINATION (NEW — Apr 3, 2026)
+Multiple CC sessions + Codex tasks run concurrently. Coordination via:
+- **Supabase** `session_locks` table (project `zoirudjyqfqvpxsrxepr`) — atomic task locking
+- **`.coordination/STATUS.json`** — machine-readable state (active sessions, claimed files, do_not_touch)
+- **`.coordination/CODEX-BRIEFING.md`** — Codex reads this to avoid claimed files
+- **Notion Build Tracker `Claimed By` field** — session ID of who owns the task
+Before modifying any file, check `.coordination/STATUS.json` `do_not_touch` array.
+Use `/claim-task` to lock work. Use `/sync-coordination` after completing work.
 
 ## PROJECT OVERVIEW
 Atlas is a content-to-tweet platform for crypto analysts at Delphi Digital.
