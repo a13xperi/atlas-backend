@@ -38,10 +38,16 @@ export async function dispatchAlert(alert: AlertPayload): Promise<void> {
 
     if (telegramSubs.length === 0) return;
 
-    // Deliver via Telegram (non-blocking)
-    deliverAlertToUser(alert, alert.userId).catch((err) =>
-      logger.error({ err }, `[alertDelivery] Telegram delivery failed for alert ${alert.id}`)
-    );
+    // Deliver via Telegram and stamp deliveredAt on success
+    deliverAlertToUser(alert, alert.userId)
+      .then((ok) => {
+        if (ok) {
+          prisma.alert.update({ where: { id: alert.id }, data: { deliveredAt: new Date() } }).catch(() => {});
+        }
+      })
+      .catch((err) =>
+        logger.error({ err }, `[alertDelivery] Telegram delivery failed for alert ${alert.id}`)
+      );
   } catch (err) {
     logger.error({ err }, `[alertDelivery] Dispatch failed for alert ${alert.id}`);
   }
