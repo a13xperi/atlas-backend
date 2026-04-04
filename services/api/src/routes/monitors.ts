@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { logger } from "../lib/logger";
+import { success, error } from "../lib/response";
 
 export const monitorsRouter = Router();
 monitorsRouter.use(authenticate);
@@ -33,10 +34,10 @@ monitorsRouter.get("/", async (req: AuthRequest, res) => {
       where: { userId: req.userId },
       orderBy: { createdAt: "desc" },
     });
-    res.json({ monitors });
+    res.json(success({ monitors }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to list monitors");
-    res.status(500).json({ error: "Failed to list monitors" });
+    res.status(500).json(error("Failed to list monitors"));
   }
 });
 
