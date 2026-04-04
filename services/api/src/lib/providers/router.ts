@@ -33,13 +33,20 @@ const providers: Record<ProviderId, Provider> = {
  * - general: OpenAI → Anthropic → Gemini
  */
 const ROUTING_TABLE: Record<TaskType, ProviderId[]> = {
-  tweet_generation: ["openai", "anthropic", "gemini"],
+  tweet_generation: ["anthropic", "openai", "gemini"],
   research: ["anthropic", "openai", "gemini"],
-  trending: ["grok", "openai", "anthropic"],
+  trending: ["grok", "anthropic", "openai"],
   image_concept: ["gemini", "openai", "anthropic"],
   oracle_smart: ["anthropic", "openai", "gemini"],
-  oracle_fast: ["gemini", "openai", "anthropic"],
-  general: ["openai", "anthropic", "gemini"],
+  oracle_fast: ["anthropic", "gemini", "openai"],
+  general: ["anthropic", "openai", "gemini"],
+};
+
+const MODEL_OVERRIDES: Partial<Record<TaskType, string>> = {
+  oracle_fast: "claude-haiku-4-5-20251001",
+  oracle_smart: "claude-sonnet-4-20250514",
+  research: "claude-sonnet-4-20250514",
+  tweet_generation: "claude-opus-4-20250514",
 };
 
 function getAvailableChain(taskType: TaskType): Provider[] {
@@ -62,13 +69,20 @@ export async function routeCompletion(request: CompletionRequest): Promise<Compl
     throw new Error(`No providers available for task type: ${taskType}`);
   }
 
+  const modelOverride = MODEL_OVERRIDES[taskType];
+  const enrichedRequest = modelOverride && !request.model
+    ? { ...request, model: modelOverride }
+    : request;
+
   // Cumulative 60s cap across all fallback attempts
   const tryChain = async (): Promise<CompletionResponse> => {
     let lastError: Error | undefined;
 
     for (const provider of chain) {
       try {
-        return await provider.complete(request);
+        return await provider.complete(
+          provider.config.id === "anthropic" ? enrichedRequest : request,
+        );
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         logger.warn(

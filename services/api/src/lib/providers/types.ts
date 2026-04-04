@@ -26,6 +26,8 @@ export interface CompletionRequest {
   jsonMode?: boolean;
   /** Which task this is for — used by the router to pick the best provider */
   taskType?: TaskType;
+  /** Override the provider's default model */
+  model?: string;
 }
 
 export interface CompletionResponse {

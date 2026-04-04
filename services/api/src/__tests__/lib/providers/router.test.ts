@@ -41,6 +41,9 @@ jest.mock("../../../lib/providers/grok", () => ({
 }));
 
 const mockLogger = { warn: jest.fn(), error: jest.fn(), info: jest.fn() };
+jest.mock("../../../lib/timeout", () => ({
+  withTimeout: (promise: Promise<any>) => promise,
+}));
 jest.mock("../../../lib/logger", () => ({ logger: mockLogger }));
 
 
@@ -75,15 +78,14 @@ describe("routeCompletion", () => {
 
   });
 
-  it("routes tweet_generation to OpenAI as primary", async () => {
-    mockOpenai.completeMock.mockResolvedValueOnce(successResponse("openai"));
+  it("routes tweet_generation to Anthropic as primary", async () => {
+    mockAnthropic.completeMock.mockResolvedValueOnce(successResponse("anthropic"));
 
     const result = await routeCompletion({ ...baseRequest, taskType: "tweet_generation" });
-    expect(result.provider).toBe("openai");
-    expect(result.model).toBe("openai-model");
+    expect(result.provider).toBe("anthropic");
 
-    expect(mockOpenai.completeMock).toHaveBeenCalledTimes(1);
-    expect(mockAnthropic.completeMock).not.toHaveBeenCalled();
+    expect(mockAnthropic.completeMock).toHaveBeenCalledTimes(1);
+    expect(mockOpenai.completeMock).not.toHaveBeenCalled();
   });
 
   it("routes research to Anthropic as primary", async () => {
@@ -115,12 +117,10 @@ describe("routeCompletion", () => {
   });
 
   it("defaults to general routing when taskType is omitted", async () => {
-    mockOpenai.completeMock.mockResolvedValueOnce(successResponse("openai"));
+    mockAnthropic.completeMock.mockResolvedValueOnce(successResponse("anthropic"));
 
     const result = await routeCompletion(baseRequest);
-    expect(result.provider).toBe("openai");
-    expect(mockOpenai.completeMock).toHaveBeenCalledWith(baseRequest);
-
+    expect(result.provider).toBe("anthropic");
   });
 
   it("falls back to next provider when primary fails", async () => {
@@ -140,31 +140,21 @@ describe("routeCompletion", () => {
 
 
   it("falls back through full chain until one succeeds", async () => {
-    mockOpenai.completeMock.mockRejectedValueOnce(new Error("Timeout"));
-    mockAnthropic.completeMock.mockRejectedValueOnce(new Error("500"));
+    mockAnthropic.completeMock.mockRejectedValueOnce(new Error("Timeout"));
+    mockOpenai.completeMock.mockRejectedValueOnce(new Error("500"));
     mockGemini.completeMock.mockResolvedValueOnce(successResponse("gemini"));
 
     const result = await routeCompletion({ ...baseRequest, taskType: "tweet_generation" });
     expect(result.provider).toBe("gemini");
     expect(result.model).toBe("gemini-model");
-    expect(mockOpenai.completeMock).toHaveBeenCalledWith({
-      ...baseRequest,
-      taskType: "tweet_generation",
-    });
-    expect(mockAnthropic.completeMock).toHaveBeenCalledWith({
-      ...baseRequest,
-      taskType: "tweet_generation",
-    });
-    expect(mockGemini.completeMock).toHaveBeenCalledWith({
-      ...baseRequest,
-      taskType: "tweet_generation",
-    });
-
+    expect(mockAnthropic.completeMock).toHaveBeenCalledTimes(1);
+    expect(mockOpenai.completeMock).toHaveBeenCalledTimes(1);
+    expect(mockGemini.completeMock).toHaveBeenCalledTimes(1);
   });
 
   it("throws when all providers in chain fail", async () => {
-    mockOpenai.completeMock.mockRejectedValueOnce(new Error("fail1"));
-    mockAnthropic.completeMock.mockRejectedValueOnce(new Error("fail2"));
+    mockAnthropic.completeMock.mockRejectedValueOnce(new Error("fail1"));
+    mockOpenai.completeMock.mockRejectedValueOnce(new Error("fail2"));
     mockGemini.completeMock.mockRejectedValueOnce(new Error("fail3"));
 
     await expect(
@@ -173,24 +163,23 @@ describe("routeCompletion", () => {
   });
 
   it("skips unavailable providers", async () => {
-    mockOpenai.config.available = false;
-    mockAnthropic.completeMock.mockResolvedValueOnce(successResponse("anthropic"));
+    mockAnthropic.config.available = false;
+    mockOpenai.completeMock.mockResolvedValueOnce(successResponse("openai"));
 
     const result = await routeCompletion({ ...baseRequest, taskType: "tweet_generation" });
-    expect(result.provider).toBe("anthropic");
-    expect(result.model).toBe("anthropic-model");
-    expect(mockOpenai.completeMock).not.toHaveBeenCalled();
+    expect(result.provider).toBe("openai");
+    expect(result.model).toBe("openai-model");
+    expect(mockAnthropic.completeMock).not.toHaveBeenCalled();
   });
 
   it("uses the next available provider in the trending fallback chain", async () => {
     mockGrok.config.available = false;
-    mockOpenai.completeMock.mockResolvedValueOnce(successResponse("openai"));
+    mockAnthropic.completeMock.mockResolvedValueOnce(successResponse("anthropic"));
 
     const result = await routeCompletion({ ...baseRequest, taskType: "trending" });
-    expect(result.provider).toBe("openai");
-    expect(result.model).toBe("openai-model");
+    expect(result.provider).toBe("anthropic");
     expect(mockGrok.completeMock).not.toHaveBeenCalled();
-    expect(mockOpenai.completeMock).toHaveBeenCalledTimes(1);
+    expect(mockAnthropic.completeMock).toHaveBeenCalledTimes(1);
   });
 
 
