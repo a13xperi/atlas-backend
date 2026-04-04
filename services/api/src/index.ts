@@ -21,6 +21,8 @@ import { docsRouter } from "./routes/docs";
 import { xAuthRouter } from "./routes/x-auth";
 import { qaRouter } from "./routes/qa";
 import { transcribeRouter } from "./routes/transcribe";
+import { monitorsRouter } from "./routes/monitors";
+import { campaignsRouter } from "./routes/campaigns";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
@@ -117,6 +119,8 @@ app.use("/api/briefing", briefingRouter);
 app.use("/api/auth/x", xAuthRouter);
 app.use("/api/qa", qaRouter);
 app.use("/api/transcribe", transcribeRouter);
+app.use("/api/monitors", monitorsRouter);
+app.use("/api/campaigns", campaignsRouter);
 
 // 404 handler — catch unknown routes before error handlers
 app.use((req, res) => {

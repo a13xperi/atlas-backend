@@ -36,6 +36,8 @@ model User {
   generatedImages   GeneratedImage[]
   alerts            Alert[]
   briefingPreference BriefingPreference?
+  nlpMonitors       NlpMonitor[]
+  campaigns         Campaign[]
 
   @@map("users")
 }
@@ -151,13 +153,17 @@ model TweetDraft {
   blendId       String?
   feedback      String?
   scheduledAt   DateTime?
+  campaignId    String?
+  sortOrder     Int?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
-  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  images GeneratedImage[]
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  images   GeneratedImage[]
+  campaign Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
 
   @@index([status, scheduledAt])
+  @@index([campaignId])
   @@map("tweet_drafts")
 }
 
@@ -317,4 +323,46 @@ model GeneratedImage {
 
   @@index([userId, createdAt])
   @@map("generated_images")
+}
+
+model NlpMonitor {
+  id           String          @id @default(cuid())
+  userId       String
+  name         String
+  keywords     String[]
+  minRelevance Float           @default(0.5)
+  delivery     AlertDelivery[] @default([PORTAL])
+  isActive     Boolean         @default(true)
+  matchCount   Int             @default(0)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId, isActive])
+  @@map("nlp_monitors")
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  PAUSED
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  status      CampaignStatus @default(DRAFT)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  drafts TweetDraft[]
+
+  @@index([userId, status])
+  @@map("campaigns")
 }
