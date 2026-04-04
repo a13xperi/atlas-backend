@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { logger } from "../lib/logger";
+import { success, error } from "../lib/response";
 
 export const campaignsRouter = Router({ mergeParams: true });
 campaignsRouter.use(authenticate);
@@ -35,10 +36,10 @@ campaignsRouter.get("/", async (req: AuthRequest, res) => {
       draftCount: c._count.drafts,
       _count: undefined,
     }));
-    res.json({ campaigns: result });
+    res.json(success({ campaigns: result }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to list campaigns");
-    res.status(500).json({ error: "Failed to list campaigns" });
+    res.status(500).json(error("Failed to list campaigns"));
   }
 });
 
@@ -50,13 +51,13 @@ campaignsRouter.post("/", async (req: AuthRequest, res) => {
       data: { userId: req.userId!, name: body.name, description: body.description },
     });
     logger.info({ campaignId: campaign.id, userId: req.userId }, "Campaign created");
-    res.status(201).json({ campaign: { ...campaign, draftCount: 0 } });
+    res.status(201).json(success({ campaign: { ...campaign, draftCount: 0 } }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     logger.error({ err: err.message }, "Failed to create campaign");
-    res.status(500).json({ error: "Failed to create campaign" });
+    res.status(500).json(error("Failed to create campaign"));
   }
 });
 
@@ -68,12 +69,12 @@ campaignsRouter.get("/:id", async (req: AuthRequest, res) => {
       include: { drafts: { orderBy: { sortOrder: "asc" } } },
     });
     if (!campaign) {
-      return res.status(404).json({ error: "Campaign not found" });
+      return res.status(404).json(error("Campaign not found", 404));
     }
-    res.json({ campaign: { ...campaign, draftCount: campaign.drafts.length } });
+    res.json(success({ campaign: { ...campaign, draftCount: campaign.drafts.length } }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to get campaign");
-    res.status(500).json({ error: "Failed to get campaign" });
+    res.status(500).json(error("Failed to get campaign"));
   }
 });
 
@@ -86,19 +87,19 @@ campaignsRouter.patch("/:id", async (req: AuthRequest, res) => {
       data: body,
     });
     if (updated.count === 0) {
-      return res.status(404).json({ error: "Campaign not found" });
+      return res.status(404).json(error("Campaign not found", 404));
     }
     const campaign = await prisma.campaign.findUnique({
       where: { id: paramId(req) },
       include: { drafts: true },
     });
-    res.json({ campaign: { ...campaign, draftCount: campaign?.drafts.length ?? 0, drafts: undefined } });
+    res.json(success({ campaign: { ...campaign, draftCount: campaign?.drafts.length ?? 0, drafts: undefined } }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     logger.error({ err: err.message }, "Failed to update campaign");
-    res.status(500).json({ error: "Failed to update campaign" });
+    res.status(500).json(error("Failed to update campaign"));
   }
 });
 
@@ -113,12 +114,12 @@ campaignsRouter.delete("/:id", async (req: AuthRequest, res) => {
       where: { id: paramId(req), userId: req.userId },
     });
     if (deleted.count === 0) {
-      return res.status(404).json({ error: "Campaign not found" });
+      return res.status(404).json(error("Campaign not found", 404));
     }
-    res.json({ success: true });
+    res.json(success({ deleted: true }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to delete campaign");
-    res.status(500).json({ error: "Failed to delete campaign" });
+    res.status(500).json(error("Failed to delete campaign"));
   }
 });
 
@@ -133,21 +134,21 @@ campaignsRouter.post("/:id/drafts", async (req: AuthRequest, res) => {
     const campaign = await prisma.campaign.findFirst({
       where: { id: paramId(req), userId: req.userId },
     });
-    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+    if (!campaign) return res.status(404).json(error("Campaign not found", 404));
 
     const draft = await prisma.tweetDraft.updateMany({
       where: { id: draftId, userId: req.userId },
       data: { campaignId: paramId(req), sortOrder: sortOrder ?? 0 },
     });
-    if (draft.count === 0) return res.status(404).json({ error: "Draft not found" });
+    if (draft.count === 0) return res.status(404).json(error("Draft not found", 404));
 
-    res.json({ success: true });
+    res.json(success({ deleted: true }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request", details: err.errors });
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     logger.error({ err: err.message }, "Failed to add draft to campaign");
-    res.status(500).json({ error: "Failed to add draft to campaign" });
+    res.status(500).json(error("Failed to add draft to campaign"));
   }
 });
 
@@ -158,10 +159,10 @@ campaignsRouter.delete("/:id/drafts/:draftId", async (req: AuthRequest, res) => 
       where: { id: paramId(req, "draftId"), campaignId: paramId(req), userId: req.userId },
       data: { campaignId: null, sortOrder: null },
     });
-    if (updated.count === 0) return res.status(404).json({ error: "Draft not found in campaign" });
-    res.json({ success: true });
+    if (updated.count === 0) return res.status(404).json(error("Draft not found in campaign", 404));
+    res.json(success({ deleted: true }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to remove draft from campaign");
-    res.status(500).json({ error: "Failed to remove draft from campaign" });
+    res.status(500).json(error("Failed to remove draft from campaign"));
   }
 });

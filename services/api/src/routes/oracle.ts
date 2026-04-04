@@ -7,6 +7,7 @@ import {
   buildBlendPreview,
   buildDimensionReaction,
   buildFreeTextResponse,
+  buildOracleSystemPrompt,
 } from "../lib/oracle-prompt";
 import { success } from "../lib/response";
 import { logger } from "../lib/logger";
@@ -202,3 +203,59 @@ function resolvePrompt(
   // No LLM needed — client handles scripted messages
   return null;
 }
+
+// ── General Chat ────────────────────────────────────────────────
+
+const chatSchema = z.object({
+  messages: z
+    .array(z.object({ role: z.enum(["user", "oracle"]), content: z.string().max(2000) }))
+    .min(1)
+    .max(20),
+  page: z.string().optional(),
+});
+
+oracleRouter.post("/chat", async (req: AuthRequest, res) => {
+  try {
+    const body = chatSchema.parse(req.body);
+
+    const pageHint = body.page ? `\nThe user is on the ${body.page} page.` : "";
+
+    let voiceHint = "";
+    try {
+      const profile = await prisma.voiceProfile.findUnique({ where: { userId: req.userId! } });
+      if (profile) {
+        voiceHint = `\nVoice: Humor ${profile.humor}/100, Formality ${profile.formality}/100, Brevity ${profile.brevity}/100, Contrarian ${profile.contrarianTone}/100.`;
+      }
+    } catch {}
+
+    const systemPrompt =
+      buildOracleSystemPrompt() +
+      `\n\nYou are in the floating chat widget inside Atlas.` +
+      pageHint + voiceHint +
+      `\n\nKeep responses under 50 words. Be helpful and personalized.`;
+
+    const llmMessages = [
+      { role: "system" as const, content: systemPrompt },
+      ...body.messages.map((m) => ({
+        role: (m.role === "oracle" ? "assistant" : "user") as "system" | "user" | "assistant",
+        content: m.content,
+      })),
+    ];
+
+    const response = await withTimeout(
+      routeCompletion({ taskType: "oracle_fast", maxTokens: 150, temperature: 0.7, messages: llmMessages }),
+      8_000,
+      "oracle-chat",
+    );
+
+    logger.info({ provider: response.provider, latencyMs: response.latencyMs, page: body.page }, "Oracle chat response");
+    res.json(success({ text: response.content.trim() }));
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
+      return;
+    }
+    logger.error({ error: err }, "Oracle chat error");
+    res.status(500).json({ ok: false, error: "Oracle is thinking... try again in a moment." });
+  }
+});

@@ -8,7 +8,7 @@ export const monitorsRouter = Router();
 monitorsRouter.use(authenticate);
 
 function paramId(req: AuthRequest): string {
-  return paramId(req) as string;
+  return req.params.id as string;
 }
 
 const createSchema = z.object({
