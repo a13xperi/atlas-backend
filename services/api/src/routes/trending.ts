@@ -50,39 +50,43 @@ trendingRouter.post("/scan", async (req: AuthRequest, res) => {
       )
     );
 
-    // Check alerts against user's NLP monitors
-    const monitors = await prisma.nlpMonitor.findMany({
-      where: { userId: req.userId, isActive: true },
-    });
+    // Check alerts against user's NLP monitors (non-blocking)
+    let monitorAlerts: typeof alerts = [];
+    try {
+      const monitors = await prisma.nlpMonitor.findMany({
+        where: { userId: req.userId, isActive: true },
+      });
 
-    const monitorAlerts: typeof alerts = [];
-    for (const monitor of monitors) {
-      for (const item of items) {
-        const searchText = `${item.headline} ${item.context ?? ""}`;
-        const result = matchMonitorKeywords(searchText, monitor.keywords);
-        if (result.matched && result.score >= monitor.minRelevance) {
-          const alert = await prisma.alert.create({
-            data: {
-              type: "MONITOR",
-              title: `[${monitor.name}] ${item.headline}`,
-              context: `Matched keywords: ${result.matchedKeywords.join(", ")}. ${item.context ?? ""}`,
-              sourceUrl: item.tweetUrl || undefined,
-              sentiment: item.sentiment,
-              relevance: result.score,
-              userId: req.userId,
-              expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-            },
+      for (const monitor of monitors) {
+        for (const item of items) {
+          const searchText = `${item.headline} ${item.context ?? ""}`;
+          const result = matchMonitorKeywords(searchText, monitor.keywords);
+          if (result.matched && result.score >= monitor.minRelevance) {
+            const alert = await prisma.alert.create({
+              data: {
+                type: "MONITOR",
+                title: `[${monitor.name}] ${item.headline}`,
+                context: `Matched keywords: ${result.matchedKeywords.join(", ")}. ${item.context ?? ""}`,
+                sourceUrl: item.tweetUrl || undefined,
+                sentiment: item.sentiment,
+                relevance: result.score,
+                userId: req.userId,
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+              },
+            });
+            monitorAlerts.push(alert);
+            emitToUser(req.userId!, "alert:new", alert);
+          }
+        }
+        if (monitorAlerts.length > 0) {
+          await prisma.nlpMonitor.update({
+            where: { id: monitor.id },
+            data: { matchCount: { increment: monitorAlerts.length } },
           });
-          monitorAlerts.push(alert);
-          emitToUser(req.userId!, "alert:new", alert);
         }
       }
-      if (monitorAlerts.length > 0) {
-        await prisma.nlpMonitor.update({
-          where: { id: monitor.id },
-          data: { matchCount: { increment: monitorAlerts.length } },
-        });
-      }
+    } catch (monitorErr: any) {
+      logger.warn({ err: monitorErr.message }, "Monitor matching failed (non-blocking)");
     }
 
     // Log analytics
