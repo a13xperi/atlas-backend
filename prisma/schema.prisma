@@ -22,6 +22,8 @@ model User {
   xAccessToken      String?
   xRefreshToken     String?
   xTokenExpiresAt   DateTime?
+  tourCompleted     Boolean  @default(false)
+  tourStep          Int      @default(0)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -36,6 +38,7 @@ model User {
   generatedImages   GeneratedImage[]
   alerts            Alert[]
   briefingPreference BriefingPreference?
+  briefings          Briefing[]
   nlpMonitors       NlpMonitor[]
   campaigns         Campaign[]
 
@@ -309,6 +312,21 @@ model BriefingPreference {
   updatedAt    DateTime @updatedAt
 
   @@map("briefing_preferences")
+}
+
+model Briefing {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  summary   String
+  sections  Json
+  topics    String[]
+  sources   String[]
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("briefings")
 }
 
 model GeneratedImage {
