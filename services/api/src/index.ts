@@ -137,6 +137,7 @@ const server = createServer(app);
 server.timeout = 120_000; // 2 min — AI generation routes need more than Railway's 30s default
 server.keepAliveTimeout = 65_000;
 initSocket(server, allowedOrigins);
+initBot();
 
 server.listen(PORT, () => {
   logger.info({ port: PORT }, `Atlas API running on port ${PORT}`);
