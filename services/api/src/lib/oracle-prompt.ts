@@ -4,11 +4,7 @@
  * Same brain as the Telegram bot — one personality, two surfaces.
  */
 
-<<<<<<< HEAD
-export interface VoiceDimensions {
-=======
 interface VoiceDimensions {
->>>>>>> origin/staging
   humor: number;
   formality: number;
   brevity: number;
@@ -131,36 +127,6 @@ export function buildFreeTextResponse(
   };
 }
 
-<<<<<<< HEAD
-// ── Draft Delivery Response ─────────────────────────────────────
-
-export function buildDraftDeliveryResponse(input: {
-  mode: "draft" | "refine";
-  generatedTweet: string;
-  sourceContent: string;
-  dimensions?: VoiceDimensions;
-  instruction?: string;
-  handle?: string;
-}): { system: string; userMessage: string } {
-  const dimContext = input.dimensions
-    ? `\nVoice profile: ${summarizeDimensions(input.dimensions)}`
-    : "";
-
-  if (input.mode === "refine") {
-    return {
-      system: buildOracleSystemPrompt() + `\n\nThe user refined a draft via Telegram. Acknowledge the refinement briefly (1 sentence). Be specific about what changed.${dimContext}`,
-      userMessage: `Original: "${input.sourceContent}"\nRefined: "${input.generatedTweet}"${input.instruction ? `\nInstruction: ${input.instruction}` : ""}`,
-    };
-  }
-
-  return {
-    system: buildOracleSystemPrompt() + `\n\nThe user generated a draft via Telegram. React to it briefly (1 sentence). Comment on how it fits their voice.${dimContext}`,
-    userMessage: `Content: "${input.sourceContent.slice(0, 200)}"\nGenerated tweet: "${input.generatedTweet}"`,
-  };
-}
-
-=======
->>>>>>> origin/staging
 // ── Helpers ──────────────────────────────────────────────────────
 
 function summarizeDimensions(d: VoiceDimensions): string {

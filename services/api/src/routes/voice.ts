@@ -16,13 +16,8 @@ referenceAccountsRouter.get("/reference-accounts", async (_req, res) => {
   try {
     const accounts = await prisma.referenceVoice.findMany({
       where: { isGlobal: true, isActive: true },
-<<<<<<< HEAD
-      select: { id: true, name: true, handle: true, avatarUrl: true, category: true },
-      orderBy: [{ category: "asc" }, { name: "asc" }],
-=======
       select: { id: true, name: true, handle: true, avatarUrl: true },
       orderBy: { name: "asc" },
->>>>>>> origin/staging
     });
     res.json(success({ accounts }));
   } catch (err: any) {
@@ -129,7 +124,8 @@ voiceRouter.get("/profile", async (req: AuthRequest, res) => {
     const profile = await prisma.voiceProfile.findUnique({
       where: { userId: req.userId },
     });
-    res.json(success({ profile: profile || null }));
+    if (!profile) return res.status(404).json(error("Voice profile not found"));
+    res.json(success({ profile }));
   } catch (err: any) {
     res.status(500).json(error("Failed to load voice profile"));
   }
@@ -141,7 +137,8 @@ voiceRouter.get("/profiles", async (req: AuthRequest, res) => {
     const profile = await prisma.voiceProfile.findUnique({
       where: { userId: req.userId },
     });
-    res.json(success({ profile: profile || null }));
+    if (!profile) return res.status(404).json(error("Voice profile not found"));
+    res.json(success({ profile }));
   } catch (err: any) {
     res.status(500).json(error("Failed to load voice profile"));
   }
