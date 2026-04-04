@@ -87,6 +87,33 @@ export async function fetchTweetsByHandle(
   return { user, tweets };
 }
 
+// --- Tweet Metrics ---
+
+export interface TweetMetrics {
+  id: string;
+  public_metrics: {
+    like_count: number;
+    retweet_count: number;
+    reply_count: number;
+    impression_count: number;
+    bookmark_count: number;
+  };
+}
+
+/**
+ * Fetch public metrics for one or more tweets (up to 100 per call).
+ * Uses Bearer Token (app-only) — no user auth needed for public metrics.
+ */
+export async function getTweetsWithMetrics(tweetIds: string[]): Promise<TweetMetrics[]> {
+  if (tweetIds.length === 0) return [];
+  // X API allows up to 100 IDs per request
+  const ids = tweetIds.slice(0, 100).join(",");
+  const data = await twitterGet<{ data?: TweetMetrics[] }>(
+    `/tweets?ids=${ids}&tweet.fields=public_metrics`,
+  );
+  return data.data || [];
+}
+
 // --- OAuth 2.0 PKCE + User-Context Posting ---
 
 import crypto from "crypto";

@@ -146,6 +146,8 @@ model TweetDraft {
   predictedEngagement Int?
   actualEngagement    Int?
   engagementMetrics   Json?
+  xTweetId      String?
+  metricsLastFetchedAt DateTime?
   sourceType    SourceType?
   sourceContent String?
   blendId       String?
