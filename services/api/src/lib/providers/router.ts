@@ -11,6 +11,8 @@ import { anthropicProvider } from "./anthropic";
 import { openaiProvider } from "./openai";
 import { geminiProvider } from "./gemini";
 import { grokProvider } from "./grok";
+import { logger } from "../logger";
+import { withTimeout } from "../timeout";
 
 const providers: Record<ProviderId, Provider> = {
   anthropic: anthropicProvider,
@@ -58,22 +60,28 @@ export async function routeCompletion(request: CompletionRequest): Promise<Compl
     throw new Error(`No providers available for task type: ${taskType}`);
   }
 
-  let lastError: Error | undefined;
+  // Cumulative 60s cap across all fallback attempts
+  const tryChain = async (): Promise<CompletionResponse> => {
+    let lastError: Error | undefined;
 
-  for (const provider of chain) {
-    try {
-      return await provider.complete(request);
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(
-        `[providers] ${provider.config.id} failed for ${taskType}: ${lastError.message}. Trying next...`
-      );
+    for (const provider of chain) {
+      try {
+        return await provider.complete(request);
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        logger.warn(
+          { provider: provider.config.id, taskType, error: lastError.message },
+          "Provider failed, trying next"
+        );
+      }
     }
-  }
 
-  throw new Error(
-    `All providers failed for ${taskType}. Last error: ${lastError?.message}`
-  );
+    throw new Error(
+      `All providers failed for ${taskType}. Last error: ${lastError?.message}`
+    );
+  };
+
+  return withTimeout(tryChain(), 60_000, `provider-chain:${taskType}`);
 }
 
 /**

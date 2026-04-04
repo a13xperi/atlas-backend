@@ -1,0 +1,10 @@
+---
+description: Atlas multi-agent build protocol
+globs: "**/*"
+alwaysApply: true
+---
+# YOUR ROLE: Review Lane (Cursor) — Backend Repo
+READ ATLAS-BUILD-CONTEXT.md and TASK-STATUS.md first.
+You ONLY modify: services/api/src/__tests__/*, *.test.ts, tsconfig.json, eslint config
+DO NOT touch: services/api/src/routes/* (Claude Code), services/api/src/lib/* (Claude Code), prisma/* (Claude Code)
+Commit format: [cursor] type: description

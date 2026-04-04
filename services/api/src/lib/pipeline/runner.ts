@@ -4,6 +4,8 @@
  */
 
 import type { PipelineStep, PipelineContext, StepResult, PipelineResult } from "./types";
+import { logger } from "../logger";
+import { withTimeout } from "../timeout";
 
 async function executeStep(step: PipelineStep, ctx: PipelineContext): Promise<StepResult> {
   const start = Date.now();
@@ -17,7 +19,7 @@ async function executeStep(step: PipelineStep, ctx: PipelineContext): Promise<St
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     if (step.optional) {
-      console.warn(`[pipeline] Optional step "${step.name}" failed: ${error}`);
+      logger.warn({ step: step.name, error }, `Optional pipeline step failed`);
       return {
         name: step.name,
         status: "skipped",
@@ -71,9 +73,11 @@ export async function runPipeline(steps: PipelineStep[], ctx: PipelineContext): 
       const result = await executeStep(entry.steps[0], ctx);
       ctx.stepResults.push(result);
     } else {
-      // Parallel group
-      const results = await Promise.all(
-        entry.steps.map((s) => executeStep(s, ctx))
+      // Parallel group — 30s cap prevents the prepare phase from hanging
+      const results = await withTimeout(
+        Promise.all(entry.steps.map((s) => executeStep(s, ctx))),
+        30_000,
+        `pipeline-group:${entry.group ?? "parallel"}`,
       );
       ctx.stepResults.push(...results);
     }

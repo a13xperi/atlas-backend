@@ -6,6 +6,14 @@ interface VoiceDimensions {
   formality: number;
   brevity: number;
   contrarianTone: number;
+  directness?: number;
+  warmth?: number;
+  technicalDepth?: number;
+  confidence?: number;
+  evidenceOrientation?: number;
+  solutionOrientation?: number;
+  socialPosture?: number;
+  selfPromotionalIntensity?: number;
   maturity?: string;
 }
 
@@ -21,6 +29,7 @@ interface GenerateParams {
   blendVoices?: BlendVoice[];
   feedback?: string;
   researchContext?: string;
+  replyAngle?: string;
 }
 
 interface GenerateResult {
@@ -38,6 +47,7 @@ export async function generateTweet(params: GenerateParams): Promise<GenerateRes
   const response = await complete({
     taskType: "tweet_generation",
     maxTokens: 300,
+    temperature: 0.7,
     messages: [
       { role: "system", content: system },
       { role: "user", content: userMessage },

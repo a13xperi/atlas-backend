@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { config as envConfig } from "../config";
+import { withRetry } from "../retry";
 import type { Provider, ProviderConfig, CompletionRequest, CompletionResponse } from "./types";
 
 let client: OpenAI | null = null;
@@ -9,6 +10,8 @@ function getClient(): OpenAI {
     client = new OpenAI({
       apiKey: envConfig.XAI_API_KEY,
       baseURL: "https://api.x.ai/v1",
+      timeout: 20_000,
+      maxRetries: 0,
     });
   }
   return client;
@@ -29,15 +32,20 @@ export const grokProvider: Provider = {
     const ai = getClient();
     const start = Date.now();
 
-    const response = await ai.chat.completions.create({
-      model: config.defaultModel,
-      max_tokens: request.maxTokens ?? 1024,
-      ...(request.temperature !== undefined && { temperature: request.temperature }),
-      messages: request.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-    });
+    const response = await withRetry(
+      () =>
+        ai.chat.completions.create({
+          model: config.defaultModel,
+          max_tokens: request.maxTokens ?? 1024,
+          ...(request.temperature !== undefined && { temperature: request.temperature }),
+          messages: request.messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        }),
+      "grok-provider:complete",
+      { maxRetries: 1 },
+    );
 
     const content = response.choices[0]?.message?.content?.trim() ?? "";
 

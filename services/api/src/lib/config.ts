@@ -26,16 +26,17 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   SUPABASE_JWT_SECRET: z.string().optional(),
 
-  // Twitter
+  // Twitter / X
   TWITTER_BEARER_TOKEN: z.string().optional(),
+  TWITTER_CLIENT_ID: z.string().optional(),
+  TWITTER_CLIENT_SECRET: z.string().optional(),
+  TWITTER_OAUTH_CALLBACK_URL: z.string().optional(),
 
   // Telegram
   TELEGRAM_BOT_TOKEN: z.string().optional(),
 
   // Monitoring
-  SENTRY_DSN: z.string().default(
-    "https://6be1301a05c1c96a9de8ef96b5552c76@o4511146712825856.ingest.us.sentry.io/4511146753523712"
-  ),
+  SENTRY_DSN: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;

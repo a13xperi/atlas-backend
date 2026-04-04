@@ -40,6 +40,9 @@ jest.mock("../../../lib/providers/grok", () => ({
   grokProvider: mockGrok,
 }));
 
+const mockLogger = { warn: jest.fn(), error: jest.fn(), info: jest.fn() };
+jest.mock("../../../lib/logger", () => ({ logger: mockLogger }));
+
 import { routeCompletion, completeWith, getPreferredProvider, listProviders } from "../../../lib/providers/router";
 
 const successResponse = (provider: string): CompletionResponse => ({
@@ -58,8 +61,6 @@ const baseRequest = {
 };
 
 describe("routeCompletion", () => {
-  let warnSpy: jest.SpyInstance;
-
   beforeEach(() => {
     mockAnthropic.completeMock.mockReset();
     mockOpenai.completeMock.mockReset();
@@ -69,11 +70,7 @@ describe("routeCompletion", () => {
     mockOpenai.config.available = true;
     mockGemini.config.available = true;
     mockGrok.config.available = true;
-    warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
-  });
-
-  afterEach(() => {
-    warnSpy.mockRestore();
+    mockLogger.warn.mockReset();
   });
 
   it("routes tweet_generation to OpenAI as primary", async () => {
@@ -128,10 +125,11 @@ describe("routeCompletion", () => {
     expect(result.model).toBe("openai-model");
     expect(mockAnthropic.completeMock).toHaveBeenCalledTimes(1);
     expect(mockOpenai.completeMock).toHaveBeenCalledTimes(1);
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[providers] anthropic failed for research: Rate limited. Trying next..."
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      { provider: "anthropic", taskType: "research", error: "Rate limited" },
+      "Provider failed, trying next"
     );
-  });
+  }, 15000);
 
   it("falls back through full chain until one succeeds", async () => {
     mockOpenai.completeMock.mockRejectedValueOnce(new Error("Timeout"));

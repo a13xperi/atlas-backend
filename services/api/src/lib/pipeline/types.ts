@@ -9,6 +9,14 @@ export interface VoiceDimensions {
   formality: number;
   brevity: number;
   contrarianTone: number;
+  directness?: number;
+  warmth?: number;
+  technicalDepth?: number;
+  confidence?: number;
+  evidenceOrientation?: number;
+  solutionOrientation?: number;
+  socialPosture?: number;
+  selfPromotionalIntensity?: number;
   maturity?: string;
 }
 
@@ -19,10 +27,13 @@ export interface PipelineContext {
   sourceType: string;
   blendId?: string;
   feedback?: string;
+  replyAngle?: string;
 
   // --- Accumulated by steps ---
   voiceProfile?: VoiceDimensions;
   blendVoices?: { label: string; percentage: number }[];
+  /** Weighted-average dimensions computed from reference voice profiles in a blend */
+  blendedDimensions?: Partial<VoiceDimensions>;
   researchContext?: string;
   generatedContent?: string;
   confidence?: number;

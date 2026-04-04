@@ -1,76 +1,205 @@
-/**
- * Redis lib test suite
- * Tests getCached and setCache using mocked ioredis.
- * NOTE: The redis singleton is module-scoped; we test via getCached/setCache
- * with ioredis mocked at the jest.mock level.
- */
+const TEST_REDIS_URL = "redis://localhost:6379";
+const originalEnv = { ...process.env };
 
-// Hold references to mock methods so tests can control them
-const mockGet = jest.fn();
-const mockSet = jest.fn();
+type RedisModule = typeof import("../../lib/redis");
 
-jest.mock("ioredis", () => {
-  return jest.fn().mockImplementation(() => ({ get: mockGet, set: mockSet }));
-});
+type LoadRedisModuleOptions = {
+  redisUrl?: string | null;
+  redisConstructor?: unknown;
+};
 
-describe("getCached", () => {
-  beforeEach(() => {
-    jest.resetModules();
-    mockGet.mockReset();
-    mockSet.mockReset();
-  });
+async function loadRedisModule(
+  options: LoadRedisModuleOptions = {}
+): Promise<{ redisModule: RedisModule; loggerWarn: jest.Mock }> {
+  jest.resetModules();
 
-  it("returns null when REDIS_URL is not set", async () => {
+  process.env = {
+    ...originalEnv,
+    NODE_ENV: "test",
+    JWT_SECRET: originalEnv.JWT_SECRET || "test-secret",
+    DATABASE_URL: originalEnv.DATABASE_URL || "postgresql://localhost:5432/atlas",
+  };
+
+  if (options.redisUrl === null) {
     delete process.env.REDIS_URL;
-    const { getCached } = await import("../../lib/redis");
-    const result = await getCached("any-key");
-    expect(result).toBeNull();
+  } else {
+    process.env.REDIS_URL = options.redisUrl || TEST_REDIS_URL;
+  }
+
+  const loggerWarn = jest.fn();
+
+  jest.doMock("../../lib/logger", () => ({
+    logger: {
+      warn: loggerWarn,
+    },
+  }));
+
+  if (options.redisConstructor) {
+    jest.doMock("ioredis", () => ({
+      __esModule: true,
+      default: options.redisConstructor,
+    }));
+  } else {
+    jest.doMock("ioredis", () => {
+      const RedisMock = jest.requireActual("ioredis-mock");
+      return {
+        __esModule: true,
+        default: RedisMock,
+      };
+    });
+  }
+
+  const redisModule = require("../../lib/redis") as RedisModule;
+
+  return { redisModule, loggerWarn };
+}
+
+describe("redis cache helpers", () => {
+  jest.setTimeout(20000);
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+    process.env = { ...originalEnv };
   });
 
-  it("returns the cached string value from Redis", async () => {
-    process.env.REDIS_URL = "redis://localhost:6379";
-    mockGet.mockResolvedValueOnce("stored_value");
-    const { getCached } = await import("../../lib/redis");
-    const result = await getCached("my-key");
-    expect(result).toBe("stored_value");
-    expect(mockGet).toHaveBeenCalledWith("my-key");
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
-  it("returns null when Redis.get throws", async () => {
-    process.env.REDIS_URL = "redis://localhost:6379";
-    mockGet.mockRejectedValueOnce(new Error("connection lost"));
-    const { getCached } = await import("../../lib/redis");
-    const result = await getCached("bad-key");
-    expect(result).toBeNull();
-  });
-});
+  it("stores and retrieves cached values with a TTL", async () => {
+    const { redisModule } = await loadRedisModule();
+    const { getCached, getRedis, setCache } = redisModule;
 
-describe("setCache", () => {
-  beforeEach(() => {
-    jest.resetModules();
-    mockGet.mockReset();
-    mockSet.mockReset();
-  });
+    await setCache("draft:123", "cached draft", 1);
 
-  it("does nothing when REDIS_URL is not set", async () => {
-    delete process.env.REDIS_URL;
-    const { setCache } = await import("../../lib/redis");
-    await expect(setCache("key", "value", 60)).resolves.toBeUndefined();
-    expect(mockSet).not.toHaveBeenCalled();
+    const client = getRedis() as {
+      ttl: (key: string) => Promise<number>;
+    } | null;
+
+    expect(client).not.toBeNull();
+    await expect(getCached("draft:123")).resolves.toBe("cached draft");
+    await expect(client!.ttl("draft:123")).resolves.toBeGreaterThan(-1);
+
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    await expect(getCached("draft:123")).resolves.toBeNull();
   });
 
-  it("calls Redis.set with EX when REDIS_URL is set", async () => {
-    process.env.REDIS_URL = "redis://localhost:6379";
-    mockSet.mockResolvedValueOnce("OK");
-    const { setCache } = await import("../../lib/redis");
-    await setCache("my-key", "my-value", 300);
-    expect(mockSet).toHaveBeenCalledWith("my-key", "my-value", "EX", 300);
+  it("returns null on a cache miss", async () => {
+    const { redisModule } = await loadRedisModule();
+
+    await expect(redisModule.getCached("missing:key")).resolves.toBeNull();
   });
 
-  it("silently swallows errors from Redis.set", async () => {
-    process.env.REDIS_URL = "redis://localhost:6379";
-    mockSet.mockRejectedValueOnce(new Error("write failed"));
-    const { setCache } = await import("../../lib/redis");
-    await expect(setCache("key", "value", 60)).resolves.toBeUndefined();
+  it("supports cache invalidation by deleting keys from the shared Redis client", async () => {
+    const { redisModule } = await loadRedisModule();
+    const { getCached, getRedis, setCache } = redisModule;
+
+    await setCache("research:btc", "cached payload", 60);
+
+    const client = getRedis() as {
+      del: (key: string) => Promise<number>;
+    } | null;
+
+    expect(client).not.toBeNull();
+    await expect(client!.del("research:btc")).resolves.toBe(1);
+    await expect(getCached("research:btc")).resolves.toBeNull();
+  });
+
+  it("preserves JSON payloads for object serialization and deserialization", async () => {
+    const { redisModule } = await loadRedisModule();
+    const { getCached, setCache } = redisModule;
+
+    const cachedObject = {
+      userId: "user-123",
+      traits: ["macro", "defi"],
+      preferences: {
+        tone: "sharp",
+        includeTickers: true,
+      },
+    };
+
+    await setCache("profile:user-123", JSON.stringify(cachedObject), 120);
+
+    const cachedValue = await getCached("profile:user-123");
+
+    expect(cachedValue).not.toBeNull();
+    expect(JSON.parse(cachedValue!)).toEqual(cachedObject);
+  });
+
+  it("keeps prefixed namespaces isolated from each other", async () => {
+    const { redisModule } = await loadRedisModule();
+    const { getCached, getRedis, setCache } = redisModule;
+
+    await setCache("research:eth", "research result", 300);
+    await setCache("trending:eth", "trending result", 300);
+
+    await expect(getCached("research:eth")).resolves.toBe("research result");
+    await expect(getCached("trending:eth")).resolves.toBe("trending result");
+
+    const client = getRedis() as {
+      del: (key: string) => Promise<number>;
+    } | null;
+
+    await client!.del("research:eth");
+
+    await expect(getCached("research:eth")).resolves.toBeNull();
+    await expect(getCached("trending:eth")).resolves.toBe("trending result");
+  });
+
+  it("reuses a single Redis client instance for cache operations", async () => {
+    const { redisModule } = await loadRedisModule();
+
+    const firstClient = redisModule.getRedis();
+    const secondClient = redisModule.getRedis();
+
+    expect(firstClient).toBe(secondClient);
+  });
+
+  it("gracefully disables caching when REDIS_URL is not configured", async () => {
+    const { redisModule } = await loadRedisModule({ redisUrl: null });
+    const { getCached, getRedis, setCache } = redisModule;
+
+    expect(getRedis()).toBeNull();
+    await expect(getCached("any:key")).resolves.toBeNull();
+    await expect(setCache("any:key", "value", 60)).resolves.toBeUndefined();
+  });
+
+  it("returns null and logs a warning when Redis construction fails", async () => {
+    const throwingRedis = jest.fn().mockImplementation(() => {
+      throw new Error("redis unavailable");
+    });
+
+    const { redisModule, loggerWarn } = await loadRedisModule({
+      redisConstructor: throwingRedis,
+    });
+
+    expect(redisModule.getRedis()).toBeNull();
+    expect(throwingRedis).toHaveBeenCalledWith(TEST_REDIS_URL);
+    expect(loggerWarn).toHaveBeenCalledWith("Redis connection failed — caching disabled");
+  });
+
+  it("returns null when Redis.get rejects", async () => {
+    const { redisModule } = await loadRedisModule();
+    const client = redisModule.getRedis() as unknown as {
+      get: jest.Mock;
+    } | null;
+
+    client!.get = jest.fn().mockRejectedValueOnce(new Error("connection lost"));
+
+    await expect(redisModule.getCached("alerts:feed")).resolves.toBeNull();
+  });
+
+  it("swallows Redis.set failures so cache writes stay non-fatal", async () => {
+    const { redisModule } = await loadRedisModule();
+    const client = redisModule.getRedis() as unknown as {
+      set: jest.Mock;
+    } | null;
+
+    client!.set = jest.fn().mockRejectedValueOnce(new Error("write failed"));
+
+    await expect(redisModule.setCache("alerts:feed", "payload", 60)).resolves.toBeUndefined();
+    await expect(redisModule.getCached("alerts:feed")).resolves.toBeNull();
   });
 });
