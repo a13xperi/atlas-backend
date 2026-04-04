@@ -1,0 +1,21 @@
+{
+  "name": "@atlas/telegram-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Atlas Telegram bot service",
+  "scripts": {
+    "dev": "npx tsx watch src/index.ts",
+    "build": "npx tsc -p tsconfig.json",
+    "start": "node ../../dist/services/telegram-bot/src/index.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.5.0",
+    "dotenv": "^16.4.7",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

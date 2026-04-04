@@ -30,10 +30,11 @@ export function initBot(): Telegraf | null {
   // /start — welcome message
   bot.start((ctx) => {
     ctx.reply(
-      "Welcome to Atlas by Delphi Digital.\n\n" +
-        "Link your Atlas account to receive alerts here.\n\n" +
-        "Use /link <your-handle> to connect.\n" +
-        "Use /help to see all commands."
+      "Hey. I'm The Oracle \u2014 the AI inside Atlas by Delphi Digital.\n\n" +
+        "I'm the same brain you met during onboarding. Drop me a report, " +
+        "a tweet link, or a voice note and I'll help you craft something sharp.\n\n" +
+        "First, link your account: /link <your-handle>\n" +
+        "Need help? /help"
     );
   });
 
@@ -77,7 +78,7 @@ export function initBot(): Telegraf | null {
         data: { telegramChatId: chatId },
       });
 
-      ctx.reply(`Linked to Atlas account @${handle}. You'll now receive alerts here.`);
+      ctx.reply(`Linked to Atlas account @${handle}. I can see your voice profile now. Same brain as the portal. Send me content anytime.`);
     } catch (err) {
       logger.error({ err }, "[telegram] Link error");
       ctx.reply("Something went wrong. Please try again.");
@@ -200,7 +201,7 @@ export async function deliverAlert(
   if (!bot) return false;
 
   const sentiment = alert.sentiment ? ` [${alert.sentiment.toUpperCase()}]` : "";
-  let message = `Atlas Alert${sentiment}\n\n${alert.title}`;
+  let message = `\u{1f52e} ${alert.title}${sentiment}`;
 
   if (alert.context) {
     message += `\n\n${alert.context.slice(0, 300)}`;

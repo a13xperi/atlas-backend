@@ -17,6 +17,7 @@ interface UserLookupResult {
   id: string;
   username: string;
   name: string;
+  profile_image_url?: string;
 }
 
 function getBearerToken(): string {
@@ -44,9 +45,13 @@ async function twitterGet<T>(path: string): Promise<T> {
 export async function lookupUser(username: string): Promise<UserLookupResult> {
   const clean = username.replace(/^@/, "");
   const data = await twitterGet<{ data: UserLookupResult }>(
-    `/users/by/username/${encodeURIComponent(clean)}`
+    `/users/by/username/${encodeURIComponent(clean)}?user.fields=profile_image_url`
   );
   if (!data.data) throw new Error(`User @${clean} not found on Twitter/X`);
+  // Upsize from default 48px (_normal) to 400px
+  if (data.data.profile_image_url) {
+    data.data.profile_image_url = data.data.profile_image_url.replace("_normal", "_400x400");
+  }
   return data.data;
 }
 

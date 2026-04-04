@@ -96,14 +96,15 @@ enum VoiceMaturity {
 
 model ReferenceVoice {
   id          String   @id @default(cuid())
-  userId      String
+  userId      String?
   name        String
   handle      String?
   avatarUrl   String?
   isActive    Boolean  @default(true)
+  isGlobal    Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   blendVoices BlendVoice[]
 
   @@map("reference_voices")
@@ -247,6 +248,7 @@ model Alert {
   category    AlertCategory @default(SIGNAL)
   userId      String?
   expiresAt   DateTime?
+  deliveredAt DateTime?
   createdAt   DateTime    @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
