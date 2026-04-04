@@ -8,13 +8,21 @@
 import request from "supertest";
 import express from "express";
 import { requestIdMiddleware } from "../middleware/requestId";
+import { expectSuccessResponse } from "./helpers/response";
 
 jest.mock("../lib/supabase", () => ({ supabaseAdmin: null }));
+
+jest.mock("../middleware/rateLimit", () => ({
+  rateLimit: () => (_req: any, _res: any, next: any) => next(),
+  rateLimitByUser: () => (_req: any, _res: any, next: any) => next(),
+  clearRateLimitStore: jest.fn(),
+}));
 
 jest.mock("../lib/prisma", () => ({
   prisma: {
     user: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       create: jest.fn(),
     },
   },
@@ -23,6 +31,15 @@ jest.mock("../lib/prisma", () => ({
 jest.mock("jsonwebtoken", () => ({
   sign: jest.fn().mockReturnValue("mock_token"),
   verify: jest.fn().mockReturnValue({ userId: "user-123" }),
+}));
+
+jest.mock("bcryptjs", () => ({
+  hash: jest.fn().mockResolvedValue("hashed_password"),
+  compare: jest.fn().mockResolvedValue(true),
+}));
+
+jest.mock("../lib/logger", () => ({
+  logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() },
 }));
 
 import { authRouter } from "../routes/auth";
@@ -53,13 +70,18 @@ afterEach(() => {
 });
 
 describe("POST /api/auth/register", () => {
-  it("returns 503 when Supabase is not configured", async () => {
+  it("falls through to legacy auth when Supabase is not configured", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue(null);
+    (mockPrisma.user.create as jest.Mock).mockResolvedValue({
+      ...mockUser,
+      voiceProfile: {},
+    });
     const res = await request(app)
       .post("/api/auth/register")
       .send({ handle: "testuser", email: "test@example.com", password: "secret123" });
-    expect(res.status).toBe(503);
-    expect(res.body.error).toBe("Auth service unavailable");
-  });
+    expect(res.status).toBe(200);
+    expect(expectSuccessResponse<any>(res.body).token).toBeDefined();
+  }, 15000);
 
   it("returns 400 when handle is missing", async () => {
     const res = await request(app).post("/api/auth/register").send({});
@@ -68,13 +90,13 @@ describe("POST /api/auth/register", () => {
 });
 
 describe("POST /api/auth/login", () => {
-  it("returns 503 when Supabase is not configured", async () => {
+  it("returns 401 when user not found (legacy fallback)", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
     const res = await request(app)
       .post("/api/auth/login")
       .send({ email: "test@example.com", password: "secret123" });
-    expect(res.status).toBe(503);
-    expect(res.body.error).toBe("Auth service unavailable");
-  });
+    expect(res.status).toBe(401);
+  }, 15000);
 });
 
 describe("GET /api/auth/me", () => {
@@ -106,7 +128,8 @@ describe("GET /api/auth/me", () => {
       .set("Authorization", validToken);
 
     expect(res.status).toBe(200);
-    expect(res.body.user.id).toBe("user-123");
-    expect(res.body.user.voiceProfile).toBeDefined();
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.user.id).toBe("user-123");
+    expect(data.user.voiceProfile).toBeDefined();
   });
 });

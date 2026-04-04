@@ -1,13 +1,15 @@
 import Redis from "ioredis";
+import { config } from "./config";
+import { logger } from "./logger";
 
 let redis: Redis | null = null;
 
 export function getRedis(): Redis | null {
-  if (!redis && process.env.REDIS_URL) {
+  if (!redis && config.REDIS_URL) {
     try {
-      redis = new Redis(process.env.REDIS_URL);
+      redis = new Redis(config.REDIS_URL);
     } catch {
-      console.warn("Redis connection failed — caching disabled");
+      logger.warn("Redis connection failed — caching disabled");
       return null;
     }
   }

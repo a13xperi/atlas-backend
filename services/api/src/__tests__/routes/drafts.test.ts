@@ -1,7 +1,7 @@
 /**
  * Drafts routes test suite
  * Tests: GET /, GET /:id, POST /, PATCH /:id, DELETE /:id, POST /generate, POST /:id/regenerate
- * Mocks: Prisma, generateTweet (OpenAI under the hood), conductResearch, JWT
+ * Mocks: Prisma, pipeline (runGenerationPipeline), JWT
  */
 
 import request from "supertest";
@@ -32,6 +32,9 @@ jest.mock("../../lib/prisma", () => ({
       update: jest.fn(),
       delete: jest.fn(),
     },
+    user: {
+      findUnique: jest.fn(),
+    },
     voiceProfile: {
       findUnique: jest.fn(),
     },
@@ -44,23 +47,15 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("../../lib/generate", () => ({
-  generateTweet: jest.fn(),
+jest.mock("../../lib/pipeline", () => ({
+  runGenerationPipeline: jest.fn(),
 }));
-
-jest.mock("../../lib/research", () => ({
-  conductResearch: jest.fn(),
-}));
-
-// JWT mock removed — authenticate middleware is mocked directly
 
 import { prisma } from "../../lib/prisma";
-import { generateTweet } from "../../lib/generate";
-import { conductResearch } from "../../lib/research";
+import { runGenerationPipeline } from "../../lib/pipeline";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
-const mockGenerateTweet = generateTweet as jest.Mock;
-const mockConductResearch = conductResearch as jest.Mock;
+const mockRunPipeline = runGenerationPipeline as jest.Mock;
 
 // --- App setup ---
 
@@ -121,8 +116,8 @@ describe("GET /api/drafts", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.drafts).toHaveLength(1);
-    expect(res.body.drafts[0].id).toBe("draft-1");
+    expect(res.body.data.drafts).toHaveLength(1);
+    expect(res.body.data.drafts[0].id).toBe("draft-1");
   });
 
   it("passes status filter to Prisma", async () => {
@@ -150,6 +145,34 @@ describe("GET /api/drafts", () => {
       expect.objectContaining({ take: 20, skip: 0 })
     );
   });
+
+  it("returns 500 when listing drafts fails", async () => {
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .get("/api/drafts")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to load drafts");
+    expect(res.body.requestId).toBeDefined();
+  });
+});
+
+describe("GET /api/drafts/team", () => {
+  it("uses default pagination for team drafts", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ role: "MANAGER" });
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    const res = await request(app)
+      .get("/api/drafts/team")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.tweetDraft.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 50, skip: 0 })
+    );
+  });
 });
 
 // --- GET /:id ---
@@ -174,7 +197,19 @@ describe("GET /api/drafts/:id", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.id).toBe("draft-1");
+    expect(res.body.data.draft.id).toBe("draft-1");
+  });
+
+  it("returns 500 when loading a draft fails", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .get("/api/drafts/draft-1")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to get draft");
+    expect(res.body.requestId).toBeDefined();
   });
 });
 
@@ -188,8 +223,8 @@ describe("POST /api/drafts", () => {
       .send({});
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Content is required");
-  });
+    expect(res.body.error).toBe("Invalid request");
+  }, 15000);
 
   it("creates draft and logs analytics event", async () => {
     (mockPrisma.tweetDraft.create as jest.Mock).mockResolvedValueOnce(mockDraft);
@@ -201,12 +236,25 @@ describe("POST /api/drafts", () => {
       .send({ content: "Hello crypto world!", sourceType: "MANUAL" });
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.content).toBe("Hello crypto world!");
+    expect(res.body.data.draft.content).toBe("Hello crypto world!");
     expect(mockPrisma.analyticsEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ type: "DRAFT_CREATED" }),
       })
     );
+  });
+
+  it("returns 500 when creating a draft fails", async () => {
+    (mockPrisma.tweetDraft.create as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .post("/api/drafts")
+      .set("Authorization", AUTH)
+      .send({ content: "Hello crypto world!" });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to create draft");
+    expect(res.body.requestId).toBeDefined();
   });
 });
 
@@ -235,7 +283,7 @@ describe("PATCH /api/drafts/:id", () => {
       .send({ content: "updated content" });
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.content).toBe("updated content");
+    expect(res.body.data.draft.content).toBe("updated content");
   });
 
   it("logs FEEDBACK_GIVEN event when feedback is provided", async () => {
@@ -271,6 +319,30 @@ describe("PATCH /api/drafts/:id", () => {
       })
     );
   });
+
+  it("returns 400 for invalid patch payloads", async () => {
+    const res = await request(app)
+      .patch("/api/drafts/draft-1")
+      .set("Authorization", AUTH)
+      .send({ status: "NOT_A_STATUS" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Invalid request");
+  });
+
+  it("returns 500 when updating a draft fails", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(mockDraft);
+    (mockPrisma.tweetDraft.update as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .patch("/api/drafts/draft-1")
+      .set("Authorization", AUTH)
+      .send({ content: "updated content" });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to update draft");
+    expect(res.body.requestId).toBeDefined();
+  });
 });
 
 // --- DELETE /:id ---
@@ -295,7 +367,20 @@ describe("DELETE /api/drafts/:id", () => {
       .set("Authorization", AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.body.data.success).toBe(true);
+  });
+
+  it("returns 500 when deleting a draft fails", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(mockDraft);
+    (mockPrisma.tweetDraft.delete as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .delete("/api/drafts/draft-1")
+      .set("Authorization", AUTH);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to delete draft");
+    expect(res.body.requestId).toBeDefined();
   });
 });
 
@@ -313,7 +398,7 @@ describe("POST /api/drafts/generate", () => {
   });
 
   it("returns 400 when voice profile not found", async () => {
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    mockRunPipeline.mockRejectedValueOnce(new Error("Voice profile not found. Complete onboarding first."));
 
     const res = await request(app)
       .post("/api/drafts/generate")
@@ -325,16 +410,15 @@ describe("POST /api/drafts/generate", () => {
   });
 
   it("generates tweet, saves draft, logs analytics event", async () => {
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockConductResearch.mockResolvedValueOnce({
-      summary: "BTC summary",
-      keyFacts: ["ATH"],
-      sentiment: "bullish",
-    });
-    mockGenerateTweet.mockResolvedValueOnce({
-      content: "BTC just hit ATH!",
-      confidence: 0.85,
-      predictedEngagement: 2000,
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent: "BTC just hit ATH!",
+        confidence: 0.85,
+        predictedEngagement: 2000,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 500,
     });
     (mockPrisma.tweetDraft.create as jest.Mock).mockResolvedValueOnce({
       ...mockDraft,
@@ -348,8 +432,14 @@ describe("POST /api/drafts/generate", () => {
       .send({ sourceContent: "BTC hits ATH", sourceType: "TWEET" });
 
     expect(res.status).toBe(200);
-    expect(res.body.draft).toBeDefined();
-    expect(mockGenerateTweet).toHaveBeenCalled();
+    expect(res.body.data.draft).toBeDefined();
+    expect(mockRunPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-123",
+        sourceContent: "BTC hits ATH",
+        sourceType: "TWEET",
+      })
+    );
     expect(mockPrisma.analyticsEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ type: "DRAFT_CREATED" }),
@@ -357,34 +447,8 @@ describe("POST /api/drafts/generate", () => {
     );
   });
 
-  it("still generates tweet if research fails", async () => {
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockConductResearch.mockRejectedValueOnce(new Error("Research unavailable"));
-    mockGenerateTweet.mockResolvedValueOnce({
-      content: "BTC ATH!",
-      confidence: 0.75,
-      predictedEngagement: 1500,
-    });
-    (mockPrisma.tweetDraft.create as jest.Mock).mockResolvedValueOnce(mockDraft);
-    (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValueOnce({});
-
-    const res = await request(app)
-      .post("/api/drafts/generate")
-      .set("Authorization", AUTH)
-      .send({ sourceContent: "BTC hits ATH", sourceType: "TWEET" });
-
-    expect(res.status).toBe(200);
-    expect(mockGenerateTweet).toHaveBeenCalled();
-  });
-
   it("returns 502 when AI generation fails", async () => {
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockConductResearch.mockResolvedValueOnce({
-      summary: "ok",
-      keyFacts: [],
-      sentiment: "neutral",
-    });
-    mockGenerateTweet.mockRejectedValueOnce(new Error("OpenAI timeout"));
+    mockRunPipeline.mockRejectedValueOnce(new Error("OpenAI timeout"));
 
     const res = await request(app)
       .post("/api/drafts/generate")
@@ -429,11 +493,15 @@ describe("POST /api/drafts/:id/regenerate", () => {
   it("regenerates with new version number", async () => {
     const existingWithSource = { ...mockDraft, sourceContent: "BTC ATH analysis", version: 1 };
     (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(existingWithSource);
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockGenerateTweet.mockResolvedValueOnce({
-      content: "New version!",
-      confidence: 0.9,
-      predictedEngagement: 2200,
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent: "New version!",
+        confidence: 0.9,
+        predictedEngagement: 2200,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 400,
     });
     (mockPrisma.tweetDraft.create as jest.Mock).mockResolvedValueOnce({
       ...mockDraft,
@@ -448,17 +516,21 @@ describe("POST /api/drafts/:id/regenerate", () => {
       .send({});
 
     expect(res.status).toBe(200);
-    expect(res.body.draft.version).toBe(2);
+    expect(res.body.data.draft.version).toBe(2);
   });
 
   it("logs FEEDBACK_GIVEN when feedback is provided on regenerate", async () => {
     const existingWithSource = { ...mockDraft, sourceContent: "BTC ATH", version: 1 };
     (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(existingWithSource);
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockGenerateTweet.mockResolvedValueOnce({
-      content: "Refined tweet",
-      confidence: 0.88,
-      predictedEngagement: 1800,
+    mockRunPipeline.mockResolvedValueOnce({
+      ctx: {
+        generatedContent: "Refined tweet",
+        confidence: 0.88,
+        predictedEngagement: 1800,
+        stepResults: [],
+      },
+      steps: [],
+      totalMs: 300,
     });
     (mockPrisma.tweetDraft.create as jest.Mock).mockResolvedValueOnce({ ...mockDraft, version: 2 });
     (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValue({});
@@ -477,8 +549,7 @@ describe("POST /api/drafts/:id/regenerate", () => {
   it("returns 502 when AI generation fails on regenerate", async () => {
     const existingWithSource = { ...mockDraft, sourceContent: "BTC ATH", version: 1 };
     (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(existingWithSource);
-    (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(mockVoiceProfile);
-    mockGenerateTweet.mockRejectedValueOnce(new Error("API failure"));
+    mockRunPipeline.mockRejectedValueOnce(new Error("API failure"));
 
     const res = await request(app)
       .post("/api/drafts/draft-1/regenerate")

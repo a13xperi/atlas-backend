@@ -1,5 +1,7 @@
 import OpenAI from "openai";
+import { config } from "./config";
 import { getCached, setCache } from "./redis";
+import { withRetry } from "./retry";
 
 // Grok uses OpenAI-compatible API with different base URL
 let client: OpenAI | null = null;
@@ -7,7 +9,7 @@ let client: OpenAI | null = null;
 export function getGrokClient(): OpenAI {
   if (!client) {
     client = new OpenAI({
-      apiKey: process.env.XAI_API_KEY,
+      apiKey: config.XAI_API_KEY,
       baseURL: "https://api.x.ai/v1",
     });
   }
@@ -65,18 +67,22 @@ export async function searchTrending(params: TrendingSearchParams): Promise<Tren
 
   const client = getGrokClient();
 
-  const response = await client.chat.completions.create({
-    model: "grok-3",
-    max_tokens: 2000,
-    temperature: 0.5,
-    messages: [
-      { role: "system", content: TRENDING_SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: `Topics I follow: ${topics.join(", ")}\n\nFind me the top ${limit} trending discussions on Twitter/X related to these topics right now.`,
-      },
-    ],
-  });
+  const response = await withRetry(
+    () =>
+      client.chat.completions.create({
+        model: "grok-3-latest",
+        max_tokens: 2000,
+        temperature: 0.5,
+        messages: [
+          { role: "system", content: TRENDING_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: `Topics I follow: ${topics.join(", ")}\n\nFind me the top ${limit} trending discussions on Twitter/X related to these topics right now.`,
+          },
+        ],
+      }),
+    "grok:searchTrending",
+  );
 
   const content = response.choices[0]?.message?.content;
   if (!content) throw new Error("Empty response from Grok");

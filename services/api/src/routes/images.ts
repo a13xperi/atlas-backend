@@ -1,9 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { config } from "../lib/config";
+import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateVisualConcept, ImageStyle } from "../lib/gemini";
-import { buildErrorResponse } from "../middleware/requestId";
+import { logger } from "../lib/logger";
 
 export const imagesRouter = Router();
 imagesRouter.use(authenticate);
@@ -21,6 +23,10 @@ const generateForDraftSchema = z.object({
 // Standalone image concept generation
 imagesRouter.post("/generate", async (req: AuthRequest, res) => {
   try {
+    if (!config.GOOGLE_AI_API_KEY) {
+      return res.status(503).json(error("Image generation is not configured — GOOGLE_AI_API_KEY missing", 503));
+    }
+
     const body = generateSchema.parse(req.body);
 
     const concept = await generateVisualConcept(body.prompt, body.style as ImageStyle);
@@ -41,30 +47,30 @@ imagesRouter.post("/generate", async (req: AuthRequest, res) => {
       data: { userId: req.userId!, type: "IMAGE_GENERATED" },
     });
 
-    res.json({ image: { ...image, concept } });
+    res.json(success({ image: { ...image, concept } }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    console.error("Image generation failed:", err.message);
-    res
-      .status(502)
-      .json(buildErrorResponse(req, "Image generation failed", { message: err.message }));
+    logger.error({ err: err.message, stack: err.stack }, "Image generation failed");
+    res.status(502).json(error("Image generation failed"));
   }
 });
 
 // Generate companion visual for an existing draft
 imagesRouter.post("/generate-for-draft", async (req: AuthRequest, res) => {
   try {
+    if (!config.GOOGLE_AI_API_KEY) {
+      return res.status(503).json(error("Image generation is not configured — GOOGLE_AI_API_KEY missing", 503));
+    }
+
     const body = generateForDraftSchema.parse(req.body);
 
     // Fetch the draft
     const draft = await prisma.tweetDraft.findFirst({
       where: { id: body.draftId, userId: req.userId },
     });
-    if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+    if (!draft) return res.status(404).json(error("Draft not found"));
 
     const concept = await generateVisualConcept(draft.content, body.style as ImageStyle);
 
@@ -85,17 +91,13 @@ imagesRouter.post("/generate-for-draft", async (req: AuthRequest, res) => {
       data: { userId: req.userId!, type: "IMAGE_GENERATED" },
     });
 
-    res.json({ image: { ...image, concept } });
+    res.json(success({ image: { ...image, concept } }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    console.error("Image generation failed:", err.message);
-    res
-      .status(502)
-      .json(buildErrorResponse(req, "Image generation failed", { message: err.message }));
+    logger.error({ err: err.message, stack: err.stack }, "Image generation failed");
+    res.status(502).json(error("Image generation failed"));
   }
 });
 
@@ -106,8 +108,9 @@ imagesRouter.get("/for-draft/:draftId", async (req: AuthRequest, res) => {
       where: { draftId: req.params.draftId as string, userId: req.userId! },
       orderBy: { createdAt: "desc" },
     });
-    res.json({ images });
+    res.json(success({ images }));
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load images", { message: err.message }));
+    logger.error({ err: err.message }, "Failed to load images");
+    res.status(500).json(error("Failed to load images", 500, { message: err.message }));
   }
 });

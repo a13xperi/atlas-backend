@@ -1,4 +1,6 @@
 import OpenAI from "openai";
+import { config as envConfig } from "../config";
+import { withRetry } from "../retry";
 import type { Provider, ProviderConfig, CompletionRequest, CompletionResponse } from "./types";
 
 let client: OpenAI | null = null;
@@ -6,8 +8,10 @@ let client: OpenAI | null = null;
 function getClient(): OpenAI {
   if (!client) {
     client = new OpenAI({
-      apiKey: process.env.XAI_API_KEY,
+      apiKey: envConfig.XAI_API_KEY,
       baseURL: "https://api.x.ai/v1",
+      timeout: 20_000,
+      maxRetries: 0,
     });
   }
   return client;
@@ -16,7 +20,7 @@ function getClient(): OpenAI {
 const config: ProviderConfig = {
   id: "grok",
   defaultModel: "grok-3",
-  available: !!process.env.XAI_API_KEY,
+  available: !!envConfig.XAI_API_KEY,
   inputCostPer1M: 3.0,
   outputCostPer1M: 15.0,
 };
@@ -28,15 +32,20 @@ export const grokProvider: Provider = {
     const ai = getClient();
     const start = Date.now();
 
-    const response = await ai.chat.completions.create({
-      model: config.defaultModel,
-      max_tokens: request.maxTokens ?? 1024,
-      ...(request.temperature !== undefined && { temperature: request.temperature }),
-      messages: request.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-    });
+    const response = await withRetry(
+      () =>
+        ai.chat.completions.create({
+          model: config.defaultModel,
+          max_tokens: request.maxTokens ?? 1024,
+          ...(request.temperature !== undefined && { temperature: request.temperature }),
+          messages: request.messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        }),
+      "grok-provider:complete",
+      { maxRetries: 1 },
+    );
 
     const content = response.choices[0]?.message?.content?.trim() ?? "";
 

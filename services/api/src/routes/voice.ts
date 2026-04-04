@@ -1,8 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
+import { VoiceMaturity } from "@prisma/client";
+import { parsePagination } from "../lib/pagination";
 import { prisma } from "../lib/prisma";
+import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
-import { buildErrorResponse } from "../middleware/requestId";
+import { fetchTweetsByHandle } from "../lib/twitter";
+import { calibrateFromTweets } from "../lib/calibrate";
+import { logger } from "../lib/logger";
 
 export const voiceRouter = Router();
 voiceRouter.use(authenticate);
@@ -12,7 +17,36 @@ const profileSchema = z.object({
   formality: z.number().min(0).max(100).optional(),
   brevity: z.number().min(0).max(100).optional(),
   contrarianTone: z.number().min(0).max(100).optional(),
+  directness: z.number().min(0).max(100).optional(),
+  warmth: z.number().min(0).max(100).optional(),
+  technicalDepth: z.number().min(0).max(100).optional(),
+  confidence: z.number().min(0).max(100).optional(),
+  evidenceOrientation: z.number().min(0).max(100).optional(),
+  solutionOrientation: z.number().min(0).max(100).optional(),
+  socialPosture: z.number().min(0).max(100).optional(),
+  selfPromotionalIntensity: z.number().min(0).max(100).optional(),
 });
+
+type ProfileInput = z.infer<typeof profileSchema>;
+
+function buildVoiceProfileData(body: ProfileInput) {
+  return {
+    ...(body.humor !== undefined && { humor: body.humor }),
+    ...(body.formality !== undefined && { formality: body.formality }),
+    ...(body.brevity !== undefined && { brevity: body.brevity }),
+    ...(body.contrarianTone !== undefined && { contrarianTone: body.contrarianTone }),
+    ...(body.directness !== undefined && { directness: body.directness }),
+    ...(body.warmth !== undefined && { warmth: body.warmth }),
+    ...(body.technicalDepth !== undefined && { technicalDepth: body.technicalDepth }),
+    ...(body.confidence !== undefined && { confidence: body.confidence }),
+    ...(body.evidenceOrientation !== undefined && { evidenceOrientation: body.evidenceOrientation }),
+    ...(body.solutionOrientation !== undefined && { solutionOrientation: body.solutionOrientation }),
+    ...(body.socialPosture !== undefined && { socialPosture: body.socialPosture }),
+    ...(body.selfPromotionalIntensity !== undefined && {
+      selfPromotionalIntensity: body.selfPromotionalIntensity,
+    }),
+  };
+}
 
 const referenceSchema = z.object({
   name: z.string().min(1),
@@ -61,18 +95,59 @@ const blendSchema = z.object({
   voices: z.array(blendVoiceSchema).min(1),
 });
 
+const updateBlendVoiceSchema = z.object({
+  label: z.string().min(1).optional(),
+  percentage: z.number().min(0).max(100).optional(),
+  referenceVoiceId: z.string().min(1).nullable().optional(),
+});
+
 // Get voice profile
 voiceRouter.get("/profile", async (req: AuthRequest, res) => {
   try {
     const profile = await prisma.voiceProfile.findUnique({
       where: { userId: req.userId },
     });
-    if (!profile) return res.status(404).json(buildErrorResponse(req, "Voice profile not found"));
-    res.json({ profile });
+    if (!profile) return res.status(404).json(error("Voice profile not found"));
+    res.json(success({ profile }));
   } catch (err: any) {
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load voice profile", { message: err.message }));
+    res.status(500).json(error("Failed to load voice profile"));
+  }
+});
+
+// Get voice profile via collection endpoint
+voiceRouter.get("/profiles", async (req: AuthRequest, res) => {
+  try {
+    const profile = await prisma.voiceProfile.findUnique({
+      where: { userId: req.userId },
+    });
+    if (!profile) return res.status(404).json(error("Voice profile not found"));
+    res.json(success({ profile }));
+  } catch (err: any) {
+    res.status(500).json(error("Failed to load voice profile"));
+  }
+});
+
+// Create or replace the current user's voice profile dimensions
+voiceRouter.post("/profiles", async (req: AuthRequest, res) => {
+  try {
+    const body = profileSchema.parse(req.body);
+    const data = buildVoiceProfileData(body);
+
+    const profile = await prisma.voiceProfile.upsert({
+      where: { userId: req.userId },
+      update: data,
+      create: {
+        userId: req.userId!,
+        ...data,
+      },
+    });
+
+    res.json(success({ profile }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Failed to save voice profile"));
   }
 });
 
@@ -83,38 +158,57 @@ voiceRouter.patch("/profile", async (req: AuthRequest, res) => {
 
     const profile = await prisma.voiceProfile.update({
       where: { userId: req.userId },
-      data: {
-        ...(body.humor !== undefined && { humor: body.humor }),
-        ...(body.formality !== undefined && { formality: body.formality }),
-        ...(body.brevity !== undefined && { brevity: body.brevity }),
-        ...(body.contrarianTone !== undefined && { contrarianTone: body.contrarianTone }),
-      },
+      data: buildVoiceProfileData(body),
     });
 
-    res.json({ profile });
+    res.json(success({ profile }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to update voice profile", { message: err.message }));
+    res.status(500).json(error("Failed to update voice profile"));
+  }
+});
+
+// Update voice dimensions by profile ID
+voiceRouter.patch("/profiles/:id", async (req: AuthRequest, res) => {
+  try {
+    const profileId = req.params.id as string;
+    const body = profileSchema.parse(req.body);
+
+    const existingProfile = await prisma.voiceProfile.findFirst({
+      where: { id: profileId, userId: req.userId },
+    });
+    if (!existingProfile) return res.status(404).json(error("Voice profile not found"));
+
+    const profile = await prisma.voiceProfile.update({
+      where: { id: profileId },
+      data: buildVoiceProfileData(body),
+    });
+
+    res.json(success({ profile }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Failed to update voice profile"));
   }
 });
 
 // List reference voices
 voiceRouter.get("/references", async (req: AuthRequest, res) => {
   try {
+    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
+
     const voices = await prisma.referenceVoice.findMany({
       where: { userId: req.userId, isActive: true },
+      take,
+      skip,
     });
-    res.json({ voices });
+    res.json(success({ voices }));
   } catch (err: any) {
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load reference voices", { message: err.message }));
+    logger.error({ err: err.message }, "Failed to load reference voices");
+    res.status(500).json(error("Failed to load reference voices", 500, { message: err.message }));
   }
 });
 
@@ -126,32 +220,33 @@ voiceRouter.post("/references", async (req: AuthRequest, res) => {
     const voice = await prisma.referenceVoice.create({
       data: { userId: req.userId!, name: body.name, handle: body.handle },
     });
-    res.json({ voice });
+    res.json(success({ voice }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       if (req.body?.name === undefined) {
-        return res.status(400).json(buildErrorResponse(req, "Name is required"));
+        return res.status(400).json(error("Name is required"));
       }
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to create reference voice", { message: err.message }));
+    res.status(500).json(error("Failed to create reference voice"));
   }
 });
 
 // List saved blends
 voiceRouter.get("/blends", async (req: AuthRequest, res) => {
   try {
+    const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
+
     const blends = await prisma.savedBlend.findMany({
       where: { userId: req.userId },
+      take,
+      skip,
       include: { voices: { include: { referenceVoice: true } } },
     });
-    res.json({ blends });
+    res.json(success({ blends }));
   } catch (err: any) {
-    res.status(500).json(buildErrorResponse(req, "Failed to load blends", { message: err.message }));
+    logger.error({ err: err.message }, "Failed to load blends");
+    res.status(500).json(error("Failed to load blends", 500, { message: err.message }));
   }
 });
 
@@ -175,17 +270,12 @@ voiceRouter.post("/blends", async (req: AuthRequest, res) => {
       include: { voices: true },
     });
 
-    res.json({ blend });
+    res.json(success({ blend }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      if (req.body?.name === undefined || !Array.isArray(req.body?.voices) || req.body.voices.length === 0) {
-        return res.status(400).json(buildErrorResponse(req, "Name and voices required"));
-      }
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+      return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    res.status(500).json(buildErrorResponse(req, "Failed to create blend", { message: err.message }));
+    res.status(500).json(error("Failed to create blend"));
   }
 });
 
@@ -194,33 +284,34 @@ voiceRouter.patch("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, r
   try {
     const blendId = req.params.blendId as string;
     const voiceId = req.params.voiceId as string;
-    const { label, percentage, referenceVoiceId } = req.body;
+    const body = updateBlendVoiceSchema.parse(req.body);
 
     const blend = await prisma.savedBlend.findFirst({
       where: { id: blendId, userId: req.userId },
     });
-    if (!blend) return res.status(404).json(buildErrorResponse(req, "Blend not found"));
+    if (!blend) return res.status(404).json(error("Blend not found"));
 
     const voice = await prisma.blendVoice.findFirst({
       where: { id: voiceId, blendId },
     });
-    if (!voice) return res.status(404).json(buildErrorResponse(req, "Voice not found in blend"));
+    if (!voice) return res.status(404).json(error("Voice not found in blend"));
 
     const updated = await prisma.blendVoice.update({
       where: { id: voiceId },
       data: {
-        ...(label !== undefined && { label }),
-        ...(percentage !== undefined && { percentage }),
-        ...(referenceVoiceId !== undefined && { referenceVoiceId }),
+        ...(body.label !== undefined && { label: body.label }),
+        ...(body.percentage !== undefined && { percentage: body.percentage }),
+        ...(body.referenceVoiceId !== undefined && { referenceVoiceId: body.referenceVoiceId }),
       },
       include: { referenceVoice: true },
     });
 
-    res.json({ voice: updated });
+    res.json(success({ voice: updated }));
   } catch (err: any) {
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to update blend voice", { message: err.message }));
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Failed to update blend voice"));
   }
 });
 
@@ -233,18 +324,84 @@ voiceRouter.delete("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, 
     const blend = await prisma.savedBlend.findFirst({
       where: { id: blendId, userId: req.userId },
     });
-    if (!blend) return res.status(404).json(buildErrorResponse(req, "Blend not found"));
+    if (!blend) return res.status(404).json(error("Blend not found"));
 
     const voice = await prisma.blendVoice.findFirst({
       where: { id: voiceId, blendId },
     });
-    if (!voice) return res.status(404).json(buildErrorResponse(req, "Voice not found in blend"));
+    if (!voice) return res.status(404).json(error("Voice not found in blend"));
 
     await prisma.blendVoice.delete({ where: { id: voiceId } });
-    res.json({ success: true });
+    res.json(success({ success: true }));
   } catch (err: any) {
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to delete blend voice", { message: err.message }));
+    res.status(500).json(error("Failed to delete blend voice"));
+  }
+});
+
+// Calibrate voice profile from a Twitter handle's tweets
+const calibrateSchema = z.object({
+  handle: z.string().min(1).max(50),
+});
+
+voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
+  try {
+    const body = calibrateSchema.parse(req.body);
+
+    // Fetch tweets from Twitter/X
+    const { user: twitterUser, tweets } = await fetchTweetsByHandle(body.handle);
+
+    if (tweets.length === 0) {
+      return res.status(400).json(error(`No tweets found for @${body.handle}`));
+    }
+
+    // Run calibration via Claude
+    const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
+
+    // Update voice profile with all 12 calibrated dimensions
+    const dimensionData = {
+      humor: calibration.humor,
+      formality: calibration.formality,
+      brevity: calibration.brevity,
+      contrarianTone: calibration.contrarianTone,
+      directness: calibration.directness,
+      warmth: calibration.warmth,
+      technicalDepth: calibration.technicalDepth,
+      confidence: calibration.confidence,
+      evidenceOrientation: calibration.evidenceOrientation,
+      solutionOrientation: calibration.solutionOrientation,
+      socialPosture: calibration.socialPosture,
+      selfPromotionalIntensity: calibration.selfPromotionalIntensity,
+      tweetsAnalyzed: calibration.tweetsAnalyzed,
+      maturity: calibration.tweetsAnalyzed >= 100 ? VoiceMaturity.ADVANCED
+        : calibration.tweetsAnalyzed >= 20 ? VoiceMaturity.INTERMEDIATE
+        : VoiceMaturity.BEGINNER,
+    };
+
+    const profile = await prisma.voiceProfile.upsert({
+      where: { userId: req.userId! },
+      update: dimensionData,
+      create: { userId: req.userId!, ...dimensionData },
+    });
+
+    // Log analytics
+    await prisma.analyticsEvent.create({
+      data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
+    });
+
+    res.json(success({
+      profile,
+      calibration: {
+        confidence: calibration.calibrationConfidence,
+        analysis: calibration.analysis,
+        tweetsAnalyzed: calibration.tweetsAnalyzed,
+        twitterUser: { username: twitterUser.username, name: twitterUser.name },
+      },
+    }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    logger.error({ err: err.message }, "Calibration failed");
+    res.status(502).json(error("Voice calibration failed"));
   }
 });

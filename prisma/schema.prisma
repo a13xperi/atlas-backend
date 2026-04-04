@@ -9,7 +9,7 @@ datasource db {
 
 model User {
   id            String   @id @default(cuid())
-  supabaseId    String?  @unique
+  supabaseId    String?
   handle        String   @unique
   email         String?  @unique
   passwordHash  String?
@@ -17,9 +17,13 @@ model User {
   avatarUrl     String?
   role          Role     @default(ANALYST)
   onboardingTrack OnboardingTrack?
-  telegramChatId  String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  telegramChatId    String?
+  xHandle           String?
+  xAccessToken      String?
+  xRefreshToken     String?
+  xTokenExpiresAt   DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   voiceProfile      VoiceProfile?
   referenceVoices   ReferenceVoice[]
@@ -31,6 +35,7 @@ model User {
   researchResults   ResearchResult[]
   generatedImages   GeneratedImage[]
   alerts            Alert[]
+  briefingPreference BriefingPreference?
 
   @@map("users")
 }
@@ -65,6 +70,14 @@ model VoiceProfile {
   formality       Int      @default(50)
   brevity         Int      @default(50)
   contrarianTone  Int      @default(50)
+  directness               Int     @default(50)
+  warmth                   Int     @default(50)
+  technicalDepth           Int     @default(50)
+  confidence               Int     @default(50)
+  evidenceOrientation      Int     @default(50)
+  solutionOrientation      Int     @default(50)
+  socialPosture            Int     @default(50)
+  selfPromotionalIntensity Int     @default(50)
   maturity        VoiceMaturity @default(BEGINNER)
   tweetsAnalyzed  Int      @default(0)
   createdAt       DateTime @default(now())
@@ -136,18 +149,21 @@ model TweetDraft {
   sourceContent String?
   blendId       String?
   feedback      String?
+  scheduledAt   DateTime?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
   user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   images GeneratedImage[]
 
+  @@index([status, scheduledAt])
   @@map("tweet_drafts")
 }
 
 enum DraftStatus {
   DRAFT
   APPROVED
+  SCHEDULED
   POSTED
   ARCHIVED
 }
@@ -214,6 +230,11 @@ enum AlertDelivery {
   TELEGRAM
 }
 
+enum AlertCategory {
+  SIGNAL
+  NOTIFICATION
+}
+
 model Alert {
   id          String      @id @default(cuid())
   type        String
@@ -223,6 +244,7 @@ model Alert {
   sourceUrl   String?
   sentiment   String?
   relevance   Float?
+  category    AlertCategory @default(SIGNAL)
   userId      String?
   expiresAt   DateTime?
   createdAt   DateTime    @default(now())
@@ -263,6 +285,19 @@ model ResearchResult {
 
   @@index([userId, createdAt])
   @@map("research_results")
+}
+
+model BriefingPreference {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  deliveryTime String   @default("08:00")
+  topics       String[]
+  sources      String[]
+  channel      String   @default("PORTAL")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  updatedAt    DateTime @updatedAt
+
+  @@map("briefing_preferences")
 }
 
 model GeneratedImage {

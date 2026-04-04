@@ -1,3 +1,5 @@
+import { config } from "./config";
+
 /**
  * Twitter/X API v2 client for fetching user tweets.
  * Uses Bearer Token authentication (app-only).
@@ -18,7 +20,7 @@ interface UserLookupResult {
 }
 
 function getBearerToken(): string {
-  const token = process.env.TWITTER_BEARER_TOKEN;
+  const token = config.TWITTER_BEARER_TOKEN;
   if (!token) throw new Error("TWITTER_BEARER_TOKEN not configured");
   return token;
 }
@@ -78,4 +80,118 @@ export async function fetchTweetsByHandle(
   const user = await lookupUser(handle);
   const tweets = await fetchUserTweets(user.id, maxResults);
   return { user, tweets };
+}
+
+// --- OAuth 2.0 PKCE + User-Context Posting ---
+
+import crypto from "crypto";
+
+export function generateOAuthUrl(state: string): { url: string; codeVerifier: string } {
+  const clientId = config.TWITTER_CLIENT_ID;
+  const callbackUrl = config.TWITTER_OAUTH_CALLBACK_URL;
+  if (!clientId || !callbackUrl) throw new Error("TWITTER_CLIENT_ID and TWITTER_OAUTH_CALLBACK_URL required");
+
+  const codeVerifier = crypto.randomBytes(32).toString("base64url");
+  const codeChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
+
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: callbackUrl,
+    scope: "tweet.read tweet.write users.read offline.access",
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256",
+  });
+
+  return { url: `https://twitter.com/i/oauth2/authorize?${params}`, codeVerifier };
+}
+
+export async function exchangeCodeForTokens(code: string, codeVerifier: string): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+}> {
+  const clientId = config.TWITTER_CLIENT_ID;
+  const clientSecret = config.TWITTER_CLIENT_SECRET;
+  const callbackUrl = config.TWITTER_OAUTH_CALLBACK_URL;
+  if (!clientId || !clientSecret || !callbackUrl) throw new Error("X OAuth credentials not configured");
+
+  const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+
+  const res = await fetch("https://api.twitter.com/2/oauth2/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${basicAuth}`,
+    },
+    body: new URLSearchParams({
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: callbackUrl,
+      code_verifier: codeVerifier,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`X token exchange failed (${res.status}): ${body}`);
+  }
+
+  const data = await res.json() as { access_token: string; refresh_token: string; expires_in: number };
+  return { accessToken: data.access_token, refreshToken: data.refresh_token, expiresIn: data.expires_in };
+}
+
+export async function refreshAccessToken(refreshToken: string): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+}> {
+  const clientId = config.TWITTER_CLIENT_ID;
+  const clientSecret = config.TWITTER_CLIENT_SECRET;
+  if (!clientId || !clientSecret) throw new Error("X OAuth credentials not configured");
+
+  const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+
+  const res = await fetch("https://api.twitter.com/2/oauth2/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${basicAuth}`,
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`X token refresh failed (${res.status}): ${body}`);
+  }
+
+  const data = await res.json() as { access_token: string; refresh_token: string; expires_in: number };
+  return { accessToken: data.access_token, refreshToken: data.refresh_token, expiresIn: data.expires_in };
+}
+
+export async function postTweet(accessToken: string, text: string, replyToId?: string): Promise<{ id: string; text: string }> {
+  const body: Record<string, unknown> = { text };
+  if (replyToId) body.reply = { in_reply_to_tweet_id: replyToId };
+
+  const res = await fetch(`${TWITTER_API_BASE}/tweets`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`X post failed (${res.status}): ${err}`);
+  }
+
+  const data = await res.json() as { data: { id: string; text: string } };
+  return data.data;
 }

@@ -1,19 +1,21 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { config as envConfig } from "../config";
+import { withRetry } from "../retry";
 import type { Provider, ProviderConfig, CompletionRequest, CompletionResponse } from "./types";
 
 let client: GoogleGenerativeAI | null = null;
 
 function getClient(): GoogleGenerativeAI {
   if (!client) {
-    client = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY!);
+    client = new GoogleGenerativeAI(envConfig.GOOGLE_AI_API_KEY!);
   }
   return client;
 }
 
 const config: ProviderConfig = {
   id: "gemini",
-  defaultModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-  available: !!process.env.GOOGLE_AI_API_KEY,
+  defaultModel: envConfig.GEMINI_MODEL,
+  available: !!envConfig.GOOGLE_AI_API_KEY,
   inputCostPer1M: 0.15,
   outputCostPer1M: 0.60,
 };
@@ -25,7 +27,10 @@ export const geminiProvider: Provider = {
     const ai = getClient();
     const start = Date.now();
 
-    const model = ai.getGenerativeModel({ model: config.defaultModel });
+    const model = ai.getGenerativeModel(
+      { model: config.defaultModel },
+      { timeout: 20_000 },
+    );
 
     // Gemini uses a different message format — combine system + user into contents
     const systemMessage = request.messages.find((m) => m.role === "system");
@@ -43,13 +48,18 @@ export const geminiProvider: Provider = {
       });
     }
 
-    const result = await model.generateContent({
-      contents,
-      generationConfig: {
-        maxOutputTokens: request.maxTokens ?? 1024,
-        ...(request.temperature !== undefined && { temperature: request.temperature }),
-      },
-    });
+    const result = await withRetry(
+      () =>
+        model.generateContent({
+          contents,
+          generationConfig: {
+            maxOutputTokens: request.maxTokens ?? 1024,
+            ...(request.temperature !== undefined && { temperature: request.temperature }),
+          },
+        }),
+      "gemini-provider:complete",
+      { maxRetries: 1 },
+    );
 
     const content = result.response.text();
 

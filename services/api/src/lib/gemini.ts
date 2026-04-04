@@ -1,10 +1,15 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { config } from "./config";
+import { withRetry } from "./retry";
 
 let client: GoogleGenerativeAI | null = null;
 
 export function getGeminiClient(): GoogleGenerativeAI {
   if (!client) {
-    client = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY!);
+    if (!config.GOOGLE_AI_API_KEY) {
+      throw new Error("GOOGLE_AI_API_KEY is not set — image generation requires a Google AI API key");
+    }
+    client = new GoogleGenerativeAI(config.GOOGLE_AI_API_KEY);
   }
   return client;
 }
@@ -43,14 +48,18 @@ export async function generateImage(params: ImageGenParams): Promise<ImageGenRes
   const client = getGeminiClient();
 
   // Use Gemini's image generation model
-  const model = client.getGenerativeModel({ model: process.env.GEMINI_MODEL || "gemini-2.5-flash" });
+  const model = client.getGenerativeModel({ model: config.GEMINI_MODEL });
 
-  const result = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: `Generate an image: ${fullPrompt}. Aspect ratio: ${aspectRatio}.` }] }],
-    generationConfig: {
-      maxOutputTokens: 1000,
-    },
-  });
+  const result = await withRetry(
+    () =>
+      model.generateContent({
+        contents: [{ role: "user", parts: [{ text: `Generate an image: ${fullPrompt}. Aspect ratio: ${aspectRatio}.` }] }],
+        generationConfig: {
+          maxOutputTokens: 1000,
+        },
+      }),
+    "gemini:generateImage",
+  );
 
   const response = result.response;
   const text = response.text();
@@ -78,13 +87,15 @@ export async function generateVisualConcept(tweetContent: string, style: ImageSt
   elements: string[];
 }> {
   const client = getGeminiClient();
-  const model = client.getGenerativeModel({ model: process.env.GEMINI_MODEL || "gemini-2.5-flash" });
+  const model = client.getGenerativeModel({ model: config.GEMINI_MODEL });
 
-  const result = await model.generateContent({
-    contents: [{
-      role: "user",
-      parts: [{
-        text: `You are a visual design AI for crypto Twitter content. Given this tweet, create a visual concept.
+  const result = await withRetry(
+    () =>
+      model.generateContent({
+        contents: [{
+          role: "user",
+          parts: [{
+            text: `You are a visual design AI for crypto Twitter content. Given this tweet, create a visual concept.
 
 Tweet: "${tweetContent}"
 
@@ -100,11 +111,13 @@ Use the Atlas brand palette: primary #4ecdc4 (teal), bg #1a1a2e, surface #2d3748
       }]
     }],
     generationConfig: {
-      maxOutputTokens: 500,
+      maxOutputTokens: 2048,
+      responseMimeType: "application/json",
     },
-  });
+  }),
+    "gemini:generateVisualConcept",
+  );
 
   const text = result.response.text();
-  const jsonStr = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-  return JSON.parse(jsonStr);
+  return JSON.parse(text);
 }

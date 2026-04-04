@@ -10,6 +10,14 @@ const baseProfile = {
   formality: 50,
   brevity: 50,
   contrarianTone: 50,
+  directness: 5,
+  warmth: 5,
+  technicalDepth: 5,
+  confidence: 5,
+  evidenceOrientation: 5,
+  solutionOrientation: 5,
+  socialPosture: 5,
+  selfPromotionalIntensity: 5,
 };
 
 describe("buildTweetPrompt", () => {
@@ -35,6 +43,27 @@ describe("buildTweetPrompt", () => {
     expect(system).toContain("Formality");
     expect(system).toContain("Brevity");
     expect(system).toContain("Contrarian");
+    expect(system).toContain("Directness");
+    expect(system).toContain("Warmth");
+    expect(system).toContain("Technical depth");
+    expect(system).toContain("Evidence orientation");
+    expect(system).toContain("Self-promotional intensity");
+  });
+
+  it("defaults new dimensions when legacy voice profiles omit them", () => {
+    const { system } = buildTweetPrompt({
+      voiceProfile: {
+        humor: 50,
+        formality: 50,
+        brevity: 50,
+        contrarianTone: 50,
+      },
+      sourceContent: "test",
+      sourceType: "MANUAL",
+    });
+
+    expect(system).toContain("Directness (5/10)");
+    expect(system).toContain("Warmth (5/10)");
   });
 
   it("includes blend voices when provided", () => {

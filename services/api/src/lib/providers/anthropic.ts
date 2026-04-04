@@ -1,11 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { config as envConfig } from "../config";
 import type { Provider, ProviderConfig, CompletionRequest, CompletionResponse } from "./types";
 
 let client: Anthropic | null = null;
 
 function getClient(): Anthropic {
   if (!client) {
-    client = new Anthropic();
+    client = new Anthropic({ timeout: 20_000, maxRetries: 0 });
   }
   return client;
 }
@@ -13,7 +14,7 @@ function getClient(): Anthropic {
 const config: ProviderConfig = {
   id: "anthropic",
   defaultModel: "claude-sonnet-4-20250514",
-  available: !!process.env.ANTHROPIC_API_KEY,
+  available: !!envConfig.ANTHROPIC_API_KEY,
   inputCostPer1M: 3.0,
   outputCostPer1M: 15.0,
 };

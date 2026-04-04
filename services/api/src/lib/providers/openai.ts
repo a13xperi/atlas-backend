@@ -1,11 +1,12 @@
 import OpenAI from "openai";
+import { config as envConfig } from "../config";
 import type { Provider, ProviderConfig, CompletionRequest, CompletionResponse } from "./types";
 
 let client: OpenAI | null = null;
 
 function getClient(): OpenAI {
   if (!client) {
-    client = new OpenAI();
+    client = new OpenAI({ timeout: 20_000, maxRetries: 0 });
   }
   return client;
 }
@@ -13,7 +14,7 @@ function getClient(): OpenAI {
 const config: ProviderConfig = {
   id: "openai",
   defaultModel: "gpt-4o",
-  available: !!process.env.OPENAI_API_KEY,
+  available: !!envConfig.OPENAI_API_KEY,
   inputCostPer1M: 2.5,
   outputCostPer1M: 10.0,
 };

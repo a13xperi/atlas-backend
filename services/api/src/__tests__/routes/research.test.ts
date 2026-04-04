@@ -8,6 +8,7 @@ import request from "supertest";
 import express from "express";
 import { researchRouter } from "../../routes/research";
 import { requestIdMiddleware } from "../../middleware/requestId";
+import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
 
 jest.mock("../../middleware/auth", () => ({
   authenticate: jest.fn((req: any, res: any, next: any) => {
@@ -75,7 +76,7 @@ describe("POST /api/research", () => {
   it("returns 400 for empty query", async () => {
     const res = await request(app).post("/api/research").set(AUTH).send({ query: "" });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Invalid request");
+    expectErrorResponse(res.body, "Invalid request");
   });
 
   it("returns 400 when query is missing", async () => {
@@ -95,8 +96,9 @@ describe("POST /api/research", () => {
       .send({ query: "BTC analysis" });
 
     expect(res.status).toBe(200);
-    expect(res.body.result.summary).toBe("BTC is bullish");
-    expect(res.body.result.id).toBe("res-1");
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.result.summary).toBe("BTC is bullish");
+    expect(data.result.id).toBe("res-1");
   });
 
   it("returns 502 when research fails", async () => {
@@ -108,7 +110,7 @@ describe("POST /api/research", () => {
       .send({ query: "BTC analysis" });
 
     expect(res.status).toBe(502);
-    expect(res.body.error).toBe("Research failed");
+    expectErrorResponse(res.body, "Research failed");
   });
 });
 
@@ -124,6 +126,38 @@ describe("GET /api/research/history", () => {
 
     const res = await request(app).get("/api/research/history").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.results).toHaveLength(1);
+    expect(expectSuccessResponse<any>(res.body).results).toHaveLength(1);
+    expect(mockPrisma.researchResult.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-123" },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+        skip: 0,
+      })
+    );
+  });
+
+  it("applies pagination to research history", async () => {
+    (mockPrisma.researchResult.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    await request(app).get("/api/research/history?limit=5&offset=2").set(AUTH);
+
+    expect(mockPrisma.researchResult.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-123" },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        skip: 2,
+      })
+    );
+  });
+
+  it("returns 500 when loading research history fails", async () => {
+    (mockPrisma.researchResult.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app).get("/api/research/history").set(AUTH);
+
+    expect(res.status).toBe(500);
+    expect(expectErrorResponse(res.body, "Failed to load research history").details.message).toBe("db down");
   });
 });

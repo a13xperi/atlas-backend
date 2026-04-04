@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { config } from "../lib/config";
 import { prisma } from "../lib/prisma";
 import { supabaseAdmin } from "../lib/supabase";
+import { getAccessToken } from "../lib/cookies";
 
 export interface AuthRequest extends Request {
   userId?: string;
@@ -9,17 +11,16 @@ export interface AuthRequest extends Request {
 
 /**
  * Dual-mode auth middleware.
+ * Token sources (priority): HttpOnly cookie > Authorization header
  * Path 1: Supabase JWT — verifies via supabaseAdmin.auth.getUser(), resolves Prisma user by supabaseId
  * Path 2: Legacy JWT — verifies via JWT_SECRET, uses payload.userId directly
  * Both paths set req.userId to a Prisma CUID. All downstream routes are unchanged.
  */
 export async function authenticate(req: AuthRequest, res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
+  const token = getAccessToken(req);
+  if (!token) {
     return res.status(401).json({ error: "Missing authorization token" });
   }
-
-  const token = header.slice(7);
 
   // Path 1: Supabase token verification
   if (supabaseAdmin) {
@@ -29,7 +30,7 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
         const supabaseId = data.user.id;
 
         // Look up Prisma user by supabaseId
-        let user = await prisma.user.findUnique({ where: { supabaseId } });
+        let user = await prisma.user.findFirst({ where: { supabaseId } });
 
         // Auto-link: if no user by supabaseId but email matches an existing user, link them
         if (!user && data.user.email) {
@@ -56,7 +57,7 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
 
   // Path 2: Legacy JWT fallback
   try {
-    const secret = process.env.JWT_SECRET;
+    const secret = config.JWT_SECRET;
     if (!secret) {
       return res.status(401).json({ error: "Invalid or expired token" });
     }
