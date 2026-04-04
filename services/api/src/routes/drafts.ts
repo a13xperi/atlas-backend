@@ -270,6 +270,116 @@ draftsRouter.get("/", async (req: AuthRequest, res) => {
   }
 });
 
+// Smart queue — drafts ranked by posting priority with suggested times
+draftsRouter.get("/queue", async (req: AuthRequest, res) => {
+  try {
+    const drafts = await prisma.tweetDraft.findMany({
+      where: {
+        userId: req.userId,
+        status: { in: ["DRAFT", "APPROVED", "SCHEDULED"] },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Score each draft for posting priority
+    const now = Date.now();
+    const scored = drafts.map((draft) => {
+      let score = 0;
+
+      // Status priority: SCHEDULED > APPROVED > DRAFT
+      if (draft.status === "SCHEDULED") score += 40;
+      else if (draft.status === "APPROVED") score += 25;
+      else score += 10;
+
+      // Engagement prediction boost (normalize to 0-20)
+      if (draft.predictedEngagement) {
+        score += Math.min(20, draft.predictedEngagement / 500);
+      }
+
+      // Confidence boost (0-15)
+      if (draft.confidence) {
+        score += draft.confidence * 15;
+      }
+
+      // Topic freshness — newer drafts from trending topics score higher
+      const ageHours = (now - draft.createdAt.getTime()) / (1000 * 60 * 60);
+      if (draft.sourceType === "TRENDING_TOPIC") {
+        // Trending topics decay fast — post within 6 hours or lose relevance
+        score += Math.max(0, 20 - ageHours * 3);
+      } else if (draft.sourceType === "REPORT" || draft.sourceType === "ARTICLE") {
+        // Reports stay relevant longer — 48 hour window
+        score += Math.max(0, 10 - ageHours * 0.2);
+      } else {
+        // Manual/other — moderate decay
+        score += Math.max(0, 10 - ageHours * 0.5);
+      }
+
+      return { ...draft, _score: Math.round(score * 10) / 10 };
+    });
+
+    // Sort by score descending
+    scored.sort((a, b) => b._score - a._score);
+
+    // Assign suggested posting slots — spread across optimal crypto twitter hours
+    // Peak hours: 9-11 AM ET, 1-3 PM ET, 7-9 PM ET
+    const peakSlots = [9, 10, 13, 14, 19, 20]; // ET hours
+    const etOffset = -4; // UTC offset for ET
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    const queue = scored.map((draft, index) => {
+      // Already scheduled? Keep its time
+      if (draft.scheduledAt) {
+        return { ...draft, suggestedAt: draft.scheduledAt.toISOString() };
+      }
+
+      // Assign to next available peak slot
+      const dayOffset = Math.floor(index / peakSlots.length);
+      const slotIndex = index % peakSlots.length;
+      const slotHourUTC = peakSlots[slotIndex] - etOffset;
+
+      const suggestedDate = new Date(today);
+      suggestedDate.setUTCDate(suggestedDate.getUTCDate() + dayOffset);
+      suggestedDate.setUTCHours(slotHourUTC, 0, 0, 0);
+
+      // If suggested time is in the past, push to tomorrow
+      if (suggestedDate.getTime() < now) {
+        suggestedDate.setUTCDate(suggestedDate.getUTCDate() + 1);
+      }
+
+      return { ...draft, suggestedAt: suggestedDate.toISOString() };
+    });
+
+    res.json(success({
+      queue,
+      total: queue.length,
+      nextUp: queue[0] || null,
+    }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to load queue");
+    res.status(500).json(buildErrorResponse(req, "Failed to load queue"));
+  }
+});
+
+// Enqueue a draft — mark as APPROVED and ready for the queue
+draftsRouter.post("/:id/enqueue", async (req: AuthRequest, res) => {
+  try {
+    const draft = await prisma.tweetDraft.findFirst({
+      where: { id: req.params.id as string, userId: req.userId },
+    });
+    if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+
+    const updated = await prisma.tweetDraft.update({
+      where: { id: draft.id },
+      data: { status: "APPROVED" },
+    });
+
+    res.json(success({ draft: updated }));
+  } catch (err: any) {
+    res.status(500).json(buildErrorResponse(req, "Failed to enqueue draft"));
+  }
+});
+
 // List team drafts (APPROVED + POSTED) — MANAGER/ADMIN only
 draftsRouter.get("/team", async (req: AuthRequest, res) => {
   try {
