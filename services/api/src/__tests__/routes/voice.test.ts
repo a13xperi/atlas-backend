@@ -90,11 +90,10 @@ describe("GET /api/voice/profile", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns null profile for new user", async () => {
+  it("returns 404 for new user without profile", async () => {
     (mockPrisma.voiceProfile.findUnique as jest.Mock).mockResolvedValueOnce(null);
     const res = await request(app).get("/api/voice/profile").set(AUTH);
-    expect(res.status).toBe(200);
-    expect(expectSuccessResponse<any>(res.body).profile).toBeNull();
+    expect(res.status).toBe(404);
   });
 
   it("returns voice profile", async () => {
