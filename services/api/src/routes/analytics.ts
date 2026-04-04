@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
+import { buildErrorResponse } from "../middleware/requestId";
 import { authenticate, AuthRequest } from "../middleware/auth";
 
 export const analyticsRouter = Router();
