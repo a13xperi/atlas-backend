@@ -124,8 +124,7 @@ voiceRouter.get("/profile", async (req: AuthRequest, res) => {
     const profile = await prisma.voiceProfile.findUnique({
       where: { userId: req.userId },
     });
-    if (!profile) return res.status(404).json(error("Voice profile not found"));
-    res.json(success({ profile }));
+    res.json(success({ profile: profile || null }));
   } catch (err: any) {
     res.status(500).json(error("Failed to load voice profile"));
   }
@@ -137,8 +136,7 @@ voiceRouter.get("/profiles", async (req: AuthRequest, res) => {
     const profile = await prisma.voiceProfile.findUnique({
       where: { userId: req.userId },
     });
-    if (!profile) return res.status(404).json(error("Voice profile not found"));
-    res.json(success({ profile }));
+    res.json(success({ profile: profile || null }));
   } catch (err: any) {
     res.status(500).json(error("Failed to load voice profile"));
   }
