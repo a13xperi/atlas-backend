@@ -20,6 +20,7 @@ import briefingRouter from "./routes/briefing";
 import { docsRouter } from "./routes/docs";
 import { xAuthRouter } from "./routes/x-auth";
 import { qaRouter } from "./routes/qa";
+import { transcribeRouter } from "./routes/transcribe";
 import { oracleRouter } from "./routes/oracle";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
@@ -117,6 +118,7 @@ app.use("/api/briefing", briefingRouter);
 app.use("/api/auth/x", xAuthRouter);
 app.use("/api/qa", qaRouter);
 app.use("/api/oracle", oracleRouter);
+app.use("/api/transcribe", transcribeRouter);
 
 // 404 handler — catch unknown routes before error handlers
 app.use((req, res) => {
