@@ -3,6 +3,9 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { routeCompletion } from "../lib/providers/router";
+import { logger } from "../lib/logger";
+import { withTimeout } from "../lib/timeout";
 
 const briefingRouter = Router();
 briefingRouter.use(authenticate);
@@ -14,13 +17,13 @@ const briefingPreferencesSchema = z.object({
   channel: z.string(),
 });
 
+// ── Preferences ─────────────────────────────────────────────────
+
 briefingRouter.get("/preferences", async (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!;
     const result = await prisma.briefingPreference.findUnique({
-      where: { userId },
+      where: { userId: req.userId! },
     });
-
     res.json(success({ preference: result || null }));
   } catch (err: any) {
     res.status(500).json(error("Failed to fetch briefing preferences"));
@@ -29,13 +32,11 @@ briefingRouter.get("/preferences", async (req: AuthRequest, res) => {
 
 briefingRouter.put("/preferences", async (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!;
     const body = briefingPreferencesSchema.parse(req.body);
-
     const result = await prisma.briefingPreference.upsert({
-      where: { userId },
+      where: { userId: req.userId! },
       create: {
-        userId,
+        userId: req.userId!,
         deliveryTime: body.deliveryTime,
         topics: body.topics,
         sources: body.sources,
@@ -48,14 +49,125 @@ briefingRouter.put("/preferences", async (req: AuthRequest, res) => {
         channel: body.channel,
       },
     });
-
     res.json(success({ preference: result }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-
     res.status(500).json(error("Failed to save briefing preferences"));
+  }
+});
+
+// ── Briefing History ────────────────────────────────────────────
+
+briefingRouter.get("/history", async (req: AuthRequest, res) => {
+  try {
+    const briefings = await prisma.briefing.findMany({
+      where: { userId: req.userId! },
+      orderBy: { createdAt: "desc" },
+      take: 14,
+    });
+    res.json(success({ briefings }));
+  } catch (err: any) {
+    res.status(500).json(error("Failed to load briefing history"));
+  }
+});
+
+// ── Generate Briefing ───────────────────────────────────────────
+
+briefingRouter.post("/generate", async (req: AuthRequest, res) => {
+  try {
+    const preferences = await prisma.briefingPreference.findUnique({
+      where: { userId: req.userId! },
+    });
+
+    const topics = preferences?.topics ?? ["DeFi", "Macro"];
+    const sources = preferences?.sources ?? ["X/Twitter", "News"];
+
+    const today = new Date().toLocaleDateString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    const systemPrompt = `You are Atlas's morning briefing engine for crypto analysts.
+Generate a concise daily intelligence digest.
+
+Output JSON with this exact structure:
+{
+  "title": "Morning Brief — [Day, Month Date]",
+  "summary": "2-3 sentence executive summary of what matters today",
+  "sections": [
+    {
+      "heading": "Section name",
+      "emoji": "single emoji",
+      "bullets": ["bullet 1", "bullet 2", "bullet 3"]
+    }
+  ]
+}
+
+Rules:
+- 3-5 sections max
+- 2-4 bullets per section
+- Each bullet under 30 words
+- Be specific — name projects, protocols, people
+- Include actionable intel ("watch for...", "key level at...")
+- Contrarian takes welcome
+- No fluff, no disclaimers`;
+
+    const userMessage = `Generate today's briefing for ${today}.
+Topics: ${topics.join(", ")}
+Sources: ${sources.join(", ")}
+
+Make it specific and actionable. Include at least one contrarian take.`;
+
+    const response = await withTimeout(
+      routeCompletion({
+        taskType: "research",
+        maxTokens: 800,
+        temperature: 0.7,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+      }),
+      15_000,
+      "briefing-generate",
+    );
+
+    let parsed: { title: string; summary: string; sections: any[] };
+    try {
+      const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+      parsed = JSON.parse(jsonMatch?.[0] ?? response.content);
+    } catch {
+      parsed = {
+        title: `Morning Brief — ${today}`,
+        summary: response.content.slice(0, 200),
+        sections: [{ heading: "Today's Intel", emoji: "📊", bullets: [response.content.slice(0, 100)] }],
+      };
+    }
+
+    const briefing = await prisma.briefing.create({
+      data: {
+        userId: req.userId!,
+        title: parsed.title,
+        summary: parsed.summary,
+        sections: parsed.sections,
+        topics,
+        sources,
+      },
+    });
+
+    logger.info(
+      { userId: req.userId, provider: response.provider, latencyMs: response.latencyMs },
+      "Briefing generated",
+    );
+
+    res.json(success({ briefing }));
+  } catch (err: any) {
+    logger.error({ error: err?.message }, "Briefing generation failed");
+    res.status(500).json(error("Failed to generate briefing"));
   }
 });
 
