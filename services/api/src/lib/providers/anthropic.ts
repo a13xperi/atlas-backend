@@ -32,8 +32,10 @@ export const anthropicProvider: Provider = {
       .filter((m) => m.role !== "system")
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
+    const modelToUse = request.model ?? config.defaultModel;
+
     const response = await ai.messages.create({
-      model: config.defaultModel,
+      model: modelToUse,
       max_tokens: request.maxTokens ?? 1024,
       ...(request.temperature !== undefined && { temperature: request.temperature }),
       ...(systemMessage && { system: systemMessage.content }),
@@ -46,7 +48,7 @@ export const anthropicProvider: Provider = {
     return {
       content,
       provider: "anthropic",
-      model: config.defaultModel,
+      model: modelToUse,
       usage: {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
