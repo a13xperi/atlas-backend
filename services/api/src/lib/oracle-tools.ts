@@ -109,6 +109,110 @@ export const ORACLE_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "refine_draft",
+    description:
+      "Refine an existing tweet draft with specific instructions. Use when the user wants to adjust tone, length, angle, or wording of a draft.",
+    input_schema: {
+      type: "object",
+      properties: {
+        draftId: {
+          type: "string",
+          description: "The ID of the draft to refine",
+        },
+        instruction: {
+          type: "string",
+          description: "Refinement instruction (e.g. 'make it shorter', 'more bullish', 'add a hook')",
+        },
+      },
+      required: ["draftId", "instruction"],
+    },
+  },
+  {
+    name: "post_draft",
+    description:
+      "Post a draft to X (Twitter). This is a destructive action — always confirm with the user first.",
+    input_schema: {
+      type: "object",
+      properties: {
+        draftId: {
+          type: "string",
+          description: "The ID of the draft to post",
+        },
+      },
+      required: ["draftId"],
+    },
+  },
+  {
+    name: "schedule_draft",
+    description:
+      "Schedule a draft to be posted at a specific time. Always confirm the date/time with the user.",
+    input_schema: {
+      type: "object",
+      properties: {
+        draftId: {
+          type: "string",
+          description: "The ID of the draft to schedule",
+        },
+        scheduledAt: {
+          type: "string",
+          description: "ISO 8601 datetime for when to post (e.g. '2026-04-10T10:00:00Z')",
+        },
+      },
+      required: ["draftId", "scheduledAt"],
+    },
+  },
+  {
+    name: "calibrate_voice",
+    description:
+      "Calibrate the user's voice profile by scanning their X (Twitter) account. Requires their handle. This modifies their voice dimensions.",
+    input_schema: {
+      type: "object",
+      properties: {
+        handle: {
+          type: "string",
+          description: "X handle without @ (e.g. 'vitalikbuterin')",
+        },
+      },
+      required: ["handle"],
+    },
+  },
+  {
+    name: "update_voice_dimension",
+    description:
+      "Update one or more voice dimensions for the user's profile. Dimensions are 0-100 scales.",
+    input_schema: {
+      type: "object",
+      properties: {
+        dimensions: {
+          type: "object",
+          description: "Map of dimension name to value (0-100). Keys: humor, formality, brevity, contrarianTone, directness, warmth, technicalDepth, confidence",
+          additionalProperties: { type: "number" },
+        },
+      },
+      required: ["dimensions"],
+    },
+  },
+  {
+    name: "subscribe_signal",
+    description:
+      "Subscribe the user to a signal/alert topic. They'll get notified about matching content.",
+    input_schema: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          enum: ["CATEGORY", "ACCOUNT", "REPORT_TYPE"],
+          description: "Type of subscription",
+        },
+        value: {
+          type: "string",
+          description: "What to subscribe to (e.g. 'DeFi', '@vitalikbuterin', 'MARKET_REPORT')",
+        },
+      },
+      required: ["type", "value"],
+    },
+  },
+  {
     name: "conduct_research",
     description:
       "Research a topic and return a summary. Use when the user wants to understand something before drafting.",
@@ -142,4 +246,5 @@ export const SERVER_EXECUTABLE = new Set([
   "get_signals",
   "list_drafts",
   "conduct_research",
+  "refine_draft",
 ]);

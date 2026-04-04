@@ -322,6 +322,12 @@ function toolCallToAction(call: ToolCall): OracleAgentAction {
     get_analytics_summary: () => "Get your analytics",
     get_trending: () => "Check trending topics",
     get_signals: () => "Check your signals",
+    refine_draft: (i) => `Refine draft: "${String(i.instruction ?? "").slice(0, 40)}"`,
+    post_draft: () => "Post draft to X",
+    schedule_draft: (i) => `Schedule draft for ${String(i.scheduledAt ?? "").slice(0, 10)}`,
+    calibrate_voice: (i) => `Calibrate voice from @${i.handle}`,
+    update_voice_dimension: () => "Update voice dimensions",
+    subscribe_signal: (i) => `Subscribe to ${i.value} signals`,
     conduct_research: (i) => `Research "${String(i.query ?? "").slice(0, 40)}"`,
   };
 
@@ -390,6 +396,29 @@ async function executeServerSide(
       case "conduct_research": {
         // Research requires LLM call — delegate to frontend for now
         return { success: false, error: "Research requires frontend execution" };
+      }
+      case "refine_draft": {
+        const draftId = (call.input as Record<string, unknown>).draftId as string;
+        const instruction = (call.input as Record<string, unknown>).instruction as string;
+        if (!draftId || !instruction) return { success: false, error: "Missing draftId or instruction" };
+        const draft = await prisma.tweetDraft.findFirst({ where: { id: draftId, userId } });
+        if (!draft) return { success: false, error: "Draft not found" };
+        // Use the provider to refine
+        const refinedResponse = await routeCompletion({
+          taskType: "tweet_generation",
+          maxTokens: 500,
+          temperature: 0.7,
+          messages: [
+            { role: "system", content: "You are a tweet writer. Refine the following tweet based on the instruction. Return ONLY the refined tweet text, nothing else." },
+            { role: "user", content: `Original tweet: "${draft.content}"\nInstruction: ${instruction}` },
+          ],
+        });
+        const refined = await prisma.tweetDraft.update({
+          where: { id: draftId },
+          data: { content: refinedResponse.content.trim() },
+          select: { id: true, content: true, status: true },
+        });
+        return { success: true, data: refined };
       }
       default:
         return { success: false, error: `Unknown server-side tool: ${call.name}` };
