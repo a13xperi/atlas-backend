@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../../",
+    "outDir": "../../dist"
+  },
+  "include": [
+    "src/**/*.ts",
+    "../api/src/lib/oracle-prompt.ts",
+    "../../prisma/index.ts"
+  ]
+}
