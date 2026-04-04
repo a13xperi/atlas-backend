@@ -19,6 +19,7 @@ import { loopRouter } from "./routes/loop";
 import briefingRouter from "./routes/briefing";
 import { docsRouter } from "./routes/docs";
 import { xAuthRouter } from "./routes/x-auth";
+import { qaRouter } from "./routes/qa";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
@@ -113,6 +114,7 @@ app.use("/api/images", imagesRouter);
 app.use("/api/loop", loopRouter);
 app.use("/api/briefing", briefingRouter);
 app.use("/api/auth/x", xAuthRouter);
+app.use("/api/qa", qaRouter);
 
 // 404 handler — catch unknown routes before error handlers
 app.use((req, res) => {
