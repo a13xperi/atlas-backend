@@ -142,7 +142,7 @@ campaignsRouter.post("/:id/drafts", async (req: AuthRequest, res) => {
     });
     if (draft.count === 0) return res.status(404).json(error("Draft not found", 404));
 
-    res.json(success({ deleted: true }));
+    res.json(success({ added: true }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
@@ -160,7 +160,7 @@ campaignsRouter.delete("/:id/drafts/:draftId", async (req: AuthRequest, res) => 
       data: { campaignId: null, sortOrder: null },
     });
     if (updated.count === 0) return res.status(404).json(error("Draft not found in campaign", 404));
-    res.json(success({ deleted: true }));
+    res.json(success({ removed: true }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to remove draft from campaign");
     res.status(500).json(error("Failed to remove draft from campaign"));
