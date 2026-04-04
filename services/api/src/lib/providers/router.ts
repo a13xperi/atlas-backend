@@ -37,6 +37,8 @@ const ROUTING_TABLE: Record<TaskType, ProviderId[]> = {
   research: ["anthropic", "openai", "gemini"],
   trending: ["grok", "openai", "anthropic"],
   image_concept: ["gemini", "openai", "anthropic"],
+  oracle_smart: ["anthropic", "openai", "gemini"],
+  oracle_fast: ["anthropic", "openai", "gemini"],
   general: ["openai", "anthropic", "gemini"],
 };
 
