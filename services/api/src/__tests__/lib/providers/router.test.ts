@@ -82,10 +82,18 @@ describe("routeCompletion", () => {
     mockAnthropic.completeMock.mockResolvedValueOnce(successResponse("anthropic"));
 
     const result = await routeCompletion({ ...baseRequest, taskType: "tweet_generation" });
+<<<<<<< HEAD
     expect(result.provider).toBe("anthropic");
 
     expect(mockAnthropic.completeMock).toHaveBeenCalledTimes(1);
     expect(mockOpenai.completeMock).not.toHaveBeenCalled();
+=======
+    expect(result.provider).toBe("openai");
+    expect(result.model).toBe("openai-model");
+
+    expect(mockOpenai.completeMock).toHaveBeenCalledTimes(1);
+    expect(mockAnthropic.completeMock).not.toHaveBeenCalled();
+>>>>>>> origin/staging
   });
 
   it("routes research to Anthropic as primary", async () => {
@@ -120,7 +128,13 @@ describe("routeCompletion", () => {
     mockAnthropic.completeMock.mockResolvedValueOnce(successResponse("anthropic"));
 
     const result = await routeCompletion(baseRequest);
+<<<<<<< HEAD
     expect(result.provider).toBe("anthropic");
+=======
+    expect(result.provider).toBe("openai");
+    expect(mockOpenai.completeMock).toHaveBeenCalledWith(baseRequest);
+
+>>>>>>> origin/staging
   });
 
   it("falls back to next provider when primary fails", async () => {
@@ -147,9 +161,25 @@ describe("routeCompletion", () => {
     const result = await routeCompletion({ ...baseRequest, taskType: "tweet_generation" });
     expect(result.provider).toBe("gemini");
     expect(result.model).toBe("gemini-model");
+<<<<<<< HEAD
     expect(mockAnthropic.completeMock).toHaveBeenCalledTimes(1);
     expect(mockOpenai.completeMock).toHaveBeenCalledTimes(1);
     expect(mockGemini.completeMock).toHaveBeenCalledTimes(1);
+=======
+    expect(mockOpenai.completeMock).toHaveBeenCalledWith({
+      ...baseRequest,
+      taskType: "tweet_generation",
+    });
+    expect(mockAnthropic.completeMock).toHaveBeenCalledWith({
+      ...baseRequest,
+      taskType: "tweet_generation",
+    });
+    expect(mockGemini.completeMock).toHaveBeenCalledWith({
+      ...baseRequest,
+      taskType: "tweet_generation",
+    });
+
+>>>>>>> origin/staging
   });
 
   it("throws when all providers in chain fail", async () => {

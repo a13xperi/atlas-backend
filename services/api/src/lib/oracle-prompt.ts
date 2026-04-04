@@ -4,7 +4,11 @@
  * Same brain as the Telegram bot — one personality, two surfaces.
  */
 
+<<<<<<< HEAD
 export interface VoiceDimensions {
+=======
+interface VoiceDimensions {
+>>>>>>> origin/staging
   humor: number;
   formality: number;
   brevity: number;
@@ -127,6 +131,7 @@ export function buildFreeTextResponse(
   };
 }
 
+<<<<<<< HEAD
 // ── Draft Delivery Response ─────────────────────────────────────
 
 export function buildDraftDeliveryResponse(input: {
@@ -154,6 +159,8 @@ export function buildDraftDeliveryResponse(input: {
   };
 }
 
+=======
+>>>>>>> origin/staging
 // ── Helpers ──────────────────────────────────────────────────────
 
 function summarizeDimensions(d: VoiceDimensions): string {

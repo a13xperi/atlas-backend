@@ -19,10 +19,13 @@ import { loopRouter } from "./routes/loop";
 import briefingRouter from "./routes/briefing";
 import { docsRouter } from "./routes/docs";
 import { xAuthRouter } from "./routes/x-auth";
+<<<<<<< HEAD
 import { qaRouter } from "./routes/qa";
 import { transcribeRouter } from "./routes/transcribe";
 import { monitorsRouter } from "./routes/monitors";
 import { campaignsRouter } from "./routes/campaigns";
+=======
+>>>>>>> origin/staging
 import { oracleRouter } from "./routes/oracle";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
@@ -118,11 +121,15 @@ app.use("/api/images", imagesRouter);
 app.use("/api/loop", loopRouter);
 app.use("/api/briefing", briefingRouter);
 app.use("/api/auth/x", xAuthRouter);
+<<<<<<< HEAD
 app.use("/api/qa", qaRouter);
 app.use("/api/oracle", oracleRouter);
 app.use("/api/transcribe", transcribeRouter);
 app.use("/api/monitors", monitorsRouter);
 app.use("/api/campaigns", campaignsRouter);
+=======
+app.use("/api/oracle", oracleRouter);
+>>>>>>> origin/staging
 
 // 404 handler — catch unknown routes before error handlers
 app.use((req, res) => {

@@ -7,7 +7,10 @@ import {
   buildBlendPreview,
   buildDimensionReaction,
   buildFreeTextResponse,
+<<<<<<< HEAD
   buildOracleSystemPrompt,
+=======
+>>>>>>> origin/staging
 } from "../lib/oracle-prompt";
 import { success } from "../lib/response";
 import { logger } from "../lib/logger";
@@ -203,6 +206,7 @@ function resolvePrompt(
   // No LLM needed — client handles scripted messages
   return null;
 }
+<<<<<<< HEAD
 
 // ── General Chat ────────────────────────────────────────────────
 // Used by the FloatingOracle widget on all pages.
@@ -287,3 +291,5 @@ oracleRouter.post("/chat", async (req: AuthRequest, res) => {
     res.status(500).json({ ok: false, error: "Oracle is thinking... try again in a moment." });
   }
 });
+=======
+>>>>>>> origin/staging

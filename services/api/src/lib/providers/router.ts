@@ -38,6 +38,7 @@ const ROUTING_TABLE: Record<TaskType, ProviderId[]> = {
   trending: ["grok", "anthropic", "openai"],
   image_concept: ["gemini", "openai", "anthropic"],
   oracle_smart: ["anthropic", "openai", "gemini"],
+<<<<<<< HEAD
   oracle_fast: ["anthropic", "gemini", "openai"],
   general: ["anthropic", "openai", "gemini"],
 };
@@ -47,6 +48,10 @@ const MODEL_OVERRIDES: Partial<Record<TaskType, string>> = {
   oracle_smart: "claude-sonnet-4-20250514",
   research: "claude-sonnet-4-20250514",
   tweet_generation: "claude-opus-4-20250514",
+=======
+  oracle_fast: ["anthropic", "openai", "gemini"],
+  general: ["openai", "anthropic", "gemini"],
+>>>>>>> origin/staging
 };
 
 function getAvailableChain(taskType: TaskType): Provider[] {
