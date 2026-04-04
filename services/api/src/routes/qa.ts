@@ -1,9 +1,17 @@
 import { Router } from "express";
+import { createClient } from "@supabase/supabase-js";
 import { authenticate, AuthRequest } from "../middleware/auth";
-import { supabaseAdmin } from "../lib/supabase";
 import { prisma } from "../lib/prisma";
 import { success, error } from "../lib/response";
 import { logger } from "../lib/logger";
+
+// QA data lives in the Sage/capacity Supabase project (separate from auth)
+const QA_SUPABASE_URL = process.env.QA_SUPABASE_URL || "https://zoirudjyqfqvpxsrxepr.supabase.co";
+const QA_SUPABASE_KEY = process.env.QA_SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpvaXJ1ZGp5cWZxdnB4c3J4ZXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgwMzE4MjgsImV4cCI6MjA4MzYwNzgyOH0.6W6OzRfJ-nmKN_23z1OBCS4Cr-ODRq9DJmF_yMwOCfo";
+
+const qaSupabase = createClient(QA_SUPABASE_URL, QA_SUPABASE_KEY, {
+  auth: { autoRefreshToken: false, persistSession: false },
+});
 
 export const qaRouter = Router();
 qaRouter.use(authenticate);
@@ -13,7 +21,7 @@ const TABLE = "qa_test_runs";
 // List all test runs for project 'atlas'
 qaRouter.get("/runs", async (req: AuthRequest, res) => {
   try {
-    const { data, error: dbErr } = await supabaseAdmin!
+    const { data, error: dbErr } = await qaSupabase
       .from(TABLE)
       .select("*")
       .eq("project", "atlas")
@@ -30,7 +38,7 @@ qaRouter.get("/runs", async (req: AuthRequest, res) => {
 // Get single test run
 qaRouter.get("/runs/:id", async (req: AuthRequest, res) => {
   try {
-    const { data, error: dbErr } = await supabaseAdmin!
+    const { data, error: dbErr } = await qaSupabase
       .from(TABLE)
       .select("*")
       .eq("id", req.params.id)
@@ -52,7 +60,7 @@ qaRouter.post("/runs", async (req: AuthRequest, res) => {
       return res.status(400).json(error("tester_name and tester_initials required"));
     }
 
-    const { data, error: dbErr } = await supabaseAdmin!
+    const { data, error: dbErr } = await qaSupabase
       .from(TABLE)
       .insert({
         project: "atlas",
@@ -77,7 +85,7 @@ qaRouter.post("/runs", async (req: AuthRequest, res) => {
 // Update test run (owner or MANAGER)
 qaRouter.patch("/runs/:id", async (req: AuthRequest, res) => {
   try {
-    const { data: run, error: fetchErr } = await supabaseAdmin!
+    const { data: run, error: fetchErr } = await qaSupabase
       .from(TABLE)
       .select("tester_id")
       .eq("id", req.params.id)
@@ -94,7 +102,7 @@ qaRouter.patch("/runs/:id", async (req: AuthRequest, res) => {
     }
 
     const { results, summary, status } = req.body;
-    const { data, error: dbErr } = await supabaseAdmin!
+    const { data, error: dbErr } = await qaSupabase
       .from(TABLE)
       .update({
         ...(results !== undefined && { results }),
@@ -122,7 +130,7 @@ qaRouter.delete("/runs/:id", async (req: AuthRequest, res) => {
       return res.status(403).json(error("Manager access required"));
     }
 
-    const { error: dbErr } = await supabaseAdmin!
+    const { error: dbErr } = await qaSupabase
       .from(TABLE)
       .delete()
       .eq("id", req.params.id);
