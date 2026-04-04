@@ -22,22 +22,16 @@ import { lookupUser } from "../lib/twitter";
 const prisma = new PrismaClient();
 
 const PRESET_ACCOUNTS = [
-  { name: "Ansem", handle: "blknoiz06", category: "Crypto/VC" },
-  { name: "Balaji", handle: "balajis", category: "Macro" },
-  { name: "Cobie", handle: "cobie", category: "Crypto/VC" },
-  { name: "Dan Koe", handle: "thedankoe", category: "Philosophy" },
-  { name: "DegenSpartan", handle: "DegenSpartan", category: "DeFi" },
-  { name: "Elon Musk", handle: "elonmusk", category: "Macro" },
-  { name: "ThinkingUSD", handle: "ThinkingUSD", category: "Macro" },
-  { name: "Alex Good", handle: "goodalexander", category: "Macro" },
-  { name: "Haseeb Qureshi", handle: "hosseeb", category: "Crypto/VC" },
-  { name: "Hasu", handle: "hasufl", category: "DeFi" },
-  { name: "Hsaka", handle: "HsakaTrades", category: "Crypto/VC" },
-  { name: "Ignas", handle: "DefiIgnas", category: "DeFi" },
-  { name: "Mando", handle: "napgener", category: "Crypto/VC" },
-  { name: "Naval", handle: "naval", category: "Philosophy" },
-  { name: "thiccyth0t", handle: "thiccyth0t", category: "Crypto/VC" },
-  { name: "Jason Yanowitz", handle: "JasonYanowitz", category: "Crypto/VC" },
+  { name: "Haseeb Qureshi", handle: "hosseeb" },
+  { name: "Ignas", handle: "DefiIgnas" },
+  { name: "Alex Good", handle: "goodalexander" },
+  { name: "Dan Koe", handle: "thedankoe" },
+  { name: "thiccyth0t", handle: "thiccyth0t" },
+  { name: "ThinkingUSD", handle: "ThinkingUSD" },
+  { name: "Jason Yanowitz", handle: "JasonYanowitz" },
+  { name: "Balaji", handle: "balaboris" },
+  { name: "Naval", handle: "naval" },
+  { name: "Elon Musk", handle: "elonmusk" },
 ];
 
 async function main() {
@@ -67,7 +61,7 @@ async function main() {
     if (existing) {
       await prisma.referenceVoice.update({
         where: { id: existing.id },
-        data: { name: resolvedName, avatarUrl, category: account.category, isActive: true },
+        data: { name: resolvedName, avatarUrl, isActive: true },
       });
       updated++;
     } else {
@@ -76,7 +70,6 @@ async function main() {
           name: resolvedName,
           handle: account.handle,
           avatarUrl,
-          category: account.category,
           isGlobal: true,
           isActive: true,
           userId: null,
