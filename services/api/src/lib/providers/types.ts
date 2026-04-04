@@ -10,6 +10,8 @@ export type TaskType =
   | "research"
   | "trending"
   | "image_concept"
+  | "oracle_smart"
+  | "oracle_fast"
   | "general";
 
 export interface Message {
