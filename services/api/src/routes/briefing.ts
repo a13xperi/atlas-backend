@@ -75,8 +75,30 @@ briefingRouter.get("/history", async (req: AuthRequest, res) => {
 
 // ── Generate Briefing ───────────────────────────────────────────
 
+const BRIEF_TYPE_PROMPTS: Record<string, { titlePrefix: string; focus: string }> = {
+  morning: {
+    titlePrefix: "Morning Brief",
+    focus: "Generate a concise daily intelligence digest covering the latest developments.",
+  },
+  sector: {
+    titlePrefix: "Sector Deep Dive",
+    focus: "Generate a focused deep dive on one specific sector. Pick the most active sector from the topics list and go deep — on-chain metrics, protocol updates, governance votes, key figures.",
+  },
+  alpha: {
+    titlePrefix: "Alpha Scan",
+    focus: "Generate an alpha-focused scan. Find opportunities others are missing. Contrarian takes, undervalued narratives, emerging trends before they hit CT. Every bullet should be actionable.",
+  },
+  competitor: {
+    titlePrefix: "Competitor Watch",
+    focus: "Generate a competitor intelligence brief. What are the top CT accounts posting about? What narratives are gaining traction? What angles are underserved? Help the analyst find their unique take.",
+  },
+};
+
 briefingRouter.post("/generate", async (req: AuthRequest, res) => {
   try {
+    const briefType = (req.body?.briefType as string) || "morning";
+    const typeConfig = BRIEF_TYPE_PROMPTS[briefType] ?? BRIEF_TYPE_PROMPTS.morning;
+
     const preferences = await prisma.briefingPreference.findUnique({
       where: { userId: req.userId! },
     });
@@ -91,12 +113,12 @@ briefingRouter.post("/generate", async (req: AuthRequest, res) => {
       day: "numeric",
     });
 
-    const systemPrompt = `You are Atlas's morning briefing engine for crypto analysts.
-Generate a concise daily intelligence digest.
+    const systemPrompt = `You are Atlas's briefing engine for crypto analysts.
+${typeConfig.focus}
 
 Output JSON with this exact structure:
 {
-  "title": "Morning Brief — [Day, Month Date]",
+  "title": "${typeConfig.titlePrefix} — [Day, Month Date]",
   "summary": "2-3 sentence executive summary of what matters today",
   "sections": [
     {
@@ -116,7 +138,7 @@ Rules:
 - Contrarian takes welcome
 - No fluff, no disclaimers`;
 
-    const userMessage = `Generate today's briefing for ${today}.
+    const userMessage = `Generate a ${typeConfig.titlePrefix.toLowerCase()} for ${today}.
 Topics: ${topics.join(", ")}
 Sources: ${sources.join(", ")}
 
