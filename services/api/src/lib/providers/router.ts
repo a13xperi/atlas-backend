@@ -26,14 +26,14 @@ const providers: Record<ProviderId, Provider> = {
  * First available provider in the chain is used; others are fallbacks.
  *
  * Rationale:
- * - tweet_generation: OpenAI (proven path) → Anthropic → Gemini
+ * - tweet_generation: Anthropic Opus (highest quality) → OpenAI → Gemini
  * - research: Anthropic (strong reasoning) → OpenAI → Gemini (cheapest)
  * - trending: Grok (real-time X data) → OpenAI → Anthropic
  * - image_concept: Gemini (multimodal native) → OpenAI → Anthropic
  * - general: OpenAI → Anthropic → Gemini
  */
 const ROUTING_TABLE: Record<TaskType, ProviderId[]> = {
-  tweet_generation: ["openai", "anthropic", "gemini"],
+  tweet_generation: ["anthropic", "openai", "gemini"],
   research: ["anthropic", "openai", "gemini"],
   trending: ["grok", "openai", "anthropic"],
   image_concept: ["gemini", "openai", "anthropic"],
@@ -41,6 +41,17 @@ const ROUTING_TABLE: Record<TaskType, ProviderId[]> = {
   oracle_fast: ["anthropic", "openai", "gemini"],
   oracle_agent: ["anthropic"],
   general: ["openai", "anthropic", "gemini"],
+};
+
+/**
+ * Model overrides per task type — controls quality tiering.
+ * Oracle uses Haiku (fast, cheap chat). Draft generation uses Opus (highest quality).
+ */
+const MODEL_OVERRIDES: Partial<Record<TaskType, string>> = {
+  oracle_smart: "claude-haiku-4-5-20251001",
+  oracle_fast: "claude-haiku-4-5-20251001",
+  oracle_agent: "claude-haiku-4-5-20251001",
+  tweet_generation: "claude-opus-4-1-20250805",
 };
 
 function getAvailableChain(taskType: TaskType): Provider[] {
@@ -69,7 +80,12 @@ export async function routeCompletion(request: CompletionRequest): Promise<Compl
 
     for (const provider of chain) {
       try {
-        return await provider.complete(request);
+        // Apply model tier override for Anthropic when caller hasn't specified a model
+        const tieredRequest =
+          !request.model && provider.config.id === 'anthropic' && MODEL_OVERRIDES[taskType]
+            ? { ...request, model: MODEL_OVERRIDES[taskType] }
+            : request;
+        return await provider.complete(tieredRequest);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         logger.warn(
