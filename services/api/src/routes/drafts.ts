@@ -18,6 +18,7 @@ const generateSchema = z.object({
   sourceType: z.enum(["REPORT", "ARTICLE", "TWEET", "TRENDING_TOPIC", "VOICE_NOTE", "MANUAL"]),
   blendId: z.string().optional(),
   replyAngle: z.enum(["Direct", "Curious", "Concise"]).optional(),
+  angleInstruction: z.string().max(500).optional(),
 });
 
 const refineSchema = z.object({
@@ -60,6 +61,7 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
         sourceType: body.sourceType,
         blendId: body.blendId,
         replyAngle: body.replyAngle,
+        angleInstruction: body.angleInstruction,
       }),
       90_000,
       "generate-pipeline",
@@ -508,6 +510,47 @@ draftsRouter.delete("/:id", async (req: AuthRequest, res) => {
   }
 });
 
+// Auto-fetch metrics from X for a posted draft
+draftsRouter.post("/:id/fetch-metrics", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const draftId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const draft = await prisma.tweetDraft.findUnique({ where: { id: draftId } });
+    if (!draft || draft.userId !== req.userId!) {
+      return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+    }
+    if (!draft.xTweetId) {
+      return res.status(400).json(buildErrorResponse(req, "No X tweet ID — draft was not posted via Atlas"));
+    }
+
+    const { getTweetsWithMetrics } = await import("../lib/twitter");
+    const metrics = await getTweetsWithMetrics([draft.xTweetId]);
+    const m = metrics[0]?.public_metrics;
+    if (!m) {
+      return res.status(502).json(buildErrorResponse(req, "Could not fetch metrics from X"));
+    }
+
+    const updated = await prisma.tweetDraft.update({
+      where: { id: draftId },
+      data: {
+        actualEngagement: m.impression_count,
+        engagementMetrics: {
+          likes: m.like_count,
+          retweets: m.retweet_count,
+          replies: m.reply_count,
+          impressions: m.impression_count,
+          bookmarks: m.bookmark_count,
+        },
+        metricsLastFetchedAt: new Date(),
+      },
+    });
+
+    res.json(success({ draft: updated }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to fetch metrics from X");
+    res.status(502).json(buildErrorResponse(req, `Failed to fetch metrics: ${err.message}`));
+  }
+});
+
 // Record actual engagement metrics (post-publish feedback loop)
 draftsRouter.post("/:id/engagement", async (req: AuthRequest, res) => {
   try {
@@ -636,10 +679,10 @@ draftsRouter.post("/:id/post", authenticate, async (req: AuthRequest, res) => {
     // Post to X
     const tweet = await postTweet(accessToken, draft.content);
 
-    // Update draft status
+    // Update draft status + store tweet ID for metric auto-pull
     const updated = await prisma.tweetDraft.update({
       where: { id: draftId },
-      data: { status: "POSTED" },
+      data: { status: "POSTED", xTweetId: tweet.id },
     });
 
     // Log analytics

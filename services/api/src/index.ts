@@ -7,7 +7,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { config } from "./lib/config";
 import { authRouter } from "./routes/auth";
-import { voiceRouter } from "./routes/voice";
+import { voiceRouter, referenceAccountsRouter } from "./routes/voice";
 import { draftsRouter } from "./routes/drafts";
 import { analyticsRouter } from "./routes/analytics";
 import { alertsRouter } from "./routes/alerts";
@@ -20,6 +20,9 @@ import briefingRouter from "./routes/briefing";
 import { docsRouter } from "./routes/docs";
 import { xAuthRouter } from "./routes/x-auth";
 import { oracleRouter } from "./routes/oracle";
+import { campaignsRouter } from "./routes/campaigns";
+import { monitorsRouter } from "./routes/monitors";
+import { transcribeRouter } from "./routes/transcribe";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
@@ -103,6 +106,7 @@ app.get("/health", async (_req, res) => {
 app.use("/api/docs", docsRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/voice", referenceAccountsRouter);
 app.use("/api/voice", voiceRouter);
 app.use("/api/drafts", draftsRouter);
 app.use("/api/analytics", analyticsRouter);
@@ -114,6 +118,9 @@ app.use("/api/loop", loopRouter);
 app.use("/api/briefing", briefingRouter);
 app.use("/api/auth/x", xAuthRouter);
 app.use("/api/oracle", oracleRouter);
+app.use("/api/campaigns", campaignsRouter);
+app.use("/api/monitors", monitorsRouter);
+app.use("/api/transcribe", transcribeRouter);
 
 // 404 handler — catch unknown routes before error handlers
 app.use((req, res) => {
@@ -137,6 +144,7 @@ const server = createServer(app);
 server.timeout = 120_000; // 2 min — AI generation routes need more than Railway's 30s default
 server.keepAliveTimeout = 65_000;
 initSocket(server, allowedOrigins);
+initBot();
 
 server.listen(PORT, () => {
   logger.info({ port: PORT }, `Atlas API running on port ${PORT}`);

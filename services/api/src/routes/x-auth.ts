@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateOAuthUrl, exchangeCodeForTokens, lookupUser } from "../lib/twitter";
 import { logger } from "../lib/logger";
+import { error } from "../lib/response";
 import { buildErrorResponse } from "../middleware/requestId";
 import { success } from "../lib/response";
 
@@ -98,16 +99,21 @@ xAuthRouter.post("/callback", authenticate, async (req: AuthRequest, res) => {
  * Check if the user has linked their X account.
  */
 xAuthRouter.get("/status", authenticate, async (req: AuthRequest, res) => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.userId! },
-    select: { xHandle: true, xAccessToken: true, xTokenExpiresAt: true },
-  });
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      select: { xHandle: true, xAccessToken: true, xTokenExpiresAt: true },
+    });
 
-  res.json(success({
-    linked: !!user?.xAccessToken,
-    xHandle: user?.xHandle || null,
-    tokenExpired: user?.xTokenExpiresAt ? user.xTokenExpiresAt < new Date() : true,
-  }));
+    res.json(success({
+      linked: !!user?.xAccessToken,
+      xHandle: user?.xHandle || null,
+      tokenExpired: user?.xTokenExpiresAt ? user.xTokenExpiresAt < new Date() : true,
+    }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "X auth status check failed");
+    res.status(500).json(error("Failed to check X auth status"));
+  }
 });
 
 /**
@@ -115,12 +121,18 @@ xAuthRouter.get("/status", authenticate, async (req: AuthRequest, res) => {
  * Remove X account link.
  */
 xAuthRouter.post("/disconnect", authenticate, async (req: AuthRequest, res) => {
-  await prisma.user.update({
-    where: { id: req.userId! },
-    data: { xAccessToken: null, xRefreshToken: null, xTokenExpiresAt: null, xHandle: null },
-  });
-  res.json(success({ linked: false }));
+  try {
+    await prisma.user.update({
+      where: { id: req.userId! },
+      data: { xAccessToken: null, xRefreshToken: null, xTokenExpiresAt: null, xHandle: null },
+    });
+    res.json(success({ linked: false }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "X auth disconnect failed");
+    res.status(500).json(error("Failed to disconnect X account"));
+  }
 });
+
 
 // Cleanup expired pending OAuth entries periodically
 setInterval(() => {

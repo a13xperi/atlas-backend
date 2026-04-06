@@ -16,8 +16,8 @@ referenceAccountsRouter.get("/reference-accounts", async (_req, res) => {
   try {
     const accounts = await prisma.referenceVoice.findMany({
       where: { isGlobal: true, isActive: true },
-      select: { id: true, name: true, handle: true, avatarUrl: true },
-      orderBy: { name: "asc" },
+      select: { id: true, name: true, handle: true, avatarUrl: true, category: true },
+      orderBy: [{ category: "asc" }, { name: "asc" }],
     });
     res.json(success({ accounts }));
   } catch (err: any) {

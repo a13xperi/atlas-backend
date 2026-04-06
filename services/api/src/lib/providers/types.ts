@@ -12,11 +12,31 @@ export type TaskType =
   | "image_concept"
   | "oracle_smart"
   | "oracle_fast"
+  | "oracle_agent"
   | "general";
 
 export interface Message {
   role: "system" | "user" | "assistant";
   content: string;
+}
+
+/** Anthropic-compatible tool definition for function calling. */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema: {
+    type: "object";
+    properties?: Record<string, unknown>;
+    required?: string[];
+    [key: string]: unknown;
+  };
+}
+
+/** A tool call returned by the model. */
+export interface ToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
 }
 
 export interface CompletionRequest {
@@ -26,6 +46,12 @@ export interface CompletionRequest {
   jsonMode?: boolean;
   /** Which task this is for — used by the router to pick the best provider */
   taskType?: TaskType;
+  /** Override the provider's default model */
+  model?: string;
+  /** Tool definitions for function calling (Anthropic tool_use). */
+  tools?: ToolDefinition[];
+  /** How the model should choose tools. Default: auto when tools are provided. */
+  tool_choice?: { type: "auto" } | { type: "any" } | { type: "tool"; name: string };
 }
 
 export interface CompletionResponse {
@@ -37,6 +63,8 @@ export interface CompletionResponse {
     outputTokens: number;
   };
   latencyMs: number;
+  /** Tool calls returned by the model (when tools were provided). */
+  toolCalls?: ToolCall[];
 }
 
 export interface ProviderConfig {

@@ -22,6 +22,8 @@ model User {
   xAccessToken      String?
   xRefreshToken     String?
   xTokenExpiresAt   DateTime?
+  tourCompleted     Boolean  @default(false)
+  tourStep          Int      @default(0)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -36,6 +38,9 @@ model User {
   generatedImages   GeneratedImage[]
   alerts            Alert[]
   briefingPreference BriefingPreference?
+  briefings          Briefing[]
+  nlpMonitors       NlpMonitor[]
+  campaigns         Campaign[]
 
   @@map("users")
 }
@@ -100,6 +105,7 @@ model ReferenceVoice {
   name        String
   handle      String?
   avatarUrl   String?
+  category    String?
   isActive    Boolean  @default(true)
   isGlobal    Boolean  @default(false)
   createdAt   DateTime @default(now())
@@ -146,18 +152,24 @@ model TweetDraft {
   predictedEngagement Int?
   actualEngagement    Int?
   engagementMetrics   Json?
+  xTweetId      String?
+  metricsLastFetchedAt DateTime?
   sourceType    SourceType?
   sourceContent String?
   blendId       String?
   feedback      String?
   scheduledAt   DateTime?
+  campaignId    String?
+  sortOrder     Int?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
-  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  images GeneratedImage[]
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  images   GeneratedImage[]
+  campaign Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
 
   @@index([status, scheduledAt])
+  @@index([campaignId])
   @@map("tweet_drafts")
 }
 
@@ -302,6 +314,21 @@ model BriefingPreference {
   @@map("briefing_preferences")
 }
 
+model Briefing {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  summary   String
+  sections  Json
+  topics    String[]
+  sources   String[]
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("briefings")
+}
+
 model GeneratedImage {
   id          String   @id @default(cuid())
   userId      String
@@ -317,4 +344,46 @@ model GeneratedImage {
 
   @@index([userId, createdAt])
   @@map("generated_images")
+}
+
+model NlpMonitor {
+  id           String          @id @default(cuid())
+  userId       String
+  name         String
+  keywords     String[]
+  minRelevance Float           @default(0.5)
+  delivery     AlertDelivery[] @default([PORTAL])
+  isActive     Boolean         @default(true)
+  matchCount   Int             @default(0)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId, isActive])
+  @@map("nlp_monitors")
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  PAUSED
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  status      CampaignStatus @default(DRAFT)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  drafts TweetDraft[]
+
+  @@index([userId, status])
+  @@map("campaigns")
 }

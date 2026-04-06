@@ -12,6 +12,8 @@ const profileSchema = z.object({
   displayName: z.string().optional(),
   bio: z.string().optional(),
   avatarUrl: z.string().optional(),
+  tourCompleted: z.boolean().optional(),
+  tourStep: z.number().int().min(0).optional(),
 });
 
 const emptyActionSchema = z.object({}).passthrough();
@@ -42,6 +44,8 @@ usersRouter.patch("/profile", async (req: AuthRequest, res) => {
       data: {
         ...(body.displayName !== undefined && { displayName: body.displayName }),
         ...(body.avatarUrl !== undefined && { avatarUrl: body.avatarUrl }),
+        ...(body.tourCompleted !== undefined && { tourCompleted: body.tourCompleted }),
+        ...(body.tourStep !== undefined && { tourStep: body.tourStep }),
       },
     });
 

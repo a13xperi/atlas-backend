@@ -7,11 +7,14 @@ import {
   buildBlendPreview,
   buildDimensionReaction,
   buildFreeTextResponse,
+  buildOracleSystemPrompt,
 } from "../lib/oracle-prompt";
+import { ORACLE_TOOLS, CONFIRMATION_REQUIRED, SERVER_EXECUTABLE } from "../lib/oracle-tools";
 import { success } from "../lib/response";
 import { logger } from "../lib/logger";
 import { prisma } from "../lib/prisma";
 import { withTimeout } from "../lib/timeout";
+import type { ToolCall } from "../lib/providers/types";
 
 export const oracleRouter = Router();
 oracleRouter.use(authenticate);
@@ -202,3 +205,325 @@ function resolvePrompt(
   // No LLM needed — client handles scripted messages
   return null;
 }
+
+// ── General Chat ────────────────────────────────────────────────
+
+const chatSchema = z.object({
+  messages: z
+    .array(z.object({ role: z.enum(["user", "oracle"]), content: z.string().max(2000) }))
+    .min(1)
+    .max(20),
+  page: z.string().optional(),
+});
+
+oracleRouter.post("/chat", async (req: AuthRequest, res) => {
+  try {
+    const body = chatSchema.parse(req.body);
+
+    const pageHint = body.page ? `\nThe user is on the ${body.page} page.` : "";
+
+    let voiceHint = "";
+    try {
+      const profile = await prisma.voiceProfile.findUnique({ where: { userId: req.userId! } });
+      if (profile) {
+        voiceHint = `\nVoice: Humor ${profile.humor}/100, Formality ${profile.formality}/100, Brevity ${profile.brevity}/100, Contrarian ${profile.contrarianTone}/100.`;
+      }
+    } catch {}
+
+    const systemPrompt =
+      buildOracleSystemPrompt() +
+      `\n\nYou are in the floating chat widget inside Atlas.` +
+      pageHint + voiceHint +
+      `\n\nKeep responses under 50 words. Be helpful and personalized.`;
+
+    const llmMessages = [
+      { role: "system" as const, content: systemPrompt },
+      ...body.messages.map((m) => ({
+        role: (m.role === "oracle" ? "assistant" : "user") as "system" | "user" | "assistant",
+        content: m.content,
+      })),
+    ];
+
+    const response = await withTimeout(
+      routeCompletion({ taskType: "oracle_fast", maxTokens: 150, temperature: 0.7, messages: llmMessages }),
+      8_000,
+      "oracle-chat",
+    );
+
+    logger.info({ provider: response.provider, latencyMs: response.latencyMs, page: body.page }, "Oracle chat response");
+    res.json(success({ text: response.content.trim() }));
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
+      return;
+    }
+    logger.error({ error: err }, "Oracle chat error");
+    res.status(500).json({ ok: false, error: "Oracle is thinking... try again in a moment." });
+  }
+});
+
+// ── Agent Mode ─────────────────────────────────��───────────────
+
+const agentSchema = z.object({
+  messages: z
+    .array(z.object({ role: z.enum(["user", "oracle"]), content: z.string().max(4000) }))
+    .min(1)
+    .max(30),
+  page: z.string().optional(),
+  actionResults: z
+    .array(
+      z.object({
+        actionId: z.string(),
+        type: z.string(),
+        success: z.boolean(),
+        data: z.unknown().optional(),
+        error: z.string().optional(),
+      }),
+    )
+    .optional(),
+});
+
+interface OracleAgentAction {
+  id: string;
+  type: string;
+  input: Record<string, unknown>;
+  requiresConfirmation: boolean;
+  label: string;
+}
+
+function buildAgentSystemPrompt(pageHint: string, voiceHint: string): string {
+  return `${buildOracleSystemPrompt()}
+
+You are now in Agent mode inside the Atlas floating chat widget.
+You can execute actions on behalf of the user using the tools provided.
+${pageHint}${voiceHint}
+
+Rules:
+- Use tools when the user asks you to DO something, not just answer questions.
+- For read-only tools (analytics, voice profile, signals, drafts list), just use them.
+- For write actions (generating drafts, posting), explain what you'll do.
+- You can use multiple tools in one response if needed.
+- After tool use, summarize what happened in 1-2 sentences in your Oracle voice.
+- If you're unsure what the user wants, ask — don't guess.
+- Keep text responses under 60 words.
+- Never use bullet points. Speak in natural sentences.`;
+}
+
+function toolCallToAction(call: ToolCall): OracleAgentAction {
+  const input = call.input as Record<string, unknown>;
+  const needsConfirm = CONFIRMATION_REQUIRED.has(call.name);
+
+  // Generate a human-readable label
+  const labels: Record<string, (i: Record<string, unknown>) => string> = {
+    navigate: (i) => `Go to ${i.page}`,
+    generate_draft: (i) => `Draft tweet about "${String(i.sourceContent ?? "").slice(0, 40)}..."`,
+    list_drafts: () => "List your drafts",
+    get_voice_profile: () => "Check your voice profile",
+    get_analytics_summary: () => "Get your analytics",
+    get_trending: () => "Check trending topics",
+    get_signals: () => "Check your signals",
+    refine_draft: (i) => `Refine draft: "${String(i.instruction ?? "").slice(0, 40)}"`,
+    post_draft: () => "Post draft to X",
+    schedule_draft: (i) => `Schedule draft for ${String(i.scheduledAt ?? "").slice(0, 10)}`,
+    calibrate_voice: (i) => `Calibrate voice from @${i.handle}`,
+    update_voice_dimension: () => "Update voice dimensions",
+    subscribe_signal: (i) => `Subscribe to ${i.value} signals`,
+    conduct_research: (i) => `Research "${String(i.query ?? "").slice(0, 40)}"`,
+  };
+
+  const labelFn = labels[call.name];
+  const label = labelFn ? labelFn(input) : call.name;
+
+  return {
+    id: call.id,
+    type: call.name,
+    input,
+    requiresConfirmation: needsConfirm,
+    label,
+  };
+}
+
+/** Execute a server-safe tool and return the result data. */
+async function executeServerSide(
+  call: ToolCall,
+  userId: string,
+): Promise<{ success: boolean; data?: unknown; error?: string }> {
+  try {
+    switch (call.name) {
+      case "get_voice_profile": {
+        const profile = await prisma.voiceProfile.findUnique({ where: { userId } });
+        const blends = await prisma.savedBlend.findMany({
+          where: { userId },
+          include: { voices: true },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+        });
+        return { success: true, data: { profile, blends } };
+      }
+      case "get_analytics_summary": {
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000);
+        const [drafts, posts, events] = await Promise.all([
+          prisma.tweetDraft.count({ where: { userId, createdAt: { gte: thirtyDaysAgo } } }),
+          prisma.tweetDraft.count({ where: { userId, status: "POSTED", updatedAt: { gte: thirtyDaysAgo } } }),
+          prisma.analyticsEvent.count({ where: { userId, createdAt: { gte: thirtyDaysAgo } } }),
+        ]);
+        return { success: true, data: { draftsCreated: drafts, postsPublished: posts, totalEvents: events, period: "30d" } };
+      }
+      case "list_drafts": {
+        const status = (call.input as Record<string, unknown>).status as string | undefined;
+        const drafts = await prisma.tweetDraft.findMany({
+          where: { userId, ...(status && { status: status as never }) },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          select: { id: true, content: true, status: true, createdAt: true, sourceType: true },
+        });
+        return { success: true, data: { drafts, count: drafts.length } };
+      }
+      case "get_signals": {
+        const category = (call.input as Record<string, unknown>).category as string | undefined;
+        const alerts = await prisma.alert.findMany({
+          where: { userId, ...(category && { category: category as never }) },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          select: { id: true, title: true, category: true, createdAt: true },
+        });
+        return { success: true, data: { signals: alerts, count: alerts.length } };
+      }
+      case "get_trending": {
+        // Trending requires external API call — delegate to frontend
+        return { success: false, error: "Trending requires frontend execution" };
+      }
+      case "conduct_research": {
+        // Research requires LLM call — delegate to frontend for now
+        return { success: false, error: "Research requires frontend execution" };
+      }
+      case "refine_draft": {
+        const draftId = (call.input as Record<string, unknown>).draftId as string;
+        const instruction = (call.input as Record<string, unknown>).instruction as string;
+        if (!draftId || !instruction) return { success: false, error: "Missing draftId or instruction" };
+        const draft = await prisma.tweetDraft.findFirst({ where: { id: draftId, userId } });
+        if (!draft) return { success: false, error: "Draft not found" };
+        // Use the provider to refine
+        const refinedResponse = await routeCompletion({
+          taskType: "tweet_generation",
+          maxTokens: 500,
+          temperature: 0.7,
+          messages: [
+            { role: "system", content: "You are a tweet writer. Refine the following tweet based on the instruction. Return ONLY the refined tweet text, nothing else." },
+            { role: "user", content: `Original tweet: "${draft.content}"\nInstruction: ${instruction}` },
+          ],
+        });
+        const refined = await prisma.tweetDraft.update({
+          where: { id: draftId },
+          data: { content: refinedResponse.content.trim() },
+          select: { id: true, content: true, status: true },
+        });
+        return { success: true, data: refined };
+      }
+      default:
+        return { success: false, error: `Unknown server-side tool: ${call.name}` };
+    }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+oracleRouter.post("/agent", async (req: AuthRequest, res) => {
+  try {
+    const body = agentSchema.parse(req.body);
+
+    const pageHint = body.page ? `\nThe user is on the ${body.page} page.` : "";
+
+    let voiceHint = "";
+    try {
+      const profile = await prisma.voiceProfile.findUnique({ where: { userId: req.userId! } });
+      if (profile) {
+        voiceHint = `\nVoice: Humor ${profile.humor}/100, Formality ${profile.formality}/100, Brevity ${profile.brevity}/100, Contrarian ${profile.contrarianTone}/100.`;
+      }
+    } catch {}
+
+    const systemPrompt = buildAgentSystemPrompt(pageHint, voiceHint);
+
+    // Build LLM messages
+    const llmMessages = [
+      { role: "system" as const, content: systemPrompt },
+      ...body.messages.map((m) => ({
+        role: (m.role === "oracle" ? "assistant" : "user") as "system" | "user" | "assistant",
+        content: m.content,
+      })),
+    ];
+
+    // If we have action results from a previous round, inject them
+    if (body.actionResults?.length) {
+      const resultSummary = body.actionResults
+        .map((r) => `Tool ${r.type}: ${r.success ? "succeeded" : "failed"}${r.data ? ` — ${JSON.stringify(r.data).slice(0, 500)}` : ""}${r.error ? ` — error: ${r.error}` : ""}`)
+        .join("\n");
+      llmMessages.push({
+        role: "user" as const,
+        content: `[Action results]\n${resultSummary}`,
+      });
+    }
+
+    const response = await withTimeout(
+      routeCompletion({
+        taskType: "oracle_agent",
+        maxTokens: 1024,
+        temperature: 0.7,
+        messages: llmMessages,
+        tools: ORACLE_TOOLS,
+        tool_choice: { type: "auto" },
+      }),
+      15_000,
+      "oracle-agent",
+    );
+
+    // Convert tool calls to structured actions
+    const toolCalls = response.toolCalls ?? [];
+    const actions: OracleAgentAction[] = [];
+    const serverResults: Array<{ toolCallId: string; result: unknown }> = [];
+
+    for (const call of toolCalls) {
+      if (SERVER_EXECUTABLE.has(call.name)) {
+        // Execute read-only tools server-side
+        const result = await executeServerSide(call, req.userId!);
+        if (result.success) {
+          serverResults.push({ toolCallId: call.id, result: result.data });
+          // Still include in actions so frontend knows what happened
+          actions.push({ ...toolCallToAction(call), input: { ...call.input, _serverResult: result.data } });
+        } else {
+          // Couldn't execute server-side, pass to frontend
+          actions.push(toolCallToAction(call));
+        }
+      } else {
+        actions.push(toolCallToAction(call));
+      }
+    }
+
+    logger.info(
+      {
+        provider: response.provider,
+        model: response.model,
+        latencyMs: response.latencyMs,
+        page: body.page,
+        toolCalls: toolCalls.length,
+        serverExecuted: serverResults.length,
+      },
+      "Oracle agent response",
+    );
+
+    res.json(
+      success({
+        text: response.content.trim(),
+        actions,
+        serverResults,
+      }),
+    );
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
+      return;
+    }
+    logger.error({ error: err }, "Oracle agent error");
+    res.status(500).json({ ok: false, error: "Oracle is thinking... try again in a moment." });
+  }
+});

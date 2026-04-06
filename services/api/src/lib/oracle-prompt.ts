@@ -4,7 +4,7 @@
  * Same brain as the Telegram bot — one personality, two surfaces.
  */
 
-interface VoiceDimensions {
+export interface VoiceDimensions {
   humor: number;
   formality: number;
   brevity: number;
@@ -170,4 +170,31 @@ function detectUnusualCombos(d: VoiceDimensions): string | null {
   }
 
   return null;
+}
+
+/** Build a delivery response prompt for draft/refine in Telegram */
+export function buildDraftDeliveryResponse(input: {
+  mode: "draft" | "refine";
+  generatedTweet: string;
+  sourceContent: string;
+  confidence?: number;
+  dimensions?: VoiceDimensions;
+  instruction?: string;
+  handle?: string;
+}): { system: string; userMessage: string } {
+  const dimSummary = input.dimensions ? summarizeDimensions(input.dimensions) : "";
+  const unusualNote = input.dimensions ? detectUnusualCombos(input.dimensions) : null;
+
+  const system = `${buildOracleSystemPrompt()}
+You are delivering a ${input.mode === "refine" ? "refined" : "freshly crafted"} tweet to an analyst via Telegram.
+${dimSummary ? `Their voice: ${dimSummary}.` : ""}
+${unusualNote ? `Note: ${unusualNote}` : ""}
+Keep your delivery line to 1-2 sentences. Be the Oracle: brief, opinionated, zero fluff.`;
+
+  const parts = [`Tweet: "${input.generatedTweet}"`];
+  if (input.sourceContent) parts.push(`Source: ${input.sourceContent.slice(0, 200)}`);
+  if (input.confidence) parts.push(`Confidence: ${Math.round(input.confidence * 100)}%`);
+  if (input.instruction) parts.push(`Refinement instruction: ${input.instruction}`);
+
+  return { system, userMessage: parts.join("\n") };
 }

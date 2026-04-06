@@ -223,10 +223,11 @@ describe("telegram", () => {
     await getBotInstance().helpHandler?.(helpCtx);
 
     expect(startCtx.reply).toHaveBeenCalledWith(
-      "Welcome to Atlas by Delphi Digital.\n\n" +
-        "Link your Atlas account to receive alerts here.\n\n" +
-        "Use /link <your-handle> to connect.\n" +
-        "Use /help to see all commands."
+      "Hey. I'm The Oracle \u2014 the AI inside Atlas by Delphi Digital.\n\n" +
+        "I'm the same brain you met during onboarding. Drop me a report, " +
+        "a tweet link, or a voice note and I'll help you craft something sharp.\n\n" +
+        "First, link your account: /link <your-handle>\n" +
+        "Need help? /help"
     );
     expect(helpCtx.reply).toHaveBeenCalledWith(
       "Atlas Bot Commands:\n\n" +
@@ -278,7 +279,7 @@ describe("telegram", () => {
       data: { telegramChatId: "654" },
     });
     expect(successCtx.reply).toHaveBeenCalledWith(
-      "Linked to Atlas account @atlas. You'll now receive alerts here."
+      "Linked to Atlas account @atlas. I can see your voice profile now. Same brain as the portal. Send me content anytime."
     );
 
     prismaMock.user.findUnique.mockRejectedValueOnce(new Error("db down"));
@@ -438,7 +439,7 @@ describe("telegram", () => {
     expect(delivered).toBe(true);
     expect(getBotInstance().telegram.sendMessage).toHaveBeenCalledWith(
       "chat-123",
-      "Atlas Alert [BULLISH]\n\nMacro update\n\n" +
+      "\u{1f52e} Macro update [BULLISH]\n\n" +
         `${"B".repeat(300)}\n\n` +
         "Source: https://example.com/macro"
     );
@@ -512,7 +513,7 @@ describe("telegram", () => {
     });
     expect(getBotInstance().telegram.sendMessage).toHaveBeenCalledWith(
       "chat-999",
-      "Atlas Alert\n\nDelivered\n\nSource: https://example.com"
+      "\u{1f52e} Delivered\n\nSource: https://example.com"
     );
 
     prismaMock.user.findUnique.mockRejectedValueOnce(new Error("lookup failed"));
