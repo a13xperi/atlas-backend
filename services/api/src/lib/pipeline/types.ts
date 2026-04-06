@@ -28,6 +28,7 @@ export interface PipelineContext {
   blendId?: string;
   feedback?: string;
   replyAngle?: string;
+  angleInstruction?: string;
 
   // --- Accumulated by steps ---
   voiceProfile?: VoiceDimensions;
@@ -38,6 +39,10 @@ export interface PipelineContext {
   generatedContent?: string;
   confidence?: number;
   predictedEngagement?: number;
+  /** Set by fetchArticleStep when sourceContent is a URL */
+  articleUrl?: string;
+  /** Set by fetchArticleStep when URL fetch fails */
+  fetchArticleError?: string;
 
   // --- Observability ---
   stepResults: StepResult[];

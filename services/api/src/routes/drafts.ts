@@ -18,6 +18,7 @@ const generateSchema = z.object({
   sourceType: z.enum(["REPORT", "ARTICLE", "TWEET", "TRENDING_TOPIC", "VOICE_NOTE", "MANUAL"]),
   blendId: z.string().optional(),
   replyAngle: z.enum(["Direct", "Curious", "Concise"]).optional(),
+  angleInstruction: z.string().max(500).optional(),
 });
 
 const refineSchema = z.object({
@@ -60,6 +61,7 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
         sourceType: body.sourceType,
         blendId: body.blendId,
         replyAngle: body.replyAngle,
+        angleInstruction: body.angleInstruction,
       }),
       90_000,
       "generate-pipeline",

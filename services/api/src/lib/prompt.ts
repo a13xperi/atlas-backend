@@ -31,6 +31,7 @@ interface PromptParams {
   feedback?: string;
   researchContext?: string;
   replyAngle?: string;
+  angleInstruction?: string;
 }
 
 /** Prefix extreme dimension values with IMPORTANT for LLM emphasis */
@@ -221,6 +222,11 @@ ${voiceDescription}
       Concise: "Keep it short — one punchy line that lands. Maximum impact, minimum words.",
     };
     system += `\n\n## Reply Angle\nApproach this as a "${params.replyAngle}" reply. ${angleInstructions[params.replyAngle] || ""}`;
+  }
+
+  // Add voice variation instruction for compare voices
+  if (params.angleInstruction) {
+    system += `\n\n## Voice Variation\n${params.angleInstruction}`;
   }
 
   // Add feedback if this is a refinement

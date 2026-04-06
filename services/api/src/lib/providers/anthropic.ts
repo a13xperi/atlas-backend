@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config as envConfig } from "../config";
-import type { Provider, ProviderConfig, CompletionRequest, CompletionResponse } from "./types";
+import type { Provider, ProviderConfig, CompletionRequest, CompletionResponse, ToolCall } from "./types";
 
 let client: Anthropic | null = null;
 
@@ -40,10 +40,17 @@ export const anthropicProvider: Provider = {
       ...(request.temperature !== undefined && { temperature: request.temperature }),
       ...(systemMessage && { system: systemMessage.content }),
       messages: nonSystemMessages,
+      ...(request.tools && { tools: request.tools }),
+      ...(request.tool_choice && { tool_choice: request.tool_choice }),
     });
 
     const textBlock = response.content.find((b) => b.type === "text");
     const content = textBlock?.text ?? "";
+
+    // Parse tool_use blocks if present
+    const toolCalls: ToolCall[] = response.content
+      .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
+      .map((b) => ({ id: b.id, name: b.name, input: b.input as Record<string, unknown> }));
 
     return {
       content,
@@ -54,6 +61,7 @@ export const anthropicProvider: Provider = {
         outputTokens: response.usage.output_tokens,
       },
       latencyMs: Date.now() - start,
+      ...(toolCalls.length > 0 && { toolCalls }),
     };
   },
 };

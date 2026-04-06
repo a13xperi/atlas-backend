@@ -30,6 +30,7 @@ interface GenerateParams {
   feedback?: string;
   researchContext?: string;
   replyAngle?: string;
+  angleInstruction?: string;
 }
 
 interface GenerateResult {
