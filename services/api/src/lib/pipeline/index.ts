@@ -18,6 +18,7 @@
 import { runPipeline } from "./runner";
 import { fetchVoiceStep } from "./steps/fetchVoice";
 import { fetchBlendStep } from "./steps/fetchBlend";
+import { fetchArticleStep } from "./steps/fetchArticle";
 import { researchStep } from "./steps/research";
 import { generateStep } from "./steps/generate";
 import type { PipelineContext, PipelineResult } from "./types";
@@ -31,6 +32,7 @@ interface GenerationInput {
   blendId?: string;
   feedback?: string;
   replyAngle?: string;
+  angleInstruction?: string;
 }
 
 export async function runGenerationPipeline(input: GenerationInput): Promise<PipelineResult> {
@@ -40,7 +42,7 @@ export async function runGenerationPipeline(input: GenerationInput): Promise<Pip
   };
 
   return runPipeline(
-    [fetchVoiceStep, fetchBlendStep, researchStep, generateStep],
+    [fetchVoiceStep, fetchBlendStep, fetchArticleStep, researchStep, generateStep],
     ctx,
   );
 }

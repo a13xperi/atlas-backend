@@ -23,6 +23,7 @@ export const generateStep: PipelineStep = {
       feedback: ctx.feedback,
       researchContext: ctx.researchContext,
       replyAngle: ctx.replyAngle,
+      angleInstruction: ctx.angleInstruction,
     });
 
     ctx.generatedContent = result.content;
