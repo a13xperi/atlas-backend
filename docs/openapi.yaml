@@ -2564,7 +2564,7 @@ components:
         sourceContent:
           type: string
           minLength: 1
-          maxLength: 10000
+          maxLength: 100000
         sourceType:
           $ref: '#/components/schemas/SourceType'
         blendId:
@@ -2706,7 +2706,7 @@ components:
         query:
           type: string
           minLength: 1
-          maxLength: 10000
+          maxLength: 100000
 
     AuthTokenResponse:
       allOf:
