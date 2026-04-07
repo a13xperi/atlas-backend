@@ -34,8 +34,8 @@ Backend services for Atlas by Delphi Digital — a content-to-tweet crafting pla
 - Prisma ORM with PostgreSQL
 - Redis (ioredis) for caching
 - JWT authentication (jsonwebtoken + bcryptjs)
-- Telegraf for Telegram bot (planned)
-- Anthropic Claude SDK for tweet generation (planned)
+- Telegraf for Telegram bot
+- Anthropic Claude SDK for tweet generation
 - Zod for validation
 
 ## Repositories
@@ -73,16 +73,28 @@ services/
     lib/prisma.ts       # Prisma client singleton
     middleware/auth.ts   # JWT auth middleware
     routes/
+      alerts.ts         # GET/POST/PATCH/DELETE /subscriptions, GET /feed
+      analytics.ts      # GET /summary, /learning-log, /engagement, /team
       auth.ts           # POST /register, /login, GET /me
+      briefing.ts       # Briefing preferences and delivery
+      campaigns.ts      # Campaign CRUD and management
+      docs.ts           # API documentation
+      drafts.ts         # GET/POST/PATCH/DELETE /drafts
+      images.ts         # AI image generation
+      loop.ts           # Background loop/scheduler endpoints
+      monitors.ts       # NLP monitor CRUD
+      oracle.ts         # Oracle AI copilot endpoints
+      qa.ts             # QA test run management (Supabase-backed)
+      research.ts       # Research result endpoints
+      transcribe.ts     # Voice note transcription
+      trending.ts       # Trending topic feeds
       users.ts          # GET/PATCH /profile, GET /team
       voice.ts          # GET/PATCH /profile, GET/POST /references, GET/POST /blends
-      drafts.ts         # GET/POST/PATCH/DELETE /drafts
-      analytics.ts      # GET /summary, /learning-log, /engagement, /team
-      alerts.ts         # GET/POST/PATCH/DELETE /subscriptions, GET /feed
-  telegram-bot/src/     # (planned) Telegraf bot
-  voice-worker/src/     # (planned) Background processing
+      x-auth.ts         # X/Twitter OAuth flow
+  telegram-bot/src/     # Telegraf bot
+  voice-worker/src/     # Background processing
 prisma/
-  schema.prisma         # 10 models: Users, Sessions, VoiceProfiles, ReferenceVoices, SavedBlends, BlendVoices, TweetDrafts, AnalyticsEvents, AlertSubscriptions, Alerts, LearningLog
+  schema.prisma         # 17 models: User, Session, VoiceProfile, ReferenceVoice, SavedBlend, BlendVoice, TweetDraft, AnalyticsEvent, AlertSubscription, Alert, LearningLogEntry, ResearchResult, BriefingPreference, Briefing, GeneratedImage, NlpMonitor, Campaign
 ```
 
 ## API Routes (all live and tested)
@@ -91,7 +103,7 @@ prisma/
 - `GET /api/auth/me` — → { user + voiceProfile }
 - `GET/PATCH /api/users/profile` — user profile CRUD
 - `GET /api/users/team` — team list (MANAGER/ADMIN only)
-- `GET/PATCH /api/voice/profile` — voice dimensions (humor, formality, brevity, contrarianTone)
+- `GET/PATCH /api/voice/profile` — 12 voice dimensions (humor, formality, brevity, contrarianTone, directness, warmth, technicalDepth, confidence, evidenceOrientation, solutionOrientation, socialPosture, selfPromotionalIntensity)
 - `GET/POST /api/voice/references` — reference voice accounts
 - `GET/POST /api/voice/blends` — saved voice blends with percentages
 - `GET/POST/PATCH/DELETE /api/drafts` — tweet draft CRUD, auto-logs analytics events
@@ -113,7 +125,6 @@ Key enums: Role (ANALYST/MANAGER/ADMIN), VoiceMaturity (BEGINNER/INTERMEDIATE/AD
 - Manager-only routes check `user.role !== "ANALYST"`
 
 ## What's Next
-1. Wire remaining frontend pages to API
-2. Telegram bot service (services/telegram-bot/)
-3. AI integration — Claude API for tweet generation from content objects
-4. Background voice-worker for async processing
+1. Queue initiative (intelligent draft queue UI)
+2. Campaign engine (PDF→multi-tweet workflow)
+3. Oracle evolution (persistent AI copilot)

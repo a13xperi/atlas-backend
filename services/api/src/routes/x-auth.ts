@@ -6,12 +6,49 @@ import { logger } from "../lib/logger";
 import { error } from "../lib/response";
 import { buildErrorResponse } from "../middleware/requestId";
 import { success } from "../lib/response";
+import { getCached, setCache, delCache } from "../lib/redis";
 
 export const xAuthRouter = Router();
 
-// In-memory store for PKCE code verifiers (keyed by state)
-// In production, use Redis. This works for single-instance deploys.
-const pendingOAuth = new Map<string, { codeVerifier: string; userId: string; expiresAt: number }>();
+// ── PKCE state storage ─────────────────────────────────────────────
+// Primary: Redis (survives multi-instance deploys on Railway)
+// Fallback: in-memory Map (dev mode / Redis unavailable)
+
+interface PendingOAuthData {
+  codeVerifier: string;
+  userId: string;
+  expiresAt: number;
+}
+
+const PKCE_TTL_SECONDS = 600; // 10 minutes
+const PKCE_KEY_PREFIX = "oauth:pkce:";
+
+const localPending = new Map<string, PendingOAuthData>();
+
+async function setPendingOAuth(state: string, data: PendingOAuthData): Promise<void> {
+  // Always write to local Map as fallback
+  localPending.set(state, data);
+  // Attempt Redis — TTL handles expiry automatically
+  await setCache(`${PKCE_KEY_PREFIX}${state}`, JSON.stringify(data), PKCE_TTL_SECONDS);
+}
+
+async function getPendingOAuth(state: string): Promise<PendingOAuthData | null> {
+  // Try Redis first (works across instances)
+  const raw = await getCached(`${PKCE_KEY_PREFIX}${state}`);
+  if (raw) {
+    try {
+      await delCache(`${PKCE_KEY_PREFIX}${state}`);
+      localPending.delete(state);
+      return JSON.parse(raw) as PendingOAuthData;
+    } catch {
+      // Parse failed — fall through to local
+    }
+  }
+  // Fallback to local Map
+  const local = localPending.get(state) ?? null;
+  if (local) localPending.delete(state);
+  return local;
+}
 
 /**
  * POST /api/auth/x/authorize
@@ -23,10 +60,10 @@ xAuthRouter.post("/authorize", authenticate, async (req: AuthRequest, res) => {
     const { url, codeVerifier } = generateOAuthUrl(state);
 
     // Store code verifier for callback (expires in 10 minutes)
-    pendingOAuth.set(state, {
+    await setPendingOAuth(state, {
       codeVerifier,
       userId: req.userId!,
-      expiresAt: Date.now() + 10 * 60 * 1000,
+      expiresAt: Date.now() + PKCE_TTL_SECONDS * 1000,
     });
 
     res.json(success({ url, state }));
@@ -48,15 +85,13 @@ xAuthRouter.post("/callback", authenticate, async (req: AuthRequest, res) => {
     }
 
     // Retrieve and validate PKCE verifier
-    const pending = pendingOAuth.get(state);
+    const pending = await getPendingOAuth(state);
     if (!pending || pending.expiresAt < Date.now()) {
-      pendingOAuth.delete(state);
       return res.status(400).json(buildErrorResponse(req, "OAuth session expired. Please try again."));
     }
     if (pending.userId !== req.userId) {
       return res.status(403).json(buildErrorResponse(req, "OAuth state mismatch"));
     }
-    pendingOAuth.delete(state);
 
     // Exchange code for tokens
     const { accessToken, refreshToken, expiresIn } = await exchangeCodeForTokens(code, pending.codeVerifier);
@@ -134,10 +169,3 @@ xAuthRouter.post("/disconnect", authenticate, async (req: AuthRequest, res) => {
 });
 
 
-// Cleanup expired pending OAuth entries periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, val] of pendingOAuth.entries()) {
-    if (val.expiresAt < now) pendingOAuth.delete(key);
-  }
-}, 60_000);

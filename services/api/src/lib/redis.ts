@@ -35,3 +35,13 @@ export async function setCache(key: string, value: string, ttlSeconds: number): 
     // cache failure is non-fatal
   }
 }
+
+export async function delCache(key: string): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  try {
+    await r.del(key);
+  } catch {
+    // cache failure is non-fatal
+  }
+}
