@@ -11,7 +11,7 @@ export const researchRouter = Router();
 researchRouter.use(authenticate);
 
 const researchSchema = z.object({
-  query: z.string().min(1).max(10000),
+  query: z.string().min(1).max(100000),
 });
 
 // Standalone research endpoint

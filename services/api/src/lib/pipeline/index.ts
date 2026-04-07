@@ -19,6 +19,7 @@ import { runPipeline } from "./runner";
 import { fetchVoiceStep } from "./steps/fetchVoice";
 import { fetchBlendStep } from "./steps/fetchBlend";
 import { fetchArticleStep } from "./steps/fetchArticle";
+import { summarizeContentStep } from "./steps/summarizeContent";
 import { researchStep } from "./steps/research";
 import { generateStep } from "./steps/generate";
 import type { PipelineContext, PipelineResult } from "./types";
@@ -42,7 +43,7 @@ export async function runGenerationPipeline(input: GenerationInput): Promise<Pip
   };
 
   return runPipeline(
-    [fetchVoiceStep, fetchBlendStep, fetchArticleStep, researchStep, generateStep],
+    [fetchVoiceStep, fetchBlendStep, fetchArticleStep, summarizeContentStep, researchStep, generateStep],
     ctx,
   );
 }

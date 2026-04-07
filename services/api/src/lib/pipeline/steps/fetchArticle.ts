@@ -7,7 +7,7 @@ import type { PipelineStep } from "../types";
  */
 
 const URL_PATTERN = /^https?:\/\/.+/;
-const MAX_CHARS = 8000; // keep well under the 10k sourceContent limit
+const MAX_CHARS = 80_000; // allow full article extraction; summarizeContent step handles oversized content
 
 function stripHtml(html: string): string {
   return html

@@ -14,7 +14,7 @@ draftsRouter.use(authenticate);
 // --- AI Generation Endpoints (must be before /:id routes) ---
 
 const generateSchema = z.object({
-  sourceContent: z.string().min(1).max(10000),
+  sourceContent: z.string().min(1).max(100000),
   sourceType: z.enum(["REPORT", "ARTICLE", "TWEET", "TRENDING_TOPIC", "VOICE_NOTE", "MANUAL"]),
   blendId: z.string().optional(),
   replyAngle: z.enum(["Direct", "Curious", "Concise"]).optional(),
