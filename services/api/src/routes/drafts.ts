@@ -315,7 +315,13 @@ draftsRouter.get("/queue", async (req: AuthRequest, res) => {
       return { ...draft, _score: Math.round(score * 10) / 10 };
     });
 
-    scored.sort((a, b) => b._score - a._score);
+    // Manual sortOrder takes priority over algorithm score
+    scored.sort((a, b) => {
+      if (a.sortOrder != null && b.sortOrder != null) return a.sortOrder - b.sortOrder;
+      if (a.sortOrder != null) return -1;
+      if (b.sortOrder != null) return 1;
+      return b._score - a._score;
+    });
 
     // Suggest posting slots at crypto twitter peak hours (ET)
     const peakSlots = [9, 10, 13, 14, 19, 20];
@@ -717,6 +723,22 @@ draftsRouter.post("/:id/schedule", authenticate, async (req: AuthRequest, res) =
     });
     if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
 
+    // Check for scheduling conflicts (within 90 minutes)
+    const CONFLICT_WINDOW_MS = 90 * 60 * 1000;
+    const scheduleTime = new Date(body.scheduledAt).getTime();
+    const nearbyDrafts = await prisma.tweetDraft.findMany({
+      where: {
+        userId: req.userId!,
+        status: "SCHEDULED",
+        id: { not: draft.id },
+        scheduledAt: {
+          gte: new Date(scheduleTime - CONFLICT_WINDOW_MS),
+          lte: new Date(scheduleTime + CONFLICT_WINDOW_MS),
+        },
+      },
+      select: { id: true, content: true, scheduledAt: true },
+    });
+
     const updated = await prisma.tweetDraft.update({
       where: { id: draft.id },
       data: { status: "SCHEDULED", scheduledAt: scheduledDate },
@@ -727,7 +749,14 @@ draftsRouter.post("/:id/schedule", authenticate, async (req: AuthRequest, res) =
     });
 
     logger.info({ userId: req.userId, draftId: draft.id, scheduledAt: body.scheduledAt }, "Draft scheduled");
-    res.json(success({ draft: updated }));
+    res.json(success({
+      draft: updated,
+      conflicts: nearbyDrafts.map(d => ({
+        id: d.id,
+        content: d.content?.slice(0, 80),
+        scheduledAt: d.scheduledAt,
+      })),
+    }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
@@ -795,5 +824,60 @@ draftsRouter.post("/process-scheduled", authenticate, async (req: AuthRequest, r
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to process scheduled drafts");
     res.status(500).json(buildErrorResponse(req, "Failed to process scheduled drafts"));
+  }
+});
+
+// Reorder queue — persist manual positions
+const reorderSchema = z.object({
+  orderedIds: z.array(z.string()).min(1),
+});
+
+draftsRouter.patch("/queue/reorder", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { orderedIds } = reorderSchema.parse(req.body);
+
+    // Verify all drafts belong to this user
+    const drafts = await prisma.tweetDraft.findMany({
+      where: { id: { in: orderedIds }, userId: req.userId! },
+      select: { id: true },
+    });
+
+    const ownedIds = new Set(drafts.map((d) => d.id));
+    const validIds = orderedIds.filter((id) => ownedIds.has(id));
+
+    // Update sortOrder for each draft in a transaction
+    await prisma.$transaction(
+      validIds.map((id, index) =>
+        prisma.tweetDraft.update({
+          where: { id },
+          data: { sortOrder: index + 1 },
+        })
+      )
+    );
+
+    logger.info({ userId: req.userId, count: validIds.length }, "Queue reordered");
+    res.json(success({ reordered: validIds.length }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    logger.error({ err: err.message }, "Failed to reorder queue");
+    res.status(500).json(buildErrorResponse(req, "Failed to reorder queue"));
+  }
+});
+
+// Reset queue to algorithm order
+draftsRouter.post("/queue/reset-order", authenticate, async (req: AuthRequest, res) => {
+  try {
+    await prisma.tweetDraft.updateMany({
+      where: { userId: req.userId!, sortOrder: { not: null } },
+      data: { sortOrder: null },
+    });
+
+    logger.info({ userId: req.userId }, "Queue order reset to auto");
+    res.json(success({ reset: true }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to reset queue order");
+    res.status(500).json(buildErrorResponse(req, "Failed to reset queue order"));
   }
 });
