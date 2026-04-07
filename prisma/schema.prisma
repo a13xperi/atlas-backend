@@ -170,6 +170,7 @@ model TweetDraft {
 
   @@index([status, scheduledAt])
   @@index([campaignId])
+  @@index([userId, sortOrder])
   @@map("tweet_drafts")
 }
 
