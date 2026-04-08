@@ -8,6 +8,8 @@ import { logger } from "../lib/logger";
 import { withTimeout, TimeoutError } from "../lib/timeout";
 import { success } from "../lib/response";
 import { generateSchedule, applySchedule } from "../lib/scheduling";
+import { extractInsights } from "../lib/content-extraction";
+import { batchGenerateDrafts } from "../lib/batch-generate";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
@@ -256,6 +258,48 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
     }
     logger.error({ err: err.message }, "Refine failed");
     res.status(502).json(buildErrorResponse(req, "AI refinement failed"));
+  }
+});
+
+// Batch generate drafts from long-form content (PDF/article)
+const batchFromContentSchema = z.object({
+  content: z.string().min(50, "Content must be at least 50 characters"),
+  sourceType: z.enum(["REPORT", "ARTICLE"]),
+  sourceUrl: z.string().optional(),
+  createCampaign: z.boolean().optional(),
+  campaignTitle: z.string().optional(),
+});
+
+draftsRouter.post("/batch-from-content", async (req: AuthRequest, res) => {
+  try {
+    const body = batchFromContentSchema.parse(req.body);
+
+    // Step 1: Extract insights from content
+    const insights = await extractInsights(body.content);
+
+    // Step 2: Generate a draft for each insight
+    const result = await batchGenerateDrafts({
+      userId: req.userId!,
+      insights,
+      sourceContent: body.content,
+      sourceType: body.sourceType,
+      sourceUrl: body.sourceUrl,
+      createCampaign: body.createCampaign,
+      campaignTitle: body.campaignTitle,
+    });
+
+    res.json(success({ insights, drafts: result.drafts, campaign: result.campaign }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    if (err.message?.includes("too short") || err.message?.includes("minimum 50")) {
+      return res.status(400).json(buildErrorResponse(req, err.message));
+    }
+    logger.error({ err: err.message }, "Batch generation failed");
+    res.status(500).json(buildErrorResponse(req, "Batch generation failed"));
   }
 });
 
