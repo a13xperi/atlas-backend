@@ -7,6 +7,7 @@ import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
 import { withTimeout, TimeoutError } from "../lib/timeout";
 import { success } from "../lib/response";
+import { generateSchedule, applySchedule } from "../lib/scheduling";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
@@ -888,5 +889,62 @@ draftsRouter.post("/queue/reset-order", authenticate, async (req: AuthRequest, r
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to reset queue order");
     res.status(500).json(buildErrorResponse(req, "Failed to reset queue order"));
+  }
+});
+
+// --- Intelligent Schedule Endpoints ---
+
+// Get recommended schedule for user's queued drafts
+draftsRouter.get("/schedule", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { timezone = "America/New_York" } = req.query;
+
+    const schedule = await generateSchedule(
+      req.userId!,
+      undefined,
+      timezone as string,
+    );
+
+    res.json(success({
+      schedule: schedule.slots,
+      total: schedule.slots.length,
+      generatedAt: schedule.generatedAt,
+      timezone: schedule.timezone,
+    }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to generate schedule");
+    res.status(500).json(buildErrorResponse(req, "Failed to generate schedule"));
+  }
+});
+
+// Apply recommended schedule — sets scheduledAt on each draft
+const applyScheduleSchema = z.object({
+  slots: z.array(z.object({
+    draftId: z.string(),
+    recommendedTime: z.string().datetime(),
+  })).min(1),
+});
+
+draftsRouter.post("/schedule/apply", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const body = applyScheduleSchema.parse(req.body);
+
+    const result = await applySchedule(req.userId!, body.slots as Array<{draftId: string; recommendedTime: string}>);
+
+    logger.info(
+      { userId: req.userId, applied: result.applied, skipped: result.skipped },
+      "Schedule applied",
+    );
+
+    res.json(success({
+      applied: result.applied,
+      skipped: result.skipped,
+    }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    logger.error({ err: err.message }, "Failed to apply schedule");
+    res.status(500).json(buildErrorResponse(req, "Failed to apply schedule"));
   }
 });
