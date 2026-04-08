@@ -67,7 +67,7 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
       "generate-pipeline",
     );
 
-    // Save as draft
+    // Save as draft (include voice dimension snapshot for feedback loop)
     const draft = await prisma.tweetDraft.create({
       data: {
         userId: req.userId!,
@@ -77,6 +77,9 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
         blendId: body.blendId,
         confidence: result.ctx.confidence,
         predictedEngagement: result.ctx.predictedEngagement,
+        voiceDimensionsSnapshot: result.ctx.finalVoiceDimensions
+          ? (result.ctx.finalVoiceDimensions as any)
+          : undefined,
         version: 1,
       },
     });
@@ -149,6 +152,9 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
         blendId: existing.blendId,
         confidence: result.ctx.confidence,
         predictedEngagement: result.ctx.predictedEngagement,
+        voiceDimensionsSnapshot: result.ctx.finalVoiceDimensions
+          ? (result.ctx.finalVoiceDimensions as any)
+          : undefined,
         version: existing.version + 1,
         feedback: body.feedback || existing.feedback,
       },
@@ -221,6 +227,9 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
         blendId: existing.blendId,
         confidence: result.ctx.confidence,
         predictedEngagement: result.ctx.predictedEngagement,
+        voiceDimensionsSnapshot: result.ctx.finalVoiceDimensions
+          ? (result.ctx.finalVoiceDimensions as any)
+          : undefined,
         version: existing.version + 1,
         feedback: body.instruction,
       },

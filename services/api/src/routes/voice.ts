@@ -7,6 +7,7 @@ import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { fetchTweetsByHandle } from "../lib/twitter";
 import { calibrateFromTweets } from "../lib/calibrate";
+import { getVoiceInsights } from "../lib/voice-insights";
 import { logger } from "../lib/logger";
 
 // Public router — no auth required
@@ -420,5 +421,33 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
     }
     logger.error({ err: err.message }, "Calibration failed");
     res.status(502).json(error("Voice calibration failed"));
+  }
+});
+
+// Get voice dimension insights (engagement feedback loop)
+voiceRouter.get("/insights", async (req: AuthRequest, res) => {
+  try {
+    const insights = await getVoiceInsights(req.userId!);
+
+    if (!insights) {
+      return res.status(200).json(
+        success({
+          insights: null,
+          status: "insufficient_data",
+          message:
+            "Need at least 10 posted drafts with engagement data to generate insights. Keep posting!",
+        }),
+      );
+    }
+
+    res.json(
+      success({
+        insights,
+        status: "ready",
+      }),
+    );
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to compute voice insights");
+    res.status(500).json(error("Failed to compute voice insights"));
   }
 });

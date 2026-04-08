@@ -39,6 +39,8 @@ export interface PipelineContext {
   generatedContent?: string;
   confidence?: number;
   predictedEngagement?: number;
+  /** Final voice dimensions used for generation (base profile + blend overlay) */
+  finalVoiceDimensions?: VoiceDimensions;
   /** Set by fetchArticleStep when sourceContent is a URL */
   articleUrl?: string;
   /** Set by fetchArticleStep when URL fetch fails */
