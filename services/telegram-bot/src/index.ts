@@ -4,10 +4,10 @@ import { registerLinkCommand } from "./commands/link";
 import { registerStartCommand } from "./commands/start";
 
 async function main(): Promise<void> {
-  const token = process.env.BOT_TOKEN;
+  const token = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
 
   if (!token) {
-    throw new Error("BOT_TOKEN is required to start the Telegram bot");
+    throw new Error("TELEGRAM_BOT_TOKEN is required to start the Telegram bot");
   }
 
   const bot = new Telegraf(token);
