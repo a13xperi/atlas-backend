@@ -7,7 +7,11 @@ import { logger } from "../lib/logger";
 
 // QA data lives in the Sage/capacity Supabase project (separate from auth)
 const QA_SUPABASE_URL = process.env.QA_SUPABASE_URL || "https://zoirudjyqfqvpxsrxepr.supabase.co";
-const QA_SUPABASE_KEY = process.env.QA_SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpvaXJ1ZGp5cWZxdnB4c3J4ZXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgwMzE4MjgsImV4cCI6MjA4MzYwNzgyOH0.6W6OzRfJ-nmKN_23z1OBCS4Cr-ODRq9DJmF_yMwOCfo";
+const QA_SUPABASE_KEY = process.env.QA_SUPABASE_KEY ?? "";
+
+if (!QA_SUPABASE_KEY) {
+  logger.warn("QA_SUPABASE_KEY not set — QA routes will fail");
+}
 
 const qaSupabase = createClient(QA_SUPABASE_URL, QA_SUPABASE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
