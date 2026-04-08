@@ -7,6 +7,7 @@ import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
 import { withTimeout, TimeoutError } from "../lib/timeout";
 import { success } from "../lib/response";
+import { generateSchedule, applySchedule } from "../lib/scheduling";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
@@ -928,7 +929,7 @@ draftsRouter.post("/schedule/apply", authenticate, async (req: AuthRequest, res)
   try {
     const body = applyScheduleSchema.parse(req.body);
 
-    const result = await applySchedule(req.userId!, body.slots);
+    const result = await applySchedule(req.userId!, body.slots as Array<{draftId: string; recommendedTime: string}>);
 
     logger.info(
       { userId: req.userId, applied: result.applied, skipped: result.skipped },
