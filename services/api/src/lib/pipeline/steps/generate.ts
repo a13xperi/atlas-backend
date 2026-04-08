@@ -15,6 +15,9 @@ export const generateStep: PipelineStep = {
       ? { ...ctx.voiceProfile, ...ctx.blendedDimensions }
       : ctx.voiceProfile;
 
+    // Snapshot the final dimensions used for this generation (for feedback loop)
+    ctx.finalVoiceDimensions = { ...voiceProfile };
+
     const result = await generateTweet({
       voiceProfile,
       sourceContent: ctx.sourceContent,
