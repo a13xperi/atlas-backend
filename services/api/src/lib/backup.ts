@@ -301,7 +301,7 @@ async function createLogicalBackup({
   }
 
   let storageUrl = pathToFileURL(localPath).toString();
-  let provider = BackupProvider.LOCAL_LOGICAL;
+  let provider: BackupProvider = BackupProvider.LOCAL_LOGICAL;
 
   if (uploadToR2) {
     storageUrl = await uploadBackupToR2(localPath, `${backupName}.sql.gz`, backupStats.size);
