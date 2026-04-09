@@ -1,20 +1,16 @@
-/**
- * Batch Generate — Generate multiple tweet drafts from extracted insights.
- *
- * For each insight, runs the generation pipeline to produce a tweet draft
- * in the user's voice. Optionally groups all drafts into a Campaign.
- */
-
 import { prisma } from "./prisma";
 import { runGenerationPipeline } from "./pipeline";
 import { logger } from "./logger";
+import { normalizeGeneratedTweet } from "./draft-generation";
 import type { Insight } from "./content-extraction";
 
 export interface BatchDraft {
   id: string;
   content: string;
   angle: string;
+  score: number;
   qualityScore: number;
+  status: "DRAFT";
 }
 
 export interface BatchResult {
@@ -26,16 +22,49 @@ interface BatchOptions {
   userId: string;
   insights: Insight[];
   sourceContent: string;
-  sourceType: "REPORT" | "ARTICLE";
+  sourceType: string;
   sourceUrl?: string;
-  voiceProfileId?: string;
+  tone?: string;
   createCampaign?: boolean;
   campaignTitle?: string;
+  campaignDescription?: string;
 }
 
-/**
- * Generate a tweet draft for each insight, optionally grouped into a campaign.
- */
+function computeScore(confidence: number, predictedEngagement: number): number {
+  const engagementFactor = Math.min(Math.max(predictedEngagement, 0) / 2500, 1);
+  return Math.round((confidence * 0.7 + engagementFactor * 0.3) * 100) / 100;
+}
+
+function buildInsightSource(insight: Insight, sourceContent: string, index: number, total: number): string {
+  return [
+    `[Insight ${index + 1}/${total}: ${insight.title}]`,
+    `Angle: ${insight.angle}`,
+    `Summary: ${insight.summary}`,
+    `Key quote: "${insight.keyQuote}"`,
+    "",
+    "Full source context (background only; prioritize the insight above):",
+    sourceContent.slice(0, 10_000),
+  ].join("\n");
+}
+
+function buildAngleInstruction(insight: Insight, tone?: string): string {
+  const instructions = [
+    `Focus on the "${insight.angle}" angle.`,
+    `Center the tweet on this thesis: ${insight.summary}`,
+  ];
+
+  if (tone) {
+    instructions.push(`Match a ${tone} tone while staying faithful to the user's voice profile.`);
+  }
+
+  return instructions.join(" ");
+}
+
+function defaultCampaignTitle(sourceType: string): string {
+  const day = new Date().toISOString().split("T")[0];
+  return `${sourceType} Campaign - ${day}`;
+}
+
 export async function batchGenerateDrafts(options: BatchOptions): Promise<BatchResult> {
   const {
     userId,
@@ -43,81 +72,63 @@ export async function batchGenerateDrafts(options: BatchOptions): Promise<BatchR
     sourceContent,
     sourceType,
     sourceUrl,
+    tone,
     createCampaign,
     campaignTitle,
+    campaignDescription,
   } = options;
 
-  // Create campaign first if requested
   let campaign: { id: string; title: string } | undefined;
   if (createCampaign) {
-    const title = campaignTitle || `${sourceType} Campaign — ${new Date().toISOString().split("T")[0]}`;
     const created = await prisma.campaign.create({
       data: {
         userId,
-        name: title,
-        description: sourceUrl
-          ? `Generated from ${sourceUrl}`
-          : `Batch generated from ${sourceType.toLowerCase()} content`,
+        name: campaignTitle || defaultCampaignTitle(sourceType),
+        description:
+          campaignDescription ||
+          (sourceUrl
+            ? `Generated from ${sourceUrl}`
+            : `Batch generated from ${sourceType.toLowerCase()} content`),
       },
     });
     campaign = { id: created.id, title: created.name };
   }
 
-  // Generate a draft for each insight in sequence (to respect rate limits)
   const drafts: BatchDraft[] = [];
 
-  for (let i = 0; i < insights.length; i++) {
-    const insight = insights[i];
-
+  for (const [index, insight] of insights.entries()) {
     try {
-      // Build insight-specific source content with angle instruction
-      const insightSource = [
-        `[Insight ${i + 1}/${insights.length}: ${insight.title}]`,
-        `Angle: ${insight.angle}`,
-        `Summary: ${insight.summary}`,
-        `Key quote: "${insight.keyQuote}"`,
-        "",
-        "Full source context (use for background, but tweet should focus on the insight above):",
-        sourceContent.slice(0, 10_000),
-      ].join("\n");
-
       const result = await runGenerationPipeline({
         userId,
-        sourceContent: insightSource,
+        sourceContent: buildInsightSource(insight, sourceContent, index, insights.length),
         sourceType,
-        angleInstruction: `Focus on the "${insight.angle}" angle. The tweet should center on: ${insight.summary}`,
+        angleInstruction: buildAngleInstruction(insight, tone),
       });
 
-      const generatedContent = result.ctx.generatedContent;
-      if (!generatedContent) {
-        logger.warn({ insight: insight.title, index: i }, "Pipeline returned no content for insight");
+      if (!result.ctx.generatedContent) {
+        logger.warn({ insight: insight.title, index }, "Pipeline returned no content for insight");
         continue;
       }
 
-      // Compute a quality score from confidence and engagement
+      const normalizedContent = normalizeGeneratedTweet(result.ctx.generatedContent);
       const confidence = result.ctx.confidence ?? 0.5;
-      const engagement = result.ctx.predictedEngagement ?? 1000;
-      const qualityScore = Math.round((confidence * 50 + Math.min(engagement / 200, 50)) * 10) / 10;
+      const predictedEngagement = result.ctx.predictedEngagement ?? 1000;
+      const score = computeScore(confidence, predictedEngagement);
 
-      // Save draft to DB
       const draft = await prisma.tweetDraft.create({
         data: {
           userId,
-          content: generatedContent,
-          sourceType,
-          sourceContent: insightSource.slice(0, 50_000),
+          content: normalizedContent,
+          sourceType: sourceType as any,
+          sourceContent: buildInsightSource(insight, sourceContent, index, insights.length).slice(0, 50_000),
           confidence,
-          predictedEngagement: engagement,
-          voiceDimensionsSnapshot: result.ctx.finalVoiceDimensions
-            ? (result.ctx.finalVoiceDimensions as any)
-            : undefined,
+          predictedEngagement,
           campaignId: campaign?.id,
-          sortOrder: i + 1,
+          sortOrder: campaign ? index + 1 : null,
           version: 1,
         },
       });
 
-      // Log analytics event
       await prisma.analyticsEvent.create({
         data: {
           userId,
@@ -135,18 +146,24 @@ export async function batchGenerateDrafts(options: BatchOptions): Promise<BatchR
         id: draft.id,
         content: draft.content,
         angle: insight.angle,
-        qualityScore,
+        score,
+        qualityScore: Math.round(score * 1000) / 10,
+        status: "DRAFT",
       });
     } catch (err: any) {
       logger.error(
-        { insight: insight.title, index: i, err: err.message },
+        { insight: insight.title, index, err: err.message },
         "Failed to generate draft for insight",
       );
-      // Continue with remaining insights — partial success is better than full failure
     }
   }
 
   if (drafts.length === 0) {
+    if (campaign) {
+      await prisma.campaign.delete({ where: { id: campaign.id } }).catch((err: any) => {
+        logger.warn({ campaignId: campaign?.id, err: err.message }, "Failed to clean up empty campaign");
+      });
+    }
     throw new Error("Failed to generate any drafts from the provided insights");
   }
 

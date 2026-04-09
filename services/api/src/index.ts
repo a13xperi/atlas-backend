@@ -11,6 +11,7 @@ import { voiceRouter, referenceAccountsRouter } from "./routes/voice";
 import { draftsRouter } from "./routes/drafts";
 import { analyticsRouter } from "./routes/analytics";
 import { alertsRouter } from "./routes/alerts";
+import { arenaRouter } from "./routes/arena";
 import { usersRouter } from "./routes/users";
 import { researchRouter } from "./routes/research";
 import { trendingRouter } from "./routes/trending";
@@ -22,6 +23,8 @@ import { xAuthRouter, twitterLoginRouter } from "./routes/x-auth";
 import { oracleRouter } from "./routes/oracle";
 import { campaignsRouter } from "./routes/campaigns";
 import { monitorsRouter } from "./routes/monitors";
+import { paperclipRouter } from "./routes/paperclip";
+import { telegramRouter } from "./routes/telegram";
 import { transcribeRouter } from "./routes/transcribe";
 import { qaRouter } from "./routes/qa";
 import { adminRouter } from "./routes/admin";
@@ -29,7 +32,7 @@ import { adminFlagsRouter } from "./routes/admin-flags";
 import { adminBackupRouter } from "./routes/admin-backup";
 import { twitterRouter } from "./routes/twitter";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
-import { rateLimit } from "./middleware/rateLimit";
+import { rateLimitByUser } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
 import { logger } from "./lib/logger";
 import { formatErrorResponse } from "./lib/errors";
@@ -66,7 +69,11 @@ app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 app.use(requestIdMiddleware);
 app.use(requestLogger);
-app.use(rateLimit(100, 60 * 1000)); // Global: 100 req/min per IP
+
+const generalApiLimiter = rateLimitByUser(
+  config.RATE_LIMIT_GENERAL_MAX_REQUESTS,
+  config.RATE_LIMIT_GENERAL_WINDOW_MS,
+);
 
 // Health check
 app.get("/health", async (_req, res) => {
@@ -104,26 +111,31 @@ app.get("/health", async (_req, res) => {
 
 // Routes
 app.use("/api/docs", docsRouter);
+app.use("/api/auth/x", xAuthRouter);
 app.use("/api/auth", authRouter);
+app.use("/api", generalApiLimiter);
 app.use("/api/users", usersRouter);
 app.use("/api/voice", referenceAccountsRouter);
 app.use("/api/voice", voiceRouter);
 app.use("/api/drafts", draftsRouter);
 app.use("/api/analytics", analyticsRouter);
 app.use("/api/alerts", alertsRouter);
+app.use("/api/arena", arenaRouter);
 app.use("/api/research", researchRouter);
 app.use("/api/trending", trendingRouter);
 app.use("/api/images", imagesRouter);
 app.use("/api/loop", loopRouter);
 app.use("/api/briefing", briefingRouter);
-app.use("/api/auth/x", xAuthRouter);
 app.use("/api/auth/twitter", twitterLoginRouter);
 app.use("/api/oracle", oracleRouter);
 app.use("/api/campaigns", campaignsRouter);
 app.use("/api/monitors", monitorsRouter);
+app.use("/api/telegram", telegramRouter);
+app.use("/api/paperclip", paperclipRouter);
 app.use("/api/transcribe", transcribeRouter);
 app.use("/api/qa", qaRouter);
 app.use("/api/admin/feature-flags", adminFlagsRouter);
+app.use("/api/admin/backup", adminBackupRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/admin/backup", adminBackupRouter);
 app.use("/api/twitter", twitterRouter);

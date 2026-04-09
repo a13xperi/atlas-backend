@@ -51,11 +51,23 @@ jest.mock("../../lib/pipeline", () => ({
   runGenerationPipeline: jest.fn(),
 }));
 
+jest.mock("../../lib/content-extraction", () => ({
+  extractInsights: jest.fn(),
+}));
+
+jest.mock("../../lib/batch-generate", () => ({
+  batchGenerateDrafts: jest.fn(),
+}));
+
 import { prisma } from "../../lib/prisma";
 import { runGenerationPipeline } from "../../lib/pipeline";
+import { extractInsights } from "../../lib/content-extraction";
+import { batchGenerateDrafts } from "../../lib/batch-generate";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 const mockRunPipeline = runGenerationPipeline as jest.Mock;
+const mockExtractInsights = extractInsights as jest.Mock;
+const mockBatchGenerateDrafts = batchGenerateDrafts as jest.Mock;
 
 // --- App setup ---
 
@@ -100,6 +112,11 @@ beforeAll(() => {
 
 afterAll(() => {
   delete process.env.JWT_SECRET;
+});
+
+beforeEach(() => {
+  mockExtractInsights.mockReset();
+  mockBatchGenerateDrafts.mockReset();
 });
 
 describe("GET /api/drafts", () => {
@@ -255,6 +272,93 @@ describe("POST /api/drafts", () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Failed to create draft");
     expect(res.body.requestId).toBeDefined();
+  });
+});
+
+describe("POST /api/drafts/batch-from-content", () => {
+  it("returns 400 when content is too short", async () => {
+    const res = await request(app)
+      .post("/api/drafts/batch-from-content")
+      .set("Authorization", AUTH)
+      .send({ content: "short", sourceType: "REPORT" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Invalid request");
+  });
+
+  it("extracts insights and returns generated drafts", async () => {
+    mockExtractInsights.mockResolvedValueOnce([
+      {
+        title: "Dominance is back",
+        summary: "BTC is reclaiming attention.",
+        keyQuote: "BTC dominance hit 58%.",
+        angle: "data highlight",
+      },
+    ]);
+    mockBatchGenerateDrafts.mockResolvedValueOnce({
+      drafts: [
+        {
+          id: "draft-1",
+          content: "BTC dominance is doing the talking again.",
+          angle: "data highlight",
+          score: 0.87,
+          qualityScore: 87,
+          status: "DRAFT",
+        },
+      ],
+      campaign: { id: "campaign-1", title: "Campaign" },
+    });
+
+    const res = await request(app)
+      .post("/api/drafts/batch-from-content")
+      .set("Authorization", AUTH)
+      .send({
+        content: "Long-form report content about market structure and dominance. ".repeat(5),
+        sourceType: "REPORT",
+        createCampaign: true,
+        campaignTitle: "Campaign",
+        tone: "bold",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.insights).toHaveLength(1);
+    expect(res.body.data.drafts).toHaveLength(1);
+    expect(res.body.data.campaign.id).toBe("campaign-1");
+    expect(mockExtractInsights).toHaveBeenCalledWith(expect.any(String), { limit: undefined });
+    expect(mockBatchGenerateDrafts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-123",
+        sourceType: "REPORT",
+        tone: "bold",
+        createCampaign: true,
+        campaignTitle: "Campaign",
+      }),
+    );
+  });
+
+  it("returns 400 when voice profile is missing", async () => {
+    mockExtractInsights.mockResolvedValueOnce([
+      {
+        title: "Dominance is back",
+        summary: "BTC is reclaiming attention.",
+        keyQuote: "BTC dominance hit 58%.",
+        angle: "data highlight",
+      },
+    ]);
+    mockBatchGenerateDrafts.mockRejectedValueOnce(
+      new Error("Voice profile not found. Complete onboarding first."),
+    );
+
+    const res = await request(app)
+      .post("/api/drafts/batch-from-content")
+      .set("Authorization", AUTH)
+      .send({
+        content: "Long-form report content about market structure and dominance. ".repeat(5),
+        sourceType: "REPORT",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Voice profile not found. Complete onboarding first.");
   });
 });
 

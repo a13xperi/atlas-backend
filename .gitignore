@@ -6,3 +6,6 @@ dist/
 .vercel
 .railway
 coverage/
+
+# Agent worktrees — ephemeral per-session scratch space, never committed
+.claude/worktrees/
