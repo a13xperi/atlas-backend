@@ -148,7 +148,9 @@ app.use((err: Error, req: express.Request, res: express.Response, _next: express
 });
 
 const server = createServer(app);
-server.timeout = 120_000; // 2 min — AI generation routes need more than Railway's 30s default
+// Keep the Node timeout above Railway's RAILWAY_SERVICE_TIMEOUT=90000 so Anthropic-backed
+// routes fail at the platform boundary first instead of being cut off by the app server.
+server.timeout = 120_000;
 server.keepAliveTimeout = 65_000;
 initSocket(server, allowedOrigins);
 initBot();

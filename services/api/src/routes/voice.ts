@@ -373,7 +373,8 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
       return res.status(400).json(error(`No tweets found for @${body.handle}`));
     }
 
-    // Run calibration via Claude
+    // Claude calibration can take tens of seconds on larger tweet sets, so Railway deploys
+    // need RAILWAY_SERVICE_TIMEOUT=90000 for this endpoint.
     const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
 
     // Update voice profile with all 12 calibrated dimensions
