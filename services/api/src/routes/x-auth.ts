@@ -1,4 +1,5 @@
 import { Router } from "express";
+import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateOAuthUrl, exchangeCodeForTokens, lookupUser } from "../lib/twitter";
@@ -6,8 +7,15 @@ import { logger } from "../lib/logger";
 import { error } from "../lib/response";
 import { buildErrorResponse } from "../middleware/requestId";
 import { success } from "../lib/response";
+import { config } from "../lib/config";
+import { rateLimit } from "../middleware/rateLimit";
 
 export const xAuthRouter = Router();
+const authRateLimiter = rateLimit(
+  config.RATE_LIMIT_AUTH_MAX_REQUESTS,
+  config.RATE_LIMIT_AUTH_WINDOW_MS,
+);
+xAuthRouter.use(authRateLimiter);
 
 // In-memory store for PKCE code verifiers (keyed by state)
 // In production, use Redis. This works for single-instance deploys.
@@ -33,6 +41,112 @@ xAuthRouter.post("/authorize", authenticate, async (req: AuthRequest, res) => {
   } catch (err: any) {
     logger.error({ err: err.message }, "X OAuth authorize failed");
     res.status(500).json(buildErrorResponse(req, "Failed to generate X authorization URL"));
+  }
+});
+
+/**
+ * GET /api/auth/x/login
+ * Unauthenticated entry point for "Sign in with X".
+ * Generates an OAuth URL with a login-flow sentinel and redirects to X.
+ */
+xAuthRouter.get("/login", async (req, res) => {
+  try {
+    const state = `atlas_login_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const { url, codeVerifier } = generateOAuthUrl(state);
+
+    pendingOAuth.set(state, {
+      codeVerifier,
+      userId: "login",
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    res.redirect(url);
+  } catch (err: any) {
+    logger.error({ err: err.message }, "X OAuth login redirect failed");
+    const frontendUrl = config.FRONTEND_URL.split(",")[0].trim();
+    res.redirect(`${frontendUrl}/auth/callback?error=auth_failed`);
+  }
+});
+
+/**
+ * GET /api/auth/x/callback
+ * X redirects the user back here after consent (login flow).
+ * Exchanges the code, finds-or-creates a user, signs a JWT, and
+ * redirects to the frontend /auth/callback with the token.
+ */
+xAuthRouter.get("/callback", async (req, res) => {
+  const frontendUrl = config.FRONTEND_URL.split(",")[0].trim();
+  try {
+    const { code, state } = req.query;
+
+    if (!code || !state) {
+      return res.redirect(`${frontendUrl}/auth/callback?error=missing_params`);
+    }
+
+    const pending = pendingOAuth.get(state as string);
+    if (!pending || pending.expiresAt < Date.now()) {
+      pendingOAuth.delete(state as string);
+      return res.redirect(`${frontendUrl}/auth/callback?error=session_expired`);
+    }
+
+    // Reject link-flow states — those go through POST /callback after auth
+    if (pending.userId !== "login") {
+      return res.redirect(`${frontendUrl}/auth/callback?error=invalid_state`);
+    }
+
+    pendingOAuth.delete(state as string);
+
+    const { accessToken, refreshToken, expiresIn } = await exchangeCodeForTokens(
+      code as string,
+      pending.codeVerifier,
+    );
+
+    const meRes = await fetch("https://api.twitter.com/2/users/me?user.fields=profile_image_url,name", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const meData = (await meRes.json()) as {
+      data: { username: string; name: string; profile_image_url?: string };
+    };
+    const xHandle = meData.data.username;
+    const displayName = meData.data.name;
+    const avatarUrl = meData.data.profile_image_url?.replace("_normal", "_400x400") || null;
+
+    let user = await prisma.user.findFirst({ where: { xHandle } });
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          handle: xHandle,
+          xHandle,
+          displayName,
+          avatarUrl,
+          xAccessToken: accessToken,
+          xRefreshToken: refreshToken,
+          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          voiceProfile: { create: {} },
+        },
+      });
+    } else {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          xAccessToken: accessToken,
+          xRefreshToken: refreshToken,
+          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          ...(displayName && !user.displayName && { displayName }),
+          ...(avatarUrl && !user.avatarUrl && { avatarUrl }),
+        },
+      });
+    }
+
+    const token = jwt.sign({ userId: user.id }, config.JWT_SECRET, { expiresIn: "7d" });
+
+    logger.info({ userId: user.id, xHandle }, "X login successful");
+    return res.redirect(
+      `${frontendUrl}/auth/callback?token=${encodeURIComponent(token)}&provider=twitter`,
+    );
+  } catch (err: any) {
+    logger.error({ err: err.message }, "X OAuth login callback failed");
+    return res.redirect(`${frontendUrl}/auth/callback?error=auth_failed`);
   }
 });
 
