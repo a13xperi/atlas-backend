@@ -4,6 +4,8 @@ import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { emitToUser } from "../lib/socket";
+import { dispatchAlert } from "../lib/alertDelivery";
+import { logger } from "../lib/logger";
 
 export const usersRouter = Router();
 usersRouter.use(authenticate);
@@ -206,15 +208,38 @@ usersRouter.post("/send-nudge", async (req: AuthRequest, res) => {
       })),
     });
 
-    // Emit real-time WebSocket alerts to each inactive analyst
+    // Emit real-time WebSocket alerts + Telegram fan-out to each inactive analyst
     for (const analyst of inactive) {
-      emitToUser(analyst.id, "new-alert", {
+      const payload = {
         type: "NUDGE",
         title: "Time to get back in the game!",
         context: `Your manager ${manager.displayName ?? manager.handle} noticed you haven't been active. Jump in and craft some tweets!`,
         category: "NOTIFICATION",
         userId: analyst.id,
-      });
+      };
+      emitToUser(analyst.id, "new-alert", payload);
+
+      // Look up the matching alert row to dispatch (createMany doesn't return IDs)
+      prisma.alert
+        .findFirst({
+          where: { userId: analyst.id, type: "NUDGE", title: payload.title },
+          orderBy: { createdAt: "desc" },
+        })
+        .then((row) => {
+          if (!row) return;
+          return dispatchAlert({
+            id: row.id,
+            title: row.title,
+            type: row.type,
+            context: row.context,
+            sourceUrl: row.sourceUrl,
+            sentiment: row.sentiment,
+            userId: row.userId,
+          });
+        })
+        .catch((err) =>
+          logger.error({ err: err.message, userId: analyst.id }, "[users] nudge dispatch failed")
+        );
     }
 
     res.json(

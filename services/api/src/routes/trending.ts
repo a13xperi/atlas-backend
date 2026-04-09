@@ -7,6 +7,7 @@ import { searchTrending } from "../lib/grok";
 import { logger } from "../lib/logger";
 import { matchMonitorKeywords } from "./monitors";
 import { emitToUser } from "../lib/socket";
+import { dispatchAlert } from "../lib/alertDelivery";
 
 export const trendingRouter = Router();
 trendingRouter.use(authenticate);
@@ -50,6 +51,21 @@ trendingRouter.post("/scan", async (req: AuthRequest, res) => {
       )
     );
 
+    // Fan out to delivery channels (Telegram, etc.) — fire and forget
+    for (const a of alerts) {
+      dispatchAlert({
+        id: a.id,
+        title: a.title,
+        type: a.type,
+        context: a.context,
+        sourceUrl: a.sourceUrl,
+        sentiment: a.sentiment,
+        userId: a.userId,
+      }).catch((err) =>
+        logger.error({ err: err.message, alertId: a.id }, "[trending] dispatchAlert failed")
+      );
+    }
+
     // Check alerts against user's NLP monitors (non-blocking)
     let monitorAlerts: typeof alerts = [];
     try {
@@ -76,6 +92,17 @@ trendingRouter.post("/scan", async (req: AuthRequest, res) => {
             });
             monitorAlerts.push(alert);
             emitToUser(req.userId!, "alert:new", alert);
+            dispatchAlert({
+              id: alert.id,
+              title: alert.title,
+              type: alert.type,
+              context: alert.context,
+              sourceUrl: alert.sourceUrl,
+              sentiment: alert.sentiment,
+              userId: alert.userId,
+            }).catch((err) =>
+              logger.error({ err: err.message, alertId: alert.id }, "[trending] dispatchAlert (monitor) failed")
+            );
           }
         }
         if (monitorAlerts.length > 0) {
