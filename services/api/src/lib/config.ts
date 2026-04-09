@@ -1,9 +1,11 @@
 import { z } from "zod";
 
 const envSchema = z.object({
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  NODE_ENV: z.enum(["development", "production", "staging", "test"]).default("development"),
   PORT: z.coerce.number().default(8000),
-  FRONTEND_URL: z.string().default("http://localhost:3000"),
+  FRONTEND_URL: z
+    .string()
+    .default("https://delphi-atlas.vercel.app,https://atlas-staging.vercel.app,http://localhost:3000"),
 
   // Auth
   JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),

@@ -248,6 +248,28 @@ xAuthRouter.post("/disconnect", authenticate, async (req: AuthRequest, res) => {
   }
 });
 
+/**
+ * GET /api/auth/x/login
+ * Alias for /api/auth/twitter — lets the frontend use either path.
+ */
+xAuthRouter.get("/login", async (_req, res) => {
+  try {
+    const state = `login_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const { url, codeVerifier } = generateOAuthUrl(state);
+    await setPendingOAuth(state, {
+      codeVerifier,
+      userId: "",
+      flow: "login",
+      expiresAt: Date.now() + PKCE_TTL_SECONDS * 1000,
+    });
+    res.redirect(url);
+  } catch (err: any) {
+    logger.error({ err: err.message }, "X login redirect failed");
+    const frontendUrl = config.FRONTEND_URL.split(",")[0].trim();
+    res.redirect(`${frontendUrl}/login?error=oauth_init_failed`);
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // Twitter Login Flow — primary auth method (no existing auth required)
 // Per DM-324: "Authorize my Twitter. Boom."

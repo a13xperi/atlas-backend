@@ -30,7 +30,9 @@ describe("config", () => {
     const { config } = require("../../lib/config");
 
     expect(config.PORT).toBe(8000);
-    expect(config.FRONTEND_URL).toBe("http://localhost:3000");
+    expect(config.FRONTEND_URL).toBe(
+      "https://delphi-atlas.vercel.app,https://atlas-staging.vercel.app,http://localhost:3000",
+    );
     expect(config.GEMINI_MODEL).toBe("gemini-2.5-flash");
   });
 

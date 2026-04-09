@@ -56,7 +56,8 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
   try {
     const body = generateSchema.parse(req.body);
 
-    // Run generation pipeline with 90s route-level timeout (Railway limit is 120s)
+    // Anthropic-backed draft generation needs Railway RAILWAY_SERVICE_TIMEOUT=90000 in deploys.
+    // Keep this route timeout aligned so the request can use the full 90s budget.
     const result = await withTimeout(
       runGenerationPipeline({
         userId: req.userId!,
@@ -132,7 +133,8 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
         .json(buildErrorResponse(req, "Cannot regenerate a manual draft without source content"));
     }
 
-    // Run generation pipeline with 90s route-level timeout
+    // Anthropic-backed regeneration needs Railway RAILWAY_SERVICE_TIMEOUT=90000 in deploys.
+    // Keep this route timeout aligned so the request can use the full 90s budget.
     const result = await withTimeout(
       runGenerationPipeline({
         userId: req.userId!,
@@ -209,6 +211,7 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
     // Build refined content: use the existing draft as source, instruction as feedback
     const refinedSource = `Original draft: "${existing.content}"\n\nRefinement instruction: ${body.instruction}`;
 
+    // Anthropic-backed refinement needs Railway RAILWAY_SERVICE_TIMEOUT=90000 in deploys.
     const result = await withTimeout(
       runGenerationPipeline({
         userId: req.userId!,
