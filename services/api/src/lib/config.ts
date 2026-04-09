@@ -40,6 +40,20 @@ const envSchema = z.object({
 
   // Monitoring
   SENTRY_DSN: z.string().optional(),
+
+  // Backup — Supabase restore points
+  SUPABASE_PROJECT_REF: z.string().optional(),
+  SUPABASE_MANAGEMENT_API_TOKEN: z.string().optional(),
+
+  // Backup — R2 (Cloudflare) logical dumps
+  R2_ENDPOINT: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+
+  // Backup — local logical dumps
+  BACKUP_LOCAL_DIR: z.string().optional().default("./backups"),
+  BACKUP_RETENTION_DAYS: z.coerce.number().optional().default(7),
 });
 
 type Env = z.infer<typeof envSchema>;

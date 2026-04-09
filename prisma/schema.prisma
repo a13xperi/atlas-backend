@@ -453,3 +453,38 @@ model FeatureFlag {
 
   @@map("feature_flags")
 }
+
+// ── Backup subsystem ────────────────────────────────────────────
+
+enum BackupStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum BackupTriggerSource {
+  MANUAL
+  SCHEDULED
+}
+
+enum BackupProvider {
+  SUPABASE_RESTORE_POINT
+  R2_LOGICAL
+  LOCAL_LOGICAL
+}
+
+model BackupLog {
+  id            String              @id @default(cuid())
+  triggeredAt   DateTime            @default(now())
+  status        BackupStatus        @default(PENDING)
+  triggerSource BackupTriggerSource
+  provider      BackupProvider?
+  size          Int?
+  storageUrl    String?
+  errorMessage  String?
+  completedAt   DateTime?
+
+  @@index([triggeredAt])
+  @@index([triggerSource, triggeredAt])
+  @@map("backup_logs")
+}
