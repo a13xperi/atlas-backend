@@ -32,6 +32,7 @@ import { prisma } from "../../lib/prisma";
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 
 const app = express();
+app.set("query parser", "extended"); // use qs so array notation parses as arrays
 app.use(express.json());
 app.use(requestIdMiddleware);
 app.use("/api/arena", arenaRouter);
@@ -119,7 +120,7 @@ describe("GET /api/arena/leaderboard", () => {
     const res = await request(app)
       .get("/api/arena/leaderboard")
       .set(AUTH)
-      .query({ period: ["last_30_days"] });
+      .query({ period: "invalid_period_value" });
 
     expect(res.status).toBe(400);
     expectErrorResponse(res.body, "Invalid request");

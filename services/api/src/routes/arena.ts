@@ -22,9 +22,12 @@ function getDraftId(metadata: unknown): string | null {
 }
 
 arenaRouter.get("/leaderboard", async (req: AuthRequest, res) => {
-  try {
-    leaderboardQuerySchema.parse(req.query);
+  const parsed = leaderboardQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json(error("Invalid request", 400, parsed.error.errors));
+  }
 
+  try {
     // TODO: scope this to the viewer's organization once team/org membership exists in the schema.
     const users = await prisma.user.findMany({
       where: {
@@ -121,9 +124,6 @@ arenaRouter.get("/leaderboard", async (req: AuthRequest, res) => {
       userRank: leaderboard.userRank,
     }));
   } catch (err: any) {
-    if (err instanceof z.ZodError) {
-      return res.status(400).json(error("Invalid request", 400, err.errors));
-    }
     res.status(500).json(error("Failed to load arena leaderboard", 500));
   }
 });
