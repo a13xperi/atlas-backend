@@ -41,10 +41,16 @@ jest.mock("../../lib/grok", () => ({
   searchTrending: jest.fn(),
 }));
 
+jest.mock("../../lib/alertDelivery", () => ({
+  dispatchAlert: jest.fn(),
+}));
+
 import { prisma } from "../../lib/prisma";
 import { searchTrending } from "../../lib/grok";
+import { dispatchAlert } from "../../lib/alertDelivery";
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 const mockSearchTrending = searchTrending as jest.Mock;
+const mockDispatchAlert = dispatchAlert as jest.Mock;
 
 const app = express();
 app.use(express.json());
@@ -82,6 +88,10 @@ afterAll(() => {
 });
 
 describe("POST /api/trending/scan", () => {
+  beforeEach(() => {
+    mockDispatchAlert.mockResolvedValue(undefined);
+  });
+
   it("returns 401 without token", async () => {
     const res = await request(app).post("/api/trending/scan");
     expect(res.status).toBe(401);
@@ -98,6 +108,15 @@ describe("POST /api/trending/scan", () => {
     const res = await request(app).post("/api/trending/scan").set(AUTH);
     expect(res.status).toBe(200);
     expect(expectSuccessResponse<any>(res.body).alerts).toHaveLength(1);
+    expect(mockDispatchAlert).toHaveBeenCalledWith({
+      id: "alert-1",
+      title: "DeFi TVL hits record high",
+      type: "DeFi",
+      context: "Total Value Locked...",
+      sourceUrl: "https://x.com/example",
+      sentiment: "bullish",
+      userId: "user-123",
+    });
   });
 
   it("uses default topics when user has no subscriptions", async () => {

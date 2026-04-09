@@ -16,6 +16,14 @@ const envSchema = z.object({
   // Redis (optional — caching degrades gracefully)
   REDIS_URL: z.string().optional(),
 
+  // Rate limiting
+  RATE_LIMIT_AUTH_MAX_REQUESTS: z.coerce.number().int().positive().default(10),
+  RATE_LIMIT_AUTH_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  RATE_LIMIT_AI_GENERATION_MAX_REQUESTS: z.coerce.number().int().positive().default(20),
+  RATE_LIMIT_AI_GENERATION_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60 * 1000),
+  RATE_LIMIT_GENERAL_MAX_REQUESTS: z.coerce.number().int().positive().default(100),
+  RATE_LIMIT_GENERAL_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+
   // AI providers
   GOOGLE_AI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
@@ -27,6 +35,8 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   SUPABASE_JWT_SECRET: z.string().optional(),
+  SUPABASE_PROJECT_REF: z.string().optional(),
+  SUPABASE_MANAGEMENT_API_TOKEN: z.string().optional(),
 
   // Twitter / X
   TWITTER_BEARER_TOKEN: z.string().optional(),
@@ -38,8 +48,20 @@ const envSchema = z.object({
   // Telegram
   TELEGRAM_BOT_TOKEN: z.string().optional(),
 
+  // Paperclip
+  PAPERCLIP_API_KEY: z.string().optional(),
+  PAPERCLIP_WEBHOOK_SECRET: z.string().optional(),
+
   // Monitoring
   SENTRY_DSN: z.string().optional(),
+
+  // Backups
+  R2_ENDPOINT: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  BACKUP_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  BACKUP_LOCAL_DIR: z.string().default("backups"),
 });
 
 type Env = z.infer<typeof envSchema>;

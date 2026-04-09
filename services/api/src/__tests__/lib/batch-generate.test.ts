@@ -1,13 +1,8 @@
-/**
- * Batch Generate test suite
- * Tests batchGenerateDrafts function — draft creation, campaign grouping, error handling
- * Mocks: Prisma, pipeline, logger
- */
-
 jest.mock("../../lib/prisma", () => ({
   prisma: {
     campaign: {
       create: jest.fn(),
+      delete: jest.fn(),
     },
     tweetDraft: {
       create: jest.fn(),
@@ -47,20 +42,19 @@ const testInsights: Insight[] = [
     angle: "contrarian take",
   },
   {
-    title: "DeFi yields compressing",
-    summary: "DeFi yield at 3.2%.",
-    keyQuote: "Average DeFi rate compressed to 3.2%.",
+    title: "Stablecoins are expanding",
+    summary: "Stablecoin supply is climbing into a fresh regime.",
+    keyQuote: "Stablecoin supply hit a new all-time high.",
     angle: "prediction",
   },
 ];
 
-function mockPipelineSuccess(content: string, index: number) {
+function mockPipelineSuccess(content: string) {
   return {
     ctx: {
       generatedContent: content,
       confidence: 0.8,
       predictedEngagement: 2000,
-      finalVoiceDimensions: { humor: 50, formality: 50, brevity: 50, contrarianTone: 50 },
       stepResults: [],
     },
     steps: [],
@@ -75,20 +69,17 @@ describe("batchGenerateDrafts", () => {
       id: "campaign-1",
       name: "Test Campaign",
     });
+    prisma.campaign.delete.mockResolvedValue({});
     prisma.analyticsEvent.create.mockResolvedValue({});
   });
 
   it("generates a draft for each insight", async () => {
-    const drafts = testInsights.map((_, i) => ({
-      id: `draft-${i}`,
-      content: `Tweet about ${testInsights[i].title}`,
-    }));
-
-    testInsights.forEach((insight, i) => {
-      mockPipeline.mockResolvedValueOnce(
-        mockPipelineSuccess(`Tweet about ${insight.title}`, i),
-      );
-      prisma.tweetDraft.create.mockResolvedValueOnce(drafts[i]);
+    testInsights.forEach((insight: Insight, index: number) => {
+      mockPipeline.mockResolvedValueOnce(mockPipelineSuccess(`Tweet about ${insight.title}`));
+      prisma.tweetDraft.create.mockResolvedValueOnce({
+        id: `draft-${index}`,
+        content: `Tweet about ${insight.title}`,
+      });
     });
 
     const result = await batchGenerateDrafts({
@@ -105,14 +96,12 @@ describe("batchGenerateDrafts", () => {
     expect(mockPipeline).toHaveBeenCalledTimes(3);
   });
 
-  it("creates a campaign when createCampaign is true", async () => {
-    testInsights.forEach((insight, i) => {
-      mockPipeline.mockResolvedValueOnce(
-        mockPipelineSuccess(`Tweet ${i}`, i),
-      );
+  it("creates a campaign when requested", async () => {
+    testInsights.forEach((insight: Insight, index: number) => {
+      mockPipeline.mockResolvedValueOnce(mockPipelineSuccess(`Tweet ${index}`));
       prisma.tweetDraft.create.mockResolvedValueOnce({
-        id: `draft-${i}`,
-        content: `Tweet ${i}`,
+        id: `draft-${index}`,
+        content: `Tweet ${index}`,
       });
     });
 
@@ -134,8 +123,8 @@ describe("batchGenerateDrafts", () => {
     expect(result.campaign).toEqual({ id: "campaign-1", title: "Test Campaign" });
   });
 
-  it("links drafts to campaign when campaign is created", async () => {
-    mockPipeline.mockResolvedValueOnce(mockPipelineSuccess("Tweet 1", 0));
+  it("links drafts to the campaign in order", async () => {
+    mockPipeline.mockResolvedValueOnce(mockPipelineSuccess("Tweet 1"));
     prisma.tweetDraft.create.mockResolvedValueOnce({ id: "draft-1", content: "Tweet 1" });
 
     await batchGenerateDrafts({
@@ -154,10 +143,13 @@ describe("batchGenerateDrafts", () => {
     });
   });
 
-  it("logs analytics events for each draft", async () => {
-    testInsights.forEach((_, i) => {
-      mockPipeline.mockResolvedValueOnce(mockPipelineSuccess(`Tweet ${i}`, i));
-      prisma.tweetDraft.create.mockResolvedValueOnce({ id: `draft-${i}`, content: `Tweet ${i}` });
+  it("logs analytics for each generated draft", async () => {
+    testInsights.forEach((_insight: Insight, index: number) => {
+      mockPipeline.mockResolvedValueOnce(mockPipelineSuccess(`Tweet ${index}`));
+      prisma.tweetDraft.create.mockResolvedValueOnce({
+        id: `draft-${index}`,
+        content: `Tweet ${index}`,
+      });
     });
 
     await batchGenerateDrafts({
@@ -177,11 +169,10 @@ describe("batchGenerateDrafts", () => {
     });
   });
 
-  it("continues generating when one insight fails", async () => {
-    // First insight fails, second and third succeed
+  it("continues when one insight fails", async () => {
     mockPipeline.mockRejectedValueOnce(new Error("AI provider error"));
-    mockPipeline.mockResolvedValueOnce(mockPipelineSuccess("Tweet 2", 1));
-    mockPipeline.mockResolvedValueOnce(mockPipelineSuccess("Tweet 3", 2));
+    mockPipeline.mockResolvedValueOnce(mockPipelineSuccess("Tweet 2"));
+    mockPipeline.mockResolvedValueOnce(mockPipelineSuccess("Tweet 3"));
 
     prisma.tweetDraft.create.mockResolvedValueOnce({ id: "draft-2", content: "Tweet 2" });
     prisma.tweetDraft.create.mockResolvedValueOnce({ id: "draft-3", content: "Tweet 3" });
@@ -197,7 +188,7 @@ describe("batchGenerateDrafts", () => {
     expect(mockPipeline).toHaveBeenCalledTimes(3);
   });
 
-  it("throws when all insights fail to generate", async () => {
+  it("throws when every insight fails and cleans up the campaign", async () => {
     testInsights.forEach(() => {
       mockPipeline.mockRejectedValueOnce(new Error("AI error"));
     });
@@ -208,17 +199,20 @@ describe("batchGenerateDrafts", () => {
         insights: testInsights,
         sourceContent: "Content",
         sourceType: "REPORT",
+        createCampaign: true,
       }),
     ).rejects.toThrow("Failed to generate any drafts from the provided insights");
+
+    expect(prisma.campaign.delete).toHaveBeenCalledWith({ where: { id: "campaign-1" } });
   });
 
-  it("skips insights where pipeline returns no content", async () => {
+  it("skips empty pipeline results", async () => {
     mockPipeline.mockResolvedValueOnce({
       ctx: { generatedContent: null, confidence: 0.5, predictedEngagement: 500, stepResults: [] },
       steps: [],
       totalMs: 500,
     });
-    mockPipeline.mockResolvedValueOnce(mockPipelineSuccess("Real tweet", 1));
+    mockPipeline.mockResolvedValueOnce(mockPipelineSuccess("Real tweet"));
 
     prisma.tweetDraft.create.mockResolvedValueOnce({ id: "draft-1", content: "Real tweet" });
 
@@ -233,19 +227,21 @@ describe("batchGenerateDrafts", () => {
     expect(result.drafts[0].content).toBe("Real tweet");
   });
 
-  it("computes quality score from confidence and engagement", async () => {
+  it("computes score and qualityScore from confidence and engagement", async () => {
     mockPipeline.mockResolvedValueOnce({
       ctx: {
         generatedContent: "High quality tweet",
         confidence: 0.9,
         predictedEngagement: 5000,
-        finalVoiceDimensions: null,
         stepResults: [],
       },
       steps: [],
       totalMs: 800,
     });
-    prisma.tweetDraft.create.mockResolvedValueOnce({ id: "draft-1", content: "High quality tweet" });
+    prisma.tweetDraft.create.mockResolvedValueOnce({
+      id: "draft-1",
+      content: "High quality tweet",
+    });
 
     const result = await batchGenerateDrafts({
       userId: "user-1",
@@ -254,12 +250,12 @@ describe("batchGenerateDrafts", () => {
       sourceType: "REPORT",
     });
 
-    // confidence 0.9 * 50 = 45, engagement min(5000/200, 50) = 25 → total 70
-    expect(result.drafts[0].qualityScore).toBe(70);
+    expect(result.drafts[0].score).toBe(0.93);
+    expect(result.drafts[0].qualityScore).toBe(93);
   });
 
-  it("passes angleInstruction to pipeline for each insight", async () => {
-    mockPipeline.mockResolvedValueOnce(mockPipelineSuccess("Tweet", 0));
+  it("passes tone and angle guidance into the pipeline", async () => {
+    mockPipeline.mockResolvedValueOnce(mockPipelineSuccess("Tweet"));
     prisma.tweetDraft.create.mockResolvedValueOnce({ id: "draft-1", content: "Tweet" });
 
     await batchGenerateDrafts({
@@ -267,13 +263,14 @@ describe("batchGenerateDrafts", () => {
       insights: [testInsights[0]],
       sourceContent: "Content",
       sourceType: "REPORT",
+      tone: "bold",
     });
 
     expect(mockPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "user-1",
         sourceType: "REPORT",
-        angleInstruction: expect.stringContaining("data highlight"),
+        angleInstruction: expect.stringContaining("bold"),
       }),
     );
   });

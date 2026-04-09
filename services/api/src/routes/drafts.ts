@@ -10,9 +10,15 @@ import { success } from "../lib/response";
 import { generateSchedule, applySchedule } from "../lib/scheduling";
 import { extractInsights } from "../lib/content-extraction";
 import { batchGenerateDrafts } from "../lib/batch-generate";
+import { config } from "../lib/config";
+import { rateLimitByUser } from "../middleware/rateLimit";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
+const aiGenerationLimiter = rateLimitByUser(
+  config.RATE_LIMIT_AI_GENERATION_MAX_REQUESTS,
+  config.RATE_LIMIT_AI_GENERATION_WINDOW_MS,
+);
 
 // --- AI Generation Endpoints (must be before /:id routes) ---
 
@@ -22,6 +28,16 @@ const generateSchema = z.object({
   blendId: z.string().optional(),
   replyAngle: z.enum(["Direct", "Curious", "Concise"]).optional(),
   angleInstruction: z.string().max(500).optional(),
+});
+
+const batchFromContentSchema = z.object({
+  content: z.string().min(50, "Content must be at least 50 characters").max(100000),
+  sourceType: z.enum(["REPORT", "ARTICLE"]),
+  sourceUrl: z.string().optional(),
+  createCampaign: z.boolean().optional(),
+  campaignTitle: z.string().max(200).optional(),
+  angles: z.number().int().min(1).max(10).optional(),
+  tone: z.string().min(1).max(50).optional(),
 });
 
 const refineSchema = z.object({
@@ -52,7 +68,7 @@ const updateDraftSchema = z.object({
 });
 
 // Generate a tweet from source content using AI
-draftsRouter.post("/generate", async (req: AuthRequest, res) => {
+draftsRouter.post("/generate", aiGenerationLimiter, async (req: AuthRequest, res) => {
   try {
     const body = generateSchema.parse(req.body);
 
@@ -198,6 +214,41 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
   }
 });
 
+// Batch generate drafts from long-form content (PDF/article)
+draftsRouter.post("/batch-from-content", async (req: AuthRequest, res) => {
+  try {
+    const body = batchFromContentSchema.parse(req.body);
+
+    const insights = await extractInsights(body.content, { limit: body.angles });
+    const result = await batchGenerateDrafts({
+      userId: req.userId!,
+      insights,
+      sourceContent: body.content,
+      sourceType: body.sourceType,
+      sourceUrl: body.sourceUrl,
+      tone: body.tone,
+      createCampaign: body.createCampaign,
+      campaignTitle: body.campaignTitle,
+    });
+
+    res.json(success({ insights, drafts: result.drafts, campaign: result.campaign }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    if (err.message?.includes("too short") || err.message?.includes("minimum 50")) {
+      return res.status(400).json(buildErrorResponse(req, err.message));
+    }
+    if (err.message?.includes("Voice profile not found")) {
+      return res.status(400).json(buildErrorResponse(req, err.message));
+    }
+    logger.error({ err: err.message }, "Batch generation failed");
+    res.status(502).json(buildErrorResponse(req, "Batch generation failed"));
+  }
+});
+
 // Refine a draft with a custom instruction
 draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
   try {
@@ -261,48 +312,6 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
     }
     logger.error({ err: err.message }, "Refine failed");
     res.status(502).json(buildErrorResponse(req, "AI refinement failed"));
-  }
-});
-
-// Batch generate drafts from long-form content (PDF/article)
-const batchFromContentSchema = z.object({
-  content: z.string().min(50, "Content must be at least 50 characters"),
-  sourceType: z.enum(["REPORT", "ARTICLE"]),
-  sourceUrl: z.string().optional(),
-  createCampaign: z.boolean().optional(),
-  campaignTitle: z.string().optional(),
-});
-
-draftsRouter.post("/batch-from-content", async (req: AuthRequest, res) => {
-  try {
-    const body = batchFromContentSchema.parse(req.body);
-
-    // Step 1: Extract insights from content
-    const insights = await extractInsights(body.content);
-
-    // Step 2: Generate a draft for each insight
-    const result = await batchGenerateDrafts({
-      userId: req.userId!,
-      insights,
-      sourceContent: body.content,
-      sourceType: body.sourceType,
-      sourceUrl: body.sourceUrl,
-      createCampaign: body.createCampaign,
-      campaignTitle: body.campaignTitle,
-    });
-
-    res.json(success({ insights, drafts: result.drafts, campaign: result.campaign }));
-  } catch (err: any) {
-    if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
-    }
-    if (err.message?.includes("too short") || err.message?.includes("minimum 50")) {
-      return res.status(400).json(buildErrorResponse(req, err.message));
-    }
-    logger.error({ err: err.message }, "Batch generation failed");
-    res.status(500).json(buildErrorResponse(req, "Batch generation failed"));
   }
 });
 
