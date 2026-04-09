@@ -11,11 +11,7 @@ import { config } from "../lib/config";
 import { rateLimit } from "../middleware/rateLimit";
 
 export const xAuthRouter = Router();
-const authRateLimiter = rateLimit(
-  config.RATE_LIMIT_AUTH_MAX_REQUESTS,
-  config.RATE_LIMIT_AUTH_WINDOW_MS,
-);
-xAuthRouter.use(authRateLimiter);
+xAuthRouter.use(rateLimit(20, 60 * 1000)); // 20 req/min for auth routes
 
 // In-memory store for PKCE code verifiers (keyed by state)
 // In production, use Redis. This works for single-instance deploys.
