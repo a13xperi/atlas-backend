@@ -42,14 +42,9 @@ dotenv.config();
 const app = express();
 const PORT = config.PORT;
 
-const allowedOrigins = [
-  ...config.FRONTEND_URL.split(",").map((o) => o.trim()),
-  // Always allow staging + localhost for development
-  "https://staging-delphi-atlas.vercel.app",
-  "https://delphi-atlas-git-staging-*.vercel.app",
-  "http://localhost:3000",
-  "http://localhost:3001",
-].filter(Boolean);
+const allowedOrigins = config.FRONTEND_URL.split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 app.use(
   cors({
