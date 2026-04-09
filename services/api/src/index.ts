@@ -26,6 +26,7 @@ import { transcribeRouter } from "./routes/transcribe";
 import { qaRouter } from "./routes/qa";
 import { adminRouter } from "./routes/admin";
 import { adminFlagsRouter } from "./routes/admin-flags";
+import { adminBackupRouter } from "./routes/admin-backup";
 import { twitterRouter } from "./routes/twitter";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
@@ -124,6 +125,7 @@ app.use("/api/transcribe", transcribeRouter);
 app.use("/api/qa", qaRouter);
 app.use("/api/admin/feature-flags", adminFlagsRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/admin/backup", adminBackupRouter);
 app.use("/api/twitter", twitterRouter);
 
 // 404 handler — catch unknown routes before error handlers
