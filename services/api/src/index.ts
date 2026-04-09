@@ -24,6 +24,7 @@ import { campaignsRouter } from "./routes/campaigns";
 import { monitorsRouter } from "./routes/monitors";
 import { transcribeRouter } from "./routes/transcribe";
 import { qaRouter } from "./routes/qa";
+import { twitterRouter } from "./routes/twitter";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
@@ -123,6 +124,7 @@ app.use("/api/campaigns", campaignsRouter);
 app.use("/api/monitors", monitorsRouter);
 app.use("/api/transcribe", transcribeRouter);
 app.use("/api/qa", qaRouter);
+app.use("/api/twitter", twitterRouter);
 
 // 404 handler — catch unknown routes before error handlers
 app.use((req, res) => {
