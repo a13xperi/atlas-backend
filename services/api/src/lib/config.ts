@@ -31,6 +31,7 @@ const envSchema = z.object({
   TWITTER_CLIENT_ID: z.string().optional(),
   TWITTER_CLIENT_SECRET: z.string().optional(),
   TWITTER_OAUTH_CALLBACK_URL: z.string().optional(),
+  TWITTER_LOGIN_CALLBACK_URL: z.string().optional(),
 
   // Telegram
   TELEGRAM_BOT_TOKEN: z.string().optional(),

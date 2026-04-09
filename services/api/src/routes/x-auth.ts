@@ -1,11 +1,14 @@
 import { Router } from "express";
+import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
-import { generateOAuthUrl, exchangeCodeForTokens, lookupUser } from "../lib/twitter";
+import { generateOAuthUrl, generateLoginOAuthUrl, exchangeCodeForTokens, exchangeLoginCodeForTokens, lookupUser, fetchTwitterUserProfile } from "../lib/twitter";
+import { config } from "../lib/config";
 import { logger } from "../lib/logger";
 import { error } from "../lib/response";
 import { buildErrorResponse } from "../middleware/requestId";
 import { success } from "../lib/response";
+import { setAuthCookies } from "../lib/cookies";
 import { getCached, setCache, delCache } from "../lib/redis";
 
 export const xAuthRouter = Router();
@@ -17,6 +20,7 @@ export const xAuthRouter = Router();
 interface PendingOAuthData {
   codeVerifier: string;
   userId: string;
+  flow: "link" | "login";
   expiresAt: number;
 }
 
@@ -63,6 +67,7 @@ xAuthRouter.post("/authorize", authenticate, async (req: AuthRequest, res) => {
     await setPendingOAuth(state, {
       codeVerifier,
       userId: req.userId!,
+      flow: "link",
       expiresAt: Date.now() + PKCE_TTL_SECONDS * 1000,
     });
 
@@ -168,4 +173,126 @@ xAuthRouter.post("/disconnect", authenticate, async (req: AuthRequest, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// Twitter Login Flow — primary auth method (no existing auth required)
+// Per DM-324: "Authorize my Twitter. Boom."
+// ═══════════════════════════════════════════════════════════════════════
 
+export const twitterLoginRouter = Router();
+
+function signLoginToken(userId: string): string {
+  return jwt.sign({ userId }, config.JWT_SECRET, { expiresIn: "7d" });
+}
+
+/**
+ * GET /api/auth/twitter
+ * Initiates Twitter OAuth login. Redirects user to X authorization page.
+ * No authentication required — this IS the auth entry point.
+ */
+twitterLoginRouter.get("/", async (_req, res) => {
+  try {
+    const state = `login_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const { url, codeVerifier } = generateLoginOAuthUrl(state);
+
+    await setPendingOAuth(state, {
+      codeVerifier,
+      userId: "", // No user yet — will be created/found on callback
+      flow: "login",
+      expiresAt: Date.now() + PKCE_TTL_SECONDS * 1000,
+    });
+
+    res.redirect(url);
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Twitter login redirect failed");
+    const frontendUrl = config.FRONTEND_URL.split(",")[0].trim();
+    res.redirect(`${frontendUrl}/login?error=oauth_init_failed`);
+  }
+});
+
+/**
+ * GET /api/auth/twitter/callback
+ * X redirects here after user authorizes. Exchanges code for tokens,
+ * fetches Twitter profile, finds or creates user, issues JWT,
+ * and redirects to frontend with token.
+ */
+twitterLoginRouter.get("/callback", async (req, res) => {
+  const frontendUrl = config.FRONTEND_URL.split(",")[0].trim();
+
+  try {
+    const { code, state, error: oauthError } = req.query;
+
+    // User denied access on X
+    if (oauthError) {
+      logger.warn({ oauthError }, "Twitter login denied by user");
+      return res.redirect(`${frontendUrl}/login?error=access_denied`);
+    }
+
+    if (!code || !state || typeof code !== "string" || typeof state !== "string") {
+      return res.redirect(`${frontendUrl}/login?error=missing_params`);
+    }
+
+    // Retrieve and validate PKCE verifier
+    const pending = await getPendingOAuth(state);
+    if (!pending || pending.expiresAt < Date.now()) {
+      return res.redirect(`${frontendUrl}/login?error=session_expired`);
+    }
+    if (pending.flow !== "login") {
+      return res.redirect(`${frontendUrl}/login?error=invalid_flow`);
+    }
+
+    // Exchange authorization code for tokens
+    const { accessToken, refreshToken, expiresIn } = await exchangeLoginCodeForTokens(code, pending.codeVerifier);
+
+    // Fetch full Twitter profile
+    const profile = await fetchTwitterUserProfile(accessToken);
+    const xHandle = profile.username;
+    const displayName = profile.name;
+    const avatarUrl = profile.profile_image_url || null;
+    const xBio = profile.description || null;
+    const xFollowerCount = profile.public_metrics?.followers_count ?? null;
+
+    // Find existing user by xHandle, or create new one
+    let user = await prisma.user.findFirst({ where: { xHandle } });
+
+    if (user) {
+      // Returning user — update tokens + profile data
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          xAccessToken: accessToken,
+          xRefreshToken: refreshToken,
+          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          displayName: displayName || user.displayName,
+          avatarUrl: avatarUrl || user.avatarUrl,
+        },
+      });
+      logger.info({ userId: user.id, xHandle }, "Twitter login — returning user");
+    } else {
+      // New user — create from Twitter profile
+      user = await prisma.user.create({
+        data: {
+          handle: xHandle,
+          displayName,
+          avatarUrl,
+          xHandle,
+          xAccessToken: accessToken,
+          xRefreshToken: refreshToken,
+          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          onboardingTrack: "TRACK_B", // Twitter-first = Track B (Anil's flow)
+          voiceProfile: { create: {} },
+        },
+      });
+      logger.info({ userId: user.id, xHandle }, "Twitter login — new user created");
+    }
+
+    // Issue JWT and set cookies
+    const token = signLoginToken(user.id);
+    setAuthCookies(res, token, refreshToken);
+
+    // Redirect to frontend with token in query (frontend stores it)
+    res.redirect(`${frontendUrl}/auth/callback?token=${encodeURIComponent(token)}&provider=twitter`);
+  } catch (err: any) {
+    logger.error({ err: err.message, stack: err.stack }, "Twitter login callback failed");
+    res.redirect(`${frontendUrl}/login?error=callback_failed`);
+  }
+});
