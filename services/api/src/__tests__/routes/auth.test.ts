@@ -65,6 +65,7 @@ jest.mock("bcryptjs", () => ({
 // Must import AFTER mocks
 import { authRouter } from "../../routes/auth";
 import { prisma } from "../../lib/prisma";
+import { clearRateLimitStore } from "../../middleware/rateLimit";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 
@@ -103,6 +104,7 @@ const mockSession = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  clearRateLimitStore();
   // Default: getUser fails so authenticate falls through to JWT path
   mockSupabaseAuth.getUser.mockResolvedValue({ data: { user: null }, error: { message: "invalid" } });
 });
@@ -201,6 +203,26 @@ describe("POST /api/auth/refresh", () => {
     expect(res.status).toBe(400);
     const body = expectErrorResponse(res.body, "Invalid request");
     expect(Array.isArray(body.details)).toBe(true);
+  });
+
+  it("returns 429 with retry-after after the auth limit is exceeded", async () => {
+    for (let i = 0; i < 10; i += 1) {
+      const res = await request(app)
+        .post("/api/auth/refresh")
+        .send({});
+
+      expect(res.status).toBe(400);
+    }
+
+    const limited = await request(app)
+      .post("/api/auth/refresh")
+      .send({});
+
+    expect(limited.status).toBe(429);
+    expect(limited.headers["retry-after"]).toEqual(expect.any(String));
+    expect(limited.body.error).toBe("Too many requests. Please try again later.");
+    expect(limited.body.message).toBe("Too many requests. Please try again later.");
+    expect(limited.body.requestId).toBe(limited.headers["x-request-id"]);
   });
 });
 

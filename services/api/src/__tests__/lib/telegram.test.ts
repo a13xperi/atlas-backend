@@ -65,12 +65,14 @@ describe("telegram", () => {
   let prismaMock: PrismaMock;
   let telegrafInstances: MockTelegrafInstance[];
   let launchImplementation: jest.Mock;
+  let sendTelegramMessageMock: jest.Mock;
 
   const loadTelegramModule = (token = "telegram-token") => {
     jest.resetModules();
     prismaMock = createPrismaMock();
     telegrafInstances = [];
     launchImplementation = jest.fn().mockResolvedValue(undefined);
+    sendTelegramMessageMock = jest.fn();
 
     jest.doMock("../../lib/logger", () => ({
       logger: {
@@ -89,6 +91,10 @@ describe("telegram", () => {
 
     jest.doMock("../../lib/prisma", () => ({
       prisma: prismaMock,
+    }));
+
+    jest.doMock("../../lib/telegramClient", () => ({
+      sendTelegramMessage: sendTelegramMessageMock,
     }));
 
     jest.doMock("telegraf", () => ({
@@ -421,10 +427,8 @@ describe("telegram", () => {
   });
 
   it("sends alert messages with formatting and truncation", async () => {
-    const { initBot, deliverAlert } = loadTelegramModule();
-    initBot();
-    await flushPromises();
-    getBotInstance().telegram.sendMessage.mockResolvedValueOnce(undefined);
+    const { deliverAlert } = loadTelegramModule();
+    sendTelegramMessageMock.mockResolvedValueOnce(true);
 
     const delivered = await deliverAlert(
       {
@@ -437,7 +441,7 @@ describe("telegram", () => {
     );
 
     expect(delivered).toBe(true);
-    expect(getBotInstance().telegram.sendMessage).toHaveBeenCalledWith(
+    expect(sendTelegramMessageMock).toHaveBeenCalledWith(
       "chat-123",
       "\u{1f52e} Macro update [BULLISH]\n\n" +
         `${"B".repeat(300)}\n\n` +
@@ -446,22 +450,10 @@ describe("telegram", () => {
   });
 
   it("returns false when delivery cannot be sent", async () => {
-    const { deliverAlert, initBot } = loadTelegramModule();
+    const { deliverAlert } = loadTelegramModule();
     const { logger: freshLogger } = require("../../lib/logger");
     const errorSpy = freshLogger.error as jest.Mock;
-
-    expect(
-      await deliverAlert(
-        {
-          title: "No bot",
-        },
-        "chat-123"
-      )
-    ).toBe(false);
-
-    initBot();
-    await flushPromises();
-    getBotInstance().telegram.sendMessage.mockRejectedValueOnce(new Error("send failed"));
+    sendTelegramMessageMock.mockResolvedValueOnce(false);
 
     await expect(
       deliverAlert(
@@ -473,7 +465,7 @@ describe("telegram", () => {
       )
     ).resolves.toBe(false);
     expect(errorSpy).toHaveBeenCalledWith(
-      { err: expect.any(Error), chatId: "chat-123" },
+      { chatId: "chat-123" },
       "[telegram] Failed to deliver alert"
     );
   });
@@ -494,10 +486,10 @@ describe("telegram", () => {
         "user-1"
       )
     ).resolves.toBe(false);
-    expect(getBotInstance().telegram.sendMessage).not.toHaveBeenCalled();
+    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
 
     prismaMock.user.findUnique.mockResolvedValueOnce({ telegramChatId: "chat-999" });
-    getBotInstance().telegram.sendMessage.mockResolvedValueOnce(undefined);
+    sendTelegramMessageMock.mockResolvedValueOnce(true);
     await expect(
       deliverAlertToUser(
         {
@@ -511,7 +503,7 @@ describe("telegram", () => {
       where: { id: "user-2" },
       select: { telegramChatId: true },
     });
-    expect(getBotInstance().telegram.sendMessage).toHaveBeenCalledWith(
+    expect(sendTelegramMessageMock).toHaveBeenCalledWith(
       "chat-999",
       "\u{1f52e} Delivered\n\nSource: https://example.com"
     );
