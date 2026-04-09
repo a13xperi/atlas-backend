@@ -444,3 +444,12 @@ model BlendedVoiceProfile {
 
   @@map("blended_voice_profiles")
 }
+
+model FeatureFlag {
+  key         String   @id
+  enabled     Boolean  @default(true)
+  rolloutRole String   @default("everyone")
+  updatedAt   DateTime @updatedAt
+
+  @@map("feature_flags")
+}

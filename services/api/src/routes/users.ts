@@ -85,6 +85,39 @@ usersRouter.get("/team", async (req: AuthRequest, res) => {
   }
 });
 
+// ---------- Admin: update a user's role ----------
+
+const roleUpdateSchema = z.object({
+  role: z.enum(["ANALYST", "MANAGER", "ADMIN"]),
+});
+
+// PATCH /api/users/:userId/role — ADMIN only
+usersRouter.patch("/:userId/role", async (req: AuthRequest, res) => {
+  try {
+    const currentUser = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!currentUser || currentUser.role !== "ADMIN") {
+      return res.status(403).json(error("Admin access required", 403));
+    }
+
+    const userId = String(req.params.userId);
+    const body = roleUpdateSchema.parse(req.body);
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { role: body.role },
+      select: { id: true, handle: true, role: true },
+    });
+
+    res.json(success({ user }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid role", 400, err.errors));
+    }
+    console.error("PATCH /api/users/:userId/role error:", err);
+    res.status(500).json(error("Failed to update role"));
+  }
+});
+
 // ---------- Management action endpoints (BO #53) ----------
 
 /** Reusable: get the requesting user and reject non-managers */
