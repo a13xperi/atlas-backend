@@ -42,6 +42,7 @@ model User {
   nlpMonitors       NlpMonitor[]
   campaigns         Campaign[]
   voiceDimensionInsight VoiceDimensionInsight?
+  blendedVoiceProfile   BlendedVoiceProfile?
 
   @@map("users")
 }
@@ -405,4 +406,41 @@ model VoiceDimensionInsight {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("voice_dimension_insights")
+}
+
+model BlendedVoiceProfile {
+  id                       String   @id @default(cuid())
+  userId                   String   @unique
+  primaryTwitterId         String
+  primaryHandle            String?
+  additionalTwitterIds     String[]
+  additionalHandles        String[]
+  weights                  Json     // { "twitter_id": weight_value }
+
+  // Blended style dimensions (0-100)
+  humor                    Int      @default(50)
+  formality                Int      @default(50)
+  brevity                  Int      @default(50)
+  contrarianTone           Int      @default(50)
+  directness               Int      @default(50)
+  warmth                   Int      @default(50)
+  technicalDepth           Int      @default(50)
+  confidence               Int      @default(50)
+  evidenceOrientation      Int      @default(50)
+  solutionOrientation      Int      @default(50)
+  socialPosture            Int      @default(50)
+  selfPromotionalIntensity Int      @default(50)
+
+  // Raw style signals per inspiration (for transparency / debugging)
+  styleSignals             Json?    // { "twitter_id": { avgLength, emojiRate, ... } }
+
+  // Meta
+  tweetsAnalyzed           Int      @default(0)
+  blendSummary             String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("blended_voice_profiles")
 }
