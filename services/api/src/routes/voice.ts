@@ -7,6 +7,8 @@ import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { fetchTweetsByHandle } from "../lib/twitter";
 import { calibrateFromTweets } from "../lib/calibrate";
+import { getVoiceInsights } from "../lib/voice-insights";
+import { blendVoices } from "../lib/voice-blend";
 import { logger } from "../lib/logger";
 
 // Public router — no auth required
@@ -371,7 +373,8 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
       return res.status(400).json(error(`No tweets found for @${body.handle}`));
     }
 
-    // Run calibration via Claude
+    // Claude calibration can take tens of seconds on larger tweet sets, so Railway deploys
+    // need RAILWAY_SERVICE_TIMEOUT=90000 for this endpoint.
     const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
 
     // Update voice profile with all 12 calibrated dimensions
@@ -420,5 +423,239 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
     }
     logger.error({ err: err.message }, "Calibration failed");
     res.status(502).json(error("Voice calibration failed"));
+  }
+});
+
+// Get voice dimension insights (engagement feedback loop)
+voiceRouter.get("/insights", async (req: AuthRequest, res) => {
+  try {
+    const insights = await getVoiceInsights(req.userId!);
+
+    if (!insights) {
+      return res.status(200).json(
+        success({
+          insights: null,
+          status: "insufficient_data",
+          message:
+            "Need at least 10 posted drafts with engagement data to generate insights. Keep posting!",
+        }),
+      );
+    }
+
+    res.json(
+      success({
+        insights,
+        status: "ready",
+      }),
+    );
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to compute voice insights");
+    res.status(500).json(error("Failed to compute voice insights"));
+  }
+});
+
+// --- Voice Blending Engine (primary + secondary weighting) ---
+
+const voiceBlendSchema = z.object({
+  primary_id: z.string().min(1, "primary_id is required"),
+  additional_ids: z.array(z.string().min(1)).default([]),
+  weights: z
+    .record(z.string(), z.number().min(0).max(1))
+    .optional(),
+});
+
+/**
+ * POST /api/voice/blend
+ *
+ * Blend voice inspirations from Twitter profiles into a unified voice profile.
+ * Fetches tweets from each inspiration, analyzes writing style, and produces
+ * weighted blended dimensions. Stores the result per user.
+ *
+ * Body: { primary_id, additional_ids?, weights? }
+ */
+voiceRouter.post("/blend", async (req: AuthRequest, res) => {
+  try {
+    const body = voiceBlendSchema.parse(req.body);
+
+    logger.info(
+      {
+        userId: req.userId,
+        primaryId: body.primary_id,
+        additionalCount: body.additional_ids.length,
+      },
+      "Starting voice blend",
+    );
+
+    // Run the blend engine
+    const result = await blendVoices(
+      body.primary_id,
+      body.additional_ids,
+      body.weights,
+    );
+
+    // Persist the blended profile
+    const profileData = {
+      primaryTwitterId: body.primary_id,
+      primaryHandle:
+        result.inspirationProfiles.find(
+          (p) => p.twitterId === body.primary_id,
+        )?.handle ?? null,
+      additionalTwitterIds: body.additional_ids,
+      additionalHandles: result.inspirationProfiles
+        .filter((p) => p.twitterId !== body.primary_id)
+        .map((p) => p.handle),
+      weights: result.appliedWeights as any,
+      humor: result.dimensions.humor,
+      formality: result.dimensions.formality,
+      brevity: result.dimensions.brevity,
+      contrarianTone: result.dimensions.contrarianTone,
+      directness: result.dimensions.directness,
+      warmth: result.dimensions.warmth,
+      technicalDepth: result.dimensions.technicalDepth,
+      confidence: result.dimensions.confidence,
+      evidenceOrientation: result.dimensions.evidenceOrientation,
+      solutionOrientation: result.dimensions.solutionOrientation,
+      socialPosture: result.dimensions.socialPosture,
+      selfPromotionalIntensity: result.dimensions.selfPromotionalIntensity,
+      styleSignals: result.styleSignals as any,
+      tweetsAnalyzed: result.totalTweetsAnalyzed,
+      blendSummary: result.summary,
+    };
+
+    const blendedProfile = await prisma.blendedVoiceProfile.upsert({
+      where: { userId: req.userId! },
+      update: profileData,
+      create: { userId: req.userId!, ...profileData },
+    });
+
+    // Also update the main voice profile so tweet generation uses blended values
+    await prisma.voiceProfile.upsert({
+      where: { userId: req.userId! },
+      update: {
+        humor: result.dimensions.humor,
+        formality: result.dimensions.formality,
+        brevity: result.dimensions.brevity,
+        contrarianTone: result.dimensions.contrarianTone,
+        directness: result.dimensions.directness,
+        warmth: result.dimensions.warmth,
+        technicalDepth: result.dimensions.technicalDepth,
+        confidence: result.dimensions.confidence,
+        evidenceOrientation: result.dimensions.evidenceOrientation,
+        solutionOrientation: result.dimensions.solutionOrientation,
+        socialPosture: result.dimensions.socialPosture,
+        selfPromotionalIntensity: result.dimensions.selfPromotionalIntensity,
+        tweetsAnalyzed: result.totalTweetsAnalyzed,
+        maturity:
+          result.totalTweetsAnalyzed >= 100
+            ? VoiceMaturity.ADVANCED
+            : result.totalTweetsAnalyzed >= 20
+              ? VoiceMaturity.INTERMEDIATE
+              : VoiceMaturity.BEGINNER,
+      },
+      create: {
+        userId: req.userId!,
+        humor: result.dimensions.humor,
+        formality: result.dimensions.formality,
+        brevity: result.dimensions.brevity,
+        contrarianTone: result.dimensions.contrarianTone,
+        directness: result.dimensions.directness,
+        warmth: result.dimensions.warmth,
+        technicalDepth: result.dimensions.technicalDepth,
+        confidence: result.dimensions.confidence,
+        evidenceOrientation: result.dimensions.evidenceOrientation,
+        solutionOrientation: result.dimensions.solutionOrientation,
+        socialPosture: result.dimensions.socialPosture,
+        selfPromotionalIntensity: result.dimensions.selfPromotionalIntensity,
+        tweetsAnalyzed: result.totalTweetsAnalyzed,
+        maturity:
+          result.totalTweetsAnalyzed >= 100
+            ? VoiceMaturity.ADVANCED
+            : result.totalTweetsAnalyzed >= 20
+              ? VoiceMaturity.INTERMEDIATE
+              : VoiceMaturity.BEGINNER,
+      },
+    });
+
+    // Log analytics event
+    await prisma.analyticsEvent.create({
+      data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
+    });
+
+    res.json(
+      success({
+        blendedProfile,
+        inspirations: result.inspirationProfiles.map((p) => ({
+          twitterId: p.twitterId,
+          handle: p.handle,
+          name: p.name,
+          tweetCount: p.tweetCount,
+          weight: result.appliedWeights[p.twitterId],
+        })),
+        dimensions: result.dimensions,
+        styleSignals: result.styleSignals,
+        summary: result.summary,
+      }),
+    );
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    logger.error({ err: err.message, userId: req.userId }, "Voice blend failed");
+    res.status(502).json(error(`Voice blend failed: ${err.message}`));
+  }
+});
+
+/**
+ * GET /api/voice/blended-profile
+ *
+ * Returns the current user's stored blended voice profile,
+ * including the source inspirations, weights, and blended dimensions.
+ */
+voiceRouter.get("/blended-profile", async (req: AuthRequest, res) => {
+  try {
+    const profile = await prisma.blendedVoiceProfile.findUnique({
+      where: { userId: req.userId! },
+    });
+
+    if (!profile) {
+      return res.status(404).json(
+        error("No blended voice profile found. Use POST /api/voice/blend to create one."),
+      );
+    }
+
+    res.json(
+      success({
+        profile: {
+          id: profile.id,
+          primaryTwitterId: profile.primaryTwitterId,
+          primaryHandle: profile.primaryHandle,
+          additionalTwitterIds: profile.additionalTwitterIds,
+          additionalHandles: profile.additionalHandles,
+          weights: profile.weights,
+          dimensions: {
+            humor: profile.humor,
+            formality: profile.formality,
+            brevity: profile.brevity,
+            contrarianTone: profile.contrarianTone,
+            directness: profile.directness,
+            warmth: profile.warmth,
+            technicalDepth: profile.technicalDepth,
+            confidence: profile.confidence,
+            evidenceOrientation: profile.evidenceOrientation,
+            solutionOrientation: profile.solutionOrientation,
+            socialPosture: profile.socialPosture,
+            selfPromotionalIntensity: profile.selfPromotionalIntensity,
+          },
+          styleSignals: profile.styleSignals,
+          tweetsAnalyzed: profile.tweetsAnalyzed,
+          blendSummary: profile.blendSummary,
+          createdAt: profile.createdAt,
+          updatedAt: profile.updatedAt,
+        },
+      }),
+    );
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to load blended voice profile");
+    res.status(500).json(error("Failed to load blended voice profile"));
   }
 });

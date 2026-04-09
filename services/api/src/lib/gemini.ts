@@ -119,5 +119,22 @@ Use the Atlas brand palette: primary #4ecdc4 (teal), bg #1a1a2e, surface #2d3748
   );
 
   const text = result.response.text();
-  return JSON.parse(text);
+
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      concept: parsed.concept ?? "Visual concept for tweet",
+      colorScheme: Array.isArray(parsed.colorScheme) ? parsed.colorScheme : ["#4ecdc4", "#1a1a2e", "#2d3748"],
+      layout: parsed.layout ?? "minimal-gradient",
+      elements: Array.isArray(parsed.elements) ? parsed.elements : [],
+    };
+  } catch {
+    // Gemini sometimes returns non-JSON despite responseMimeType — fallback to structured default
+    return {
+      concept: text.slice(0, 200) || "Visual concept for tweet",
+      colorScheme: ["#4ecdc4", "#1a1a2e", "#2d3748"],
+      layout: "minimal-gradient" as const,
+      elements: ["text overlay", "gradient background"],
+    };
+  }
 }

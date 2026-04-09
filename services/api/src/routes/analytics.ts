@@ -2,7 +2,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
-import { buildErrorResponse } from "../middleware/requestId";
 import { authenticate, AuthRequest } from "../middleware/auth";
 
 export const analyticsRouter = Router();
@@ -358,125 +357,6 @@ analyticsRouter.get("/days-to-peak", async (req: AuthRequest, res) => {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     res.status(500).json(error("Failed to load days-to-peak", 500));
-  }
-});
-
-// Daily activity sparkline (last 30 days)
-analyticsRouter.get("/activity-daily", async (req: AuthRequest, res) => {
-  try {
-    emptyQuerySchema.parse(req.query);
-
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now);
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
-    thirtyDaysAgo.setHours(0, 0, 0, 0);
-
-    const events = await prisma.analyticsEvent.findMany({
-      where: {
-        userId: req.userId,
-        createdAt: { gte: thirtyDaysAgo },
-      },
-      select: { createdAt: true },
-      orderBy: { createdAt: "asc" },
-    });
-
-    // Pre-populate all 30 days
-    const buckets = new Map<string, number>();
-    for (let i = 0; i < 30; i++) {
-      const d = new Date(thirtyDaysAgo);
-      d.setDate(d.getDate() + i);
-      buckets.set(d.toISOString().slice(0, 10), 0);
-    }
-
-    // Count events per day
-    for (const event of events) {
-      const key = event.createdAt.toISOString().slice(0, 10);
-      if (buckets.has(key)) {
-        buckets.set(key, buckets.get(key)! + 1);
-      }
-    }
-
-    const days = Array.from(buckets.entries()).map(([date, count]) => ({
-      date,
-      count,
-    }));
-
-    res.json({ days });
-  } catch (err: any) {
-    if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
-    }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load daily activity", { message: err.message }));
-  }
-});
-
-// Team engagement daily (manager only — predicted vs actual across all analysts, last 7 days)
-analyticsRouter.get("/team-engagement-daily", async (req: AuthRequest, res) => {
-  try {
-    emptyQuerySchema.parse(req.query);
-
-    const user = await prisma.user.findUnique({ where: { id: req.userId } });
-    if (!user || user.role === "ANALYST") {
-      return res.status(403).json(buildErrorResponse(req, "Manager access required"));
-    }
-
-    const now = new Date();
-    const sevenDaysAgo = new Date(now);
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
-    sevenDaysAgo.setHours(0, 0, 0, 0);
-
-    const drafts = await prisma.tweetDraft.findMany({
-      where: {
-        predictedEngagement: { not: null },
-        createdAt: { gte: sevenDaysAgo },
-      },
-      select: {
-        createdAt: true,
-        predictedEngagement: true,
-        actualEngagement: true,
-      },
-      orderBy: { createdAt: "asc" },
-    });
-
-    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const buckets = new Map<string, { predicted: number; actual: number; count: number }>();
-
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(sevenDaysAgo);
-      d.setDate(d.getDate() + i);
-      buckets.set(d.toISOString().slice(0, 10), { predicted: 0, actual: 0, count: 0 });
-    }
-
-    for (const draft of drafts) {
-      const key = draft.createdAt.toISOString().slice(0, 10);
-      const bucket = buckets.get(key);
-      if (!bucket) continue;
-      bucket.predicted += draft.predictedEngagement ?? 0;
-      bucket.actual += draft.actualEngagement ?? 0;
-      bucket.count++;
-    }
-
-    const days = Array.from(buckets.entries()).map(([date, bucket]) => ({
-      date,
-      dayLabel: dayNames[new Date(date + "T00:00:00").getDay()],
-      modelTarget: bucket.count > 0 ? Math.round(bucket.predicted / bucket.count) : 0,
-      teamActual: bucket.count > 0 ? Math.round(bucket.actual / bucket.count) : 0,
-    }));
-
-    res.json({ days });
-  } catch (err: any) {
-    if (err instanceof z.ZodError) {
-      return res
-        .status(400)
-        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
-    }
-    res
-      .status(500)
-      .json(buildErrorResponse(req, "Failed to load team engagement daily", { message: err.message }));
   }
 });
 

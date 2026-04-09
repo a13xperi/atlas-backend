@@ -7,6 +7,9 @@ import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
 import { withTimeout, TimeoutError } from "../lib/timeout";
 import { success } from "../lib/response";
+import { generateSchedule, applySchedule } from "../lib/scheduling";
+import { extractInsights } from "../lib/content-extraction";
+import { batchGenerateDrafts } from "../lib/batch-generate";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
@@ -14,7 +17,7 @@ draftsRouter.use(authenticate);
 // --- AI Generation Endpoints (must be before /:id routes) ---
 
 const generateSchema = z.object({
-  sourceContent: z.string().min(1).max(10000),
+  sourceContent: z.string().min(1).max(100000),
   sourceType: z.enum(["REPORT", "ARTICLE", "TWEET", "TRENDING_TOPIC", "VOICE_NOTE", "MANUAL"]),
   blendId: z.string().optional(),
   replyAngle: z.enum(["Direct", "Curious", "Concise"]).optional(),
@@ -53,7 +56,8 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
   try {
     const body = generateSchema.parse(req.body);
 
-    // Run generation pipeline with 90s route-level timeout (Railway limit is 120s)
+    // Anthropic-backed draft generation needs Railway RAILWAY_SERVICE_TIMEOUT=90000 in deploys.
+    // Keep this route timeout aligned so the request can use the full 90s budget.
     const result = await withTimeout(
       runGenerationPipeline({
         userId: req.userId!,
@@ -67,7 +71,7 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
       "generate-pipeline",
     );
 
-    // Save as draft
+    // Save as draft (include voice dimension snapshot for feedback loop)
     const draft = await prisma.tweetDraft.create({
       data: {
         userId: req.userId!,
@@ -77,6 +81,9 @@ draftsRouter.post("/generate", async (req: AuthRequest, res) => {
         blendId: body.blendId,
         confidence: result.ctx.confidence,
         predictedEngagement: result.ctx.predictedEngagement,
+        voiceDimensionsSnapshot: result.ctx.finalVoiceDimensions
+          ? (result.ctx.finalVoiceDimensions as any)
+          : undefined,
         version: 1,
       },
     });
@@ -126,7 +133,8 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
         .json(buildErrorResponse(req, "Cannot regenerate a manual draft without source content"));
     }
 
-    // Run generation pipeline with 90s route-level timeout
+    // Anthropic-backed regeneration needs Railway RAILWAY_SERVICE_TIMEOUT=90000 in deploys.
+    // Keep this route timeout aligned so the request can use the full 90s budget.
     const result = await withTimeout(
       runGenerationPipeline({
         userId: req.userId!,
@@ -149,6 +157,9 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
         blendId: existing.blendId,
         confidence: result.ctx.confidence,
         predictedEngagement: result.ctx.predictedEngagement,
+        voiceDimensionsSnapshot: result.ctx.finalVoiceDimensions
+          ? (result.ctx.finalVoiceDimensions as any)
+          : undefined,
         version: existing.version + 1,
         feedback: body.feedback || existing.feedback,
       },
@@ -200,6 +211,7 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
     // Build refined content: use the existing draft as source, instruction as feedback
     const refinedSource = `Original draft: "${existing.content}"\n\nRefinement instruction: ${body.instruction}`;
 
+    // Anthropic-backed refinement needs Railway RAILWAY_SERVICE_TIMEOUT=90000 in deploys.
     const result = await withTimeout(
       runGenerationPipeline({
         userId: req.userId!,
@@ -221,6 +233,9 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
         blendId: existing.blendId,
         confidence: result.ctx.confidence,
         predictedEngagement: result.ctx.predictedEngagement,
+        voiceDimensionsSnapshot: result.ctx.finalVoiceDimensions
+          ? (result.ctx.finalVoiceDimensions as any)
+          : undefined,
         version: existing.version + 1,
         feedback: body.instruction,
       },
@@ -246,6 +261,48 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
     }
     logger.error({ err: err.message }, "Refine failed");
     res.status(502).json(buildErrorResponse(req, "AI refinement failed"));
+  }
+});
+
+// Batch generate drafts from long-form content (PDF/article)
+const batchFromContentSchema = z.object({
+  content: z.string().min(50, "Content must be at least 50 characters"),
+  sourceType: z.enum(["REPORT", "ARTICLE"]),
+  sourceUrl: z.string().optional(),
+  createCampaign: z.boolean().optional(),
+  campaignTitle: z.string().optional(),
+});
+
+draftsRouter.post("/batch-from-content", async (req: AuthRequest, res) => {
+  try {
+    const body = batchFromContentSchema.parse(req.body);
+
+    // Step 1: Extract insights from content
+    const insights = await extractInsights(body.content);
+
+    // Step 2: Generate a draft for each insight
+    const result = await batchGenerateDrafts({
+      userId: req.userId!,
+      insights,
+      sourceContent: body.content,
+      sourceType: body.sourceType,
+      sourceUrl: body.sourceUrl,
+      createCampaign: body.createCampaign,
+      campaignTitle: body.campaignTitle,
+    });
+
+    res.json(success({ insights, drafts: result.drafts, campaign: result.campaign }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    if (err.message?.includes("too short") || err.message?.includes("minimum 50")) {
+      return res.status(400).json(buildErrorResponse(req, err.message));
+    }
+    logger.error({ err: err.message }, "Batch generation failed");
+    res.status(500).json(buildErrorResponse(req, "Batch generation failed"));
   }
 });
 
@@ -315,7 +372,13 @@ draftsRouter.get("/queue", async (req: AuthRequest, res) => {
       return { ...draft, _score: Math.round(score * 10) / 10 };
     });
 
-    scored.sort((a, b) => b._score - a._score);
+    // Manual sortOrder takes priority over algorithm score
+    scored.sort((a, b) => {
+      if (a.sortOrder != null && b.sortOrder != null) return a.sortOrder - b.sortOrder;
+      if (a.sortOrder != null) return -1;
+      if (b.sortOrder != null) return 1;
+      return b._score - a._score;
+    });
 
     // Suggest posting slots at crypto twitter peak hours (ET)
     const peakSlots = [9, 10, 13, 14, 19, 20];
@@ -717,6 +780,22 @@ draftsRouter.post("/:id/schedule", authenticate, async (req: AuthRequest, res) =
     });
     if (!draft) return res.status(404).json(buildErrorResponse(req, "Draft not found"));
 
+    // Check for scheduling conflicts (within 90 minutes)
+    const CONFLICT_WINDOW_MS = 90 * 60 * 1000;
+    const scheduleTime = new Date(body.scheduledAt).getTime();
+    const nearbyDrafts = await prisma.tweetDraft.findMany({
+      where: {
+        userId: req.userId!,
+        status: "SCHEDULED",
+        id: { not: draft.id },
+        scheduledAt: {
+          gte: new Date(scheduleTime - CONFLICT_WINDOW_MS),
+          lte: new Date(scheduleTime + CONFLICT_WINDOW_MS),
+        },
+      },
+      select: { id: true, content: true, scheduledAt: true },
+    });
+
     const updated = await prisma.tweetDraft.update({
       where: { id: draft.id },
       data: { status: "SCHEDULED", scheduledAt: scheduledDate },
@@ -727,7 +806,14 @@ draftsRouter.post("/:id/schedule", authenticate, async (req: AuthRequest, res) =
     });
 
     logger.info({ userId: req.userId, draftId: draft.id, scheduledAt: body.scheduledAt }, "Draft scheduled");
-    res.json(success({ draft: updated }));
+    res.json(success({
+      draft: updated,
+      conflicts: nearbyDrafts.map(d => ({
+        id: d.id,
+        content: d.content?.slice(0, 80),
+        scheduledAt: d.scheduledAt,
+      })),
+    }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
@@ -795,5 +881,117 @@ draftsRouter.post("/process-scheduled", authenticate, async (req: AuthRequest, r
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to process scheduled drafts");
     res.status(500).json(buildErrorResponse(req, "Failed to process scheduled drafts"));
+  }
+});
+
+// Reorder queue — persist manual positions
+const reorderSchema = z.object({
+  orderedIds: z.array(z.string()).min(1),
+});
+
+draftsRouter.patch("/queue/reorder", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { orderedIds } = reorderSchema.parse(req.body);
+
+    // Verify all drafts belong to this user
+    const drafts = await prisma.tweetDraft.findMany({
+      where: { id: { in: orderedIds }, userId: req.userId! },
+      select: { id: true },
+    });
+
+    const ownedIds = new Set(drafts.map((d) => d.id));
+    const validIds = orderedIds.filter((id) => ownedIds.has(id));
+
+    // Update sortOrder for each draft in a transaction
+    await prisma.$transaction(
+      validIds.map((id, index) =>
+        prisma.tweetDraft.update({
+          where: { id },
+          data: { sortOrder: index + 1 },
+        })
+      )
+    );
+
+    logger.info({ userId: req.userId, count: validIds.length }, "Queue reordered");
+    res.json(success({ reordered: validIds.length }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    logger.error({ err: err.message }, "Failed to reorder queue");
+    res.status(500).json(buildErrorResponse(req, "Failed to reorder queue"));
+  }
+});
+
+// Reset queue to algorithm order
+draftsRouter.post("/queue/reset-order", authenticate, async (req: AuthRequest, res) => {
+  try {
+    await prisma.tweetDraft.updateMany({
+      where: { userId: req.userId!, sortOrder: { not: null } },
+      data: { sortOrder: null },
+    });
+
+    logger.info({ userId: req.userId }, "Queue order reset to auto");
+    res.json(success({ reset: true }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to reset queue order");
+    res.status(500).json(buildErrorResponse(req, "Failed to reset queue order"));
+  }
+});
+
+// --- Intelligent Schedule Endpoints ---
+
+// Get recommended schedule for user's queued drafts
+draftsRouter.get("/schedule", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { timezone = "America/New_York" } = req.query;
+
+    const schedule = await generateSchedule(
+      req.userId!,
+      undefined,
+      timezone as string,
+    );
+
+    res.json(success({
+      schedule: schedule.slots,
+      total: schedule.slots.length,
+      generatedAt: schedule.generatedAt,
+      timezone: schedule.timezone,
+    }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to generate schedule");
+    res.status(500).json(buildErrorResponse(req, "Failed to generate schedule"));
+  }
+});
+
+// Apply recommended schedule — sets scheduledAt on each draft
+const applyScheduleSchema = z.object({
+  slots: z.array(z.object({
+    draftId: z.string(),
+    recommendedTime: z.string().datetime(),
+  })).min(1),
+});
+
+draftsRouter.post("/schedule/apply", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const body = applyScheduleSchema.parse(req.body);
+
+    const result = await applySchedule(req.userId!, body.slots as Array<{draftId: string; recommendedTime: string}>);
+
+    logger.info(
+      { userId: req.userId, applied: result.applied, skipped: result.skipped },
+      "Schedule applied",
+    );
+
+    res.json(success({
+      applied: result.applied,
+      skipped: result.skipped,
+    }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    logger.error({ err: err.message }, "Failed to apply schedule");
+    res.status(500).json(buildErrorResponse(req, "Failed to apply schedule"));
   }
 });

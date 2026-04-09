@@ -139,6 +139,68 @@ export function generateOAuthUrl(state: string): { url: string; codeVerifier: st
   return { url: `https://twitter.com/i/oauth2/authorize?${params}`, codeVerifier };
 }
 
+/**
+ * Generate OAuth URL for login flow (uses login-specific callback URL).
+ */
+export function generateLoginOAuthUrl(state: string): { url: string; codeVerifier: string } {
+  const clientId = config.TWITTER_CLIENT_ID;
+  const callbackUrl = config.TWITTER_LOGIN_CALLBACK_URL || config.TWITTER_OAUTH_CALLBACK_URL;
+  if (!clientId || !callbackUrl) throw new Error("TWITTER_CLIENT_ID and callback URL required");
+
+  const codeVerifier = crypto.randomBytes(32).toString("base64url");
+  const codeChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
+
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: callbackUrl,
+    scope: "tweet.read tweet.write users.read offline.access",
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256",
+  });
+
+  return { url: `https://twitter.com/i/oauth2/authorize?${params}`, codeVerifier };
+}
+
+/**
+ * Exchange code for tokens using login callback URL.
+ */
+export async function exchangeLoginCodeForTokens(code: string, codeVerifier: string): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+}> {
+  const clientId = config.TWITTER_CLIENT_ID;
+  const clientSecret = config.TWITTER_CLIENT_SECRET;
+  const callbackUrl = config.TWITTER_LOGIN_CALLBACK_URL || config.TWITTER_OAUTH_CALLBACK_URL;
+  if (!clientId || !clientSecret || !callbackUrl) throw new Error("X OAuth credentials not configured");
+
+  const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+
+  const res = await fetch("https://api.twitter.com/2/oauth2/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${basicAuth}`,
+    },
+    body: new URLSearchParams({
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: callbackUrl,
+      code_verifier: codeVerifier,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`X token exchange failed (${res.status}): ${body}`);
+  }
+
+  const data = await res.json() as { access_token: string; refresh_token: string; expires_in: number };
+  return { accessToken: data.access_token, refreshToken: data.refresh_token, expiresIn: data.expires_in };
+}
+
 export async function exchangeCodeForTokens(code: string, codeVerifier: string): Promise<{
   accessToken: string;
   refreshToken: string;
@@ -204,6 +266,47 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
 
   const data = await res.json() as { access_token: string; refresh_token: string; expires_in: number };
   return { accessToken: data.access_token, refreshToken: data.refresh_token, expiresIn: data.expires_in };
+}
+
+// --- Authenticated User Profile ---
+
+export interface TwitterUserProfile {
+  id: string;
+  username: string;
+  name: string;
+  description?: string;
+  profile_image_url?: string;
+  public_metrics?: {
+    followers_count: number;
+    following_count: number;
+    tweet_count: number;
+  };
+}
+
+/**
+ * Fetch the authenticated user's full profile using an OAuth 2.0 user token.
+ * Returns handle, display name, bio, avatar (400x400), and follower count.
+ */
+export async function fetchTwitterUserProfile(accessToken: string): Promise<TwitterUserProfile> {
+  const res = await fetch(
+    `${TWITTER_API_BASE}/users/me?user.fields=description,profile_image_url,public_metrics`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Twitter /users/me failed (${res.status}): ${body}`);
+  }
+
+  const data = await res.json() as { data: TwitterUserProfile };
+  if (!data.data) throw new Error("Twitter /users/me returned empty data");
+
+  // Upsize avatar from 48px to 400px
+  if (data.data.profile_image_url) {
+    data.data.profile_image_url = data.data.profile_image_url.replace("_normal", "_400x400");
+  }
+
+  return data.data;
 }
 
 export async function postTweet(accessToken: string, text: string, replyToId?: string): Promise<{ id: string; text: string }> {
