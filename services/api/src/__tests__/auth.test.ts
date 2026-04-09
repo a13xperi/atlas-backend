@@ -90,12 +90,26 @@ describe("POST /api/auth/register", () => {
 });
 
 describe("POST /api/auth/login", () => {
-  it("returns 401 when user not found (legacy fallback)", async () => {
+  it("returns 401 when Supabase is unavailable and no legacy user exists", async () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
     const res = await request(app)
       .post("/api/auth/login")
       .send({ email: "test@example.com", password: "secret123" });
     expect(res.status).toBe(401);
+  }, 15000);
+
+  it("returns a legacy JWT when Supabase is unavailable and credentials are valid", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      ...mockUser,
+      passwordHash: "hashed_password",
+    });
+
+    const res = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "test@example.com", password: "secret123" });
+
+    expect(res.status).toBe(200);
+    expect(expectSuccessResponse<any>(res.body).token).toBeDefined();
   }, 15000);
 });
 
