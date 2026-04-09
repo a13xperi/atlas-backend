@@ -5,6 +5,7 @@
 
 import { prisma } from "./prisma";
 import { logger } from "./logger";
+import { runScheduledBackupIfDue } from "./backup";
 
 const POLL_INTERVAL_MS = 60_000; // Check every minute
 
@@ -158,11 +159,12 @@ export { fetchPostedDraftMetrics };
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let metricsIntervalId: ReturnType<typeof setInterval> | null = null;
+let backupIntervalId: ReturnType<typeof setInterval> | null = null;
 
 export function startScheduler(): void {
   if (intervalId) return; // Already running
 
-  logger.info("Starting draft scheduler (60s interval) + metrics fetcher (15m interval)");
+  logger.info("Starting draft scheduler (60s interval) + metrics fetcher (15m interval) + backup scheduler (60s interval)");
 
   intervalId = setInterval(async () => {
     try {
@@ -186,6 +188,24 @@ export function startScheduler(): void {
     }
   }, METRICS_INTERVAL_MS);
 
+  backupIntervalId = setInterval(async () => {
+    try {
+      const result = await runScheduledBackupIfDue();
+      if (result) {
+        logger.info(
+          {
+            backupLogId: result.id,
+            provider: result.provider,
+            storageUrl: result.storageUrl,
+          },
+          "Scheduled backup cycle complete"
+        );
+      }
+    } catch (err: any) {
+      logger.error({ err: err.message }, "Scheduled backup cycle failed");
+    }
+  }, POLL_INTERVAL_MS);
+
   // Run once immediately on startup
   void processScheduledDrafts().catch((err) => {
     logger.error({ err: err.message }, "Initial scheduler run failed");
@@ -196,10 +216,14 @@ export function startScheduler(): void {
       logger.error({ err: err.message }, "Initial metrics fetch failed");
     });
   }, 30_000);
+  void runScheduledBackupIfDue().catch((err) => {
+    logger.error({ err: err.message }, "Initial backup scheduler check failed");
+  });
 }
 
 export function stopScheduler(): void {
   if (intervalId) { clearInterval(intervalId); intervalId = null; }
   if (metricsIntervalId) { clearInterval(metricsIntervalId); metricsIntervalId = null; }
+  if (backupIntervalId) { clearInterval(backupIntervalId); backupIntervalId = null; }
   logger.info("Schedulers stopped");
 }

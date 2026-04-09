@@ -16,10 +16,11 @@ function signLegacyToken(userId: string): string {
 }
 
 export const authRouter = Router();
-
-// Rate limits: 20 login attempts/min, 10 registrations/min per IP
-const loginLimiter = rateLimit(20, 60 * 1000);
-const registerLimiter = rateLimit(10, 60 * 1000);
+const authRateLimiter = rateLimit(
+  config.RATE_LIMIT_AUTH_MAX_REQUESTS,
+  config.RATE_LIMIT_AUTH_WINDOW_MS,
+);
+authRouter.use(authRateLimiter);
 
 // --- Schemas ---
 
@@ -50,7 +51,7 @@ const linkAccountSchema = z.object({
 // --- Routes ---
 
 // Register — Supabase auth with legacy bcrypt fallback
-authRouter.post("/register", registerLimiter, async (req, res) => {
+authRouter.post("/register", async (req, res) => {
   try {
     const body = registerSchema.parse(req.body);
 
@@ -133,7 +134,7 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
 });
 
 // Login — Supabase auth with legacy bcrypt fallback
-authRouter.post("/login", loginLimiter, async (req, res) => {
+authRouter.post("/login", async (req, res) => {
   try {
     const body = loginSchema.parse(req.body);
 

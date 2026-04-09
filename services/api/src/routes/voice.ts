@@ -6,7 +6,7 @@ import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { fetchTweetsByHandle } from "../lib/twitter";
-import { calibrateFromTweets } from "../lib/calibrate";
+import { calibrateFromTweets, type CalibrationResult } from "../lib/calibrate";
 import { getVoiceInsights } from "../lib/voice-insights";
 import { blendVoices } from "../lib/voice-blend";
 import { logger } from "../lib/logger";
@@ -18,13 +18,78 @@ referenceAccountsRouter.get("/reference-accounts", async (_req, res) => {
   try {
     const accounts = await prisma.referenceVoice.findMany({
       where: { isGlobal: true, isActive: true },
-      select: { id: true, name: true, handle: true, avatarUrl: true, category: true },
+      include: { voiceProfile: true },
       orderBy: [{ category: "asc" }, { name: "asc" }],
     });
-    res.json(success({ accounts }));
+    res.json(success({ accounts: accounts.map(formatReferenceAccount) }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to load reference accounts");
     res.status(500).json(error("Failed to load reference accounts"));
+  }
+});
+
+const referenceAccountSeedSchema = z.object({
+  handle: z.string().min(1).max(50),
+});
+
+referenceAccountsRouter.post("/reference-accounts/seed", async (req, res) => {
+  try {
+    const body = referenceAccountSeedSchema.parse(req.body);
+    const normalizedHandle = normalizeReferenceHandle(body.handle);
+    const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle, 30);
+
+    if (tweets.length === 0) {
+      return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
+    }
+
+    const calibration = await calibrateFromTweets(tweets.map((tweet) => tweet.text));
+    const sampleTweets = tweets.slice(0, 5).map((tweet) => tweet.text);
+
+    const existingAccount = await prisma.referenceVoice.findFirst({
+      where: {
+        isGlobal: true,
+        OR: [{ handle: normalizedHandle }, { handle: `@${normalizedHandle}` }],
+      },
+    });
+
+    const account = existingAccount
+      ? await prisma.referenceVoice.update({
+          where: { id: existingAccount.id },
+          data: {
+            name: twitterUser.name,
+            handle: normalizedHandle,
+            avatarUrl: twitterUser.profile_image_url ?? null,
+            isGlobal: true,
+            isActive: true,
+          },
+        })
+      : await prisma.referenceVoice.create({
+          data: {
+            name: twitterUser.name,
+            handle: normalizedHandle,
+            avatarUrl: twitterUser.profile_image_url ?? null,
+            isGlobal: true,
+            isActive: true,
+          },
+        });
+
+    const voiceProfile = await prisma.referenceVoiceProfile.upsert({
+      where: { referenceVoiceId: account.id },
+      update: buildReferenceVoiceProfileData(calibration, sampleTweets),
+      create: {
+        referenceVoiceId: account.id,
+        ...buildReferenceVoiceProfileData(calibration, sampleTweets),
+      },
+    });
+
+    res.json(success(formatReferenceAccount({ ...account, voiceProfile })));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+
+    logger.error({ err: err.message }, "Failed to seed reference account");
+    res.status(502).json(error("Failed to seed reference account"));
   }
 });
 
@@ -64,6 +129,117 @@ function buildVoiceProfileData(body: ProfileInput) {
     ...(body.selfPromotionalIntensity !== undefined && {
       selfPromotionalIntensity: body.selfPromotionalIntensity,
     }),
+  };
+}
+
+function normalizeReferenceHandle(handle: string) {
+  return handle.replace(/^@/, "").trim().toLowerCase();
+}
+
+function resolveVoiceMaturity(tweetsAnalyzed: number) {
+  if (tweetsAnalyzed >= 100) return VoiceMaturity.ADVANCED;
+  if (tweetsAnalyzed >= 20) return VoiceMaturity.INTERMEDIATE;
+  return VoiceMaturity.BEGINNER;
+}
+
+function buildCalibrationDimensions(calibration: CalibrationResult) {
+  return {
+    humor: calibration.humor,
+    formality: calibration.formality,
+    brevity: calibration.brevity,
+    contrarianTone: calibration.contrarianTone,
+    directness: calibration.directness,
+    warmth: calibration.warmth,
+    technicalDepth: calibration.technicalDepth,
+    confidence: calibration.confidence,
+    evidenceOrientation: calibration.evidenceOrientation,
+    solutionOrientation: calibration.solutionOrientation,
+    socialPosture: calibration.socialPosture,
+    selfPromotionalIntensity: calibration.selfPromotionalIntensity,
+  };
+}
+
+function buildVoiceProfileUpdate(calibration: CalibrationResult) {
+  return {
+    ...buildCalibrationDimensions(calibration),
+    tweetsAnalyzed: calibration.tweetsAnalyzed,
+    maturity: resolveVoiceMaturity(calibration.tweetsAnalyzed),
+  };
+}
+
+function buildReferenceVoiceProfileData(
+  calibration: CalibrationResult,
+  sampleTweets: string[],
+) {
+  return {
+    ...buildCalibrationDimensions(calibration),
+    calibrationConfidence: calibration.calibrationConfidence,
+    analysis: calibration.analysis,
+    tweetsAnalyzed: calibration.tweetsAnalyzed,
+    sampleTweets,
+  };
+}
+
+type ReferenceVoiceProfileSnapshot = {
+  humor: number;
+  formality: number;
+  brevity: number;
+  contrarianTone: number;
+  directness: number;
+  warmth: number;
+  technicalDepth: number;
+  confidence: number;
+  evidenceOrientation: number;
+  solutionOrientation: number;
+  socialPosture: number;
+  selfPromotionalIntensity: number;
+  calibrationConfidence: number | null;
+  analysis: string | null;
+  tweetsAnalyzed: number;
+  sampleTweets: string[];
+};
+
+function formatReferenceVoiceProfile(profile: ReferenceVoiceProfileSnapshot | null) {
+  if (!profile) {
+    return null;
+  }
+
+  return {
+    humor: profile.humor,
+    formality: profile.formality,
+    brevity: profile.brevity,
+    contrarianTone: profile.contrarianTone,
+    directness: profile.directness,
+    warmth: profile.warmth,
+    technicalDepth: profile.technicalDepth,
+    confidence: profile.confidence,
+    evidenceOrientation: profile.evidenceOrientation,
+    solutionOrientation: profile.solutionOrientation,
+    socialPosture: profile.socialPosture,
+    selfPromotionalIntensity: profile.selfPromotionalIntensity,
+    calibrationConfidence: profile.calibrationConfidence,
+    analysis: profile.analysis,
+    tweetsAnalyzed: profile.tweetsAnalyzed,
+  };
+}
+
+function formatReferenceAccount(account: {
+  id: string;
+  name: string;
+  handle: string | null;
+  avatarUrl: string | null;
+  category: string | null;
+  voiceProfile: ReferenceVoiceProfileSnapshot | null;
+}) {
+  return {
+    id: account.id,
+    handle: account.handle ?? undefined,
+    displayName: account.name,
+    name: account.name,
+    avatarUrl: account.avatarUrl ?? undefined,
+    category: account.category ?? undefined,
+    voiceProfile: formatReferenceVoiceProfile(account.voiceProfile),
+    sampleTweets: account.voiceProfile?.sampleTweets ?? [],
   };
 }
 
@@ -365,12 +541,13 @@ const calibrateSchema = z.object({
 voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
   try {
     const body = calibrateSchema.parse(req.body);
+    const normalizedHandle = normalizeReferenceHandle(body.handle);
 
     // Fetch tweets from Twitter/X
-    const { user: twitterUser, tweets } = await fetchTweetsByHandle(body.handle);
+    const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle);
 
     if (tweets.length === 0) {
-      return res.status(400).json(error(`No tweets found for @${body.handle}`));
+      return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
     }
 
     // Claude calibration can take tens of seconds on larger tweet sets, so Railway deploys
@@ -378,24 +555,7 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
     const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
 
     // Update voice profile with all 12 calibrated dimensions
-    const dimensionData = {
-      humor: calibration.humor,
-      formality: calibration.formality,
-      brevity: calibration.brevity,
-      contrarianTone: calibration.contrarianTone,
-      directness: calibration.directness,
-      warmth: calibration.warmth,
-      technicalDepth: calibration.technicalDepth,
-      confidence: calibration.confidence,
-      evidenceOrientation: calibration.evidenceOrientation,
-      solutionOrientation: calibration.solutionOrientation,
-      socialPosture: calibration.socialPosture,
-      selfPromotionalIntensity: calibration.selfPromotionalIntensity,
-      tweetsAnalyzed: calibration.tweetsAnalyzed,
-      maturity: calibration.tweetsAnalyzed >= 100 ? VoiceMaturity.ADVANCED
-        : calibration.tweetsAnalyzed >= 20 ? VoiceMaturity.INTERMEDIATE
-        : VoiceMaturity.BEGINNER,
-    };
+    const dimensionData = buildVoiceProfileUpdate(calibration);
 
     const profile = await prisma.voiceProfile.upsert({
       where: { userId: req.userId! },

@@ -11,6 +11,7 @@ import { logger } from "./logger";
 import { config } from "./config";
 import { Telegraf } from "telegraf";
 import { prisma } from "./prisma";
+import { sendTelegramMessage } from "./telegramClient";
 
 let bot: Telegraf | null = null;
 
@@ -198,8 +199,6 @@ export async function deliverAlert(
   alert: { title: string; context?: string | null; sourceUrl?: string | null; sentiment?: string | null },
   chatId: string
 ): Promise<boolean> {
-  if (!bot) return false;
-
   const sentiment = alert.sentiment ? ` [${alert.sentiment.toUpperCase()}]` : "";
   let message = `\u{1f52e} ${alert.title}${sentiment}`;
 
@@ -210,13 +209,12 @@ export async function deliverAlert(
     message += `\n\nSource: ${alert.sourceUrl}`;
   }
 
-  try {
-    await bot.telegram.sendMessage(chatId, message);
-    return true;
-  } catch (err) {
-    logger.error({ err, chatId }, "[telegram] Failed to deliver alert");
-    return false;
+  const delivered = await sendTelegramMessage(chatId, message);
+  if (!delivered) {
+    logger.error({ chatId }, "[telegram] Failed to deliver alert");
   }
+
+  return delivered;
 }
 
 /**
