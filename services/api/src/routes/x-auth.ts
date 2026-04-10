@@ -92,20 +92,20 @@ xAuthRouter.get("/callback", async (req, res) => {
     const { code, state, error: oauthError } = req.query;
 
     if (oauthError) {
-      return res.redirect(`${frontendUrl}/login?error=access_denied`);
+      return res.redirect(`${frontendUrl}/?error=access_denied`);
     }
     if (!code || !state || typeof code !== "string" || typeof state !== "string") {
-      return res.redirect(`${frontendUrl}/login?error=missing_params`);
+      return res.redirect(`${frontendUrl}/?error=missing_params`);
     }
 
     const pending = await getPendingOAuth(state);
     if (!pending || pending.expiresAt < Date.now()) {
-      return res.redirect(`${frontendUrl}/login?error=session_expired`);
+      return res.redirect(`${frontendUrl}/?error=session_expired`);
     }
 
     // Only handle login flow here — link flow uses POST
     if (pending.flow !== "login") {
-      return res.redirect(`${frontendUrl}/login?error=invalid_flow`);
+      return res.redirect(`${frontendUrl}/?error=invalid_flow`);
     }
 
     const { accessToken, refreshToken, expiresIn } = await exchangeCodeForTokens(code, pending.codeVerifier);
@@ -118,12 +118,16 @@ xAuthRouter.get("/callback", async (req, res) => {
     const xAvatarUrl = profile.profile_image_url ?? null;
     const xFollowerCount = profile.public_metrics?.followers_count ?? null;
 
-    let user = await prisma.user.findFirst({ where: { xHandle } });
+    // Find by xHandle first, then fall back to handle (for users who registered before linking X)
+    let user = await prisma.user.findFirst({
+      where: { OR: [{ xHandle }, { handle: xHandle }] },
+    });
 
     if (user) {
       user = await prisma.user.update({
         where: { id: user.id },
         data: {
+          xHandle,
           xAccessToken: accessToken,
           xRefreshToken: refreshToken,
           xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
@@ -160,7 +164,7 @@ xAuthRouter.get("/callback", async (req, res) => {
     res.redirect(`${frontendUrl}/auth/callback?token=${encodeURIComponent(token)}&provider=twitter`);
   } catch (err: any) {
     logger.error({ err: err.message, stack: err.stack }, "Twitter login callback failed");
-    res.redirect(`${frontendUrl}/login?error=callback_failed`);
+    res.redirect(`${frontendUrl}/?error=callback_failed`);
   }
 });
 
@@ -333,20 +337,20 @@ twitterLoginRouter.get("/callback", async (req, res) => {
     // User denied access on X
     if (oauthError) {
       logger.warn({ oauthError }, "Twitter login denied by user");
-      return res.redirect(`${frontendUrl}/login?error=access_denied`);
+      return res.redirect(`${frontendUrl}/?error=access_denied`);
     }
 
     if (!code || !state || typeof code !== "string" || typeof state !== "string") {
-      return res.redirect(`${frontendUrl}/login?error=missing_params`);
+      return res.redirect(`${frontendUrl}/?error=missing_params`);
     }
 
     // Retrieve and validate PKCE verifier
     const pending = await getPendingOAuth(state);
     if (!pending || pending.expiresAt < Date.now()) {
-      return res.redirect(`${frontendUrl}/login?error=session_expired`);
+      return res.redirect(`${frontendUrl}/?error=session_expired`);
     }
     if (pending.flow !== "login") {
-      return res.redirect(`${frontendUrl}/login?error=invalid_flow`);
+      return res.redirect(`${frontendUrl}/?error=invalid_flow`);
     }
 
     // Exchange authorization code for tokens
@@ -361,14 +365,17 @@ twitterLoginRouter.get("/callback", async (req, res) => {
     const xAvatarUrl = profile.profile_image_url ?? null;
     const xFollowerCount = profile.public_metrics?.followers_count ?? null;
 
-    // Find existing user by xHandle, or create new one
-    let user = await prisma.user.findFirst({ where: { xHandle } });
+    // Find by xHandle first, then fall back to handle (for users who registered before linking X)
+    let user = await prisma.user.findFirst({
+      where: { OR: [{ xHandle }, { handle: xHandle }] },
+    });
 
     if (user) {
       // Returning user — update tokens + profile data
       user = await prisma.user.update({
         where: { id: user.id },
         data: {
+          xHandle,
           xAccessToken: accessToken,
           xRefreshToken: refreshToken,
           xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
@@ -409,6 +416,6 @@ twitterLoginRouter.get("/callback", async (req, res) => {
     res.redirect(`${frontendUrl}/auth/callback?token=${encodeURIComponent(token)}&provider=twitter`);
   } catch (err: any) {
     logger.error({ err: err.message, stack: err.stack }, "Twitter login callback failed");
-    res.redirect(`${frontendUrl}/login?error=callback_failed`);
+    res.redirect(`${frontendUrl}/?error=callback_failed`);
   }
 });
