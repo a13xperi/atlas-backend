@@ -24,8 +24,10 @@ export interface ArenaLeaderboardEntry {
   badge: string;
 }
 
+export type ArenaPeriod = "last_7_days" | "last_30_days" | "all_time";
+
 export interface ArenaLeaderboardResult {
-  period: "last_30_days";
+  period: ArenaPeriod;
   entries: ArenaLeaderboardEntry[];
   userRank: ArenaLeaderboardEntry | null;
 }
@@ -124,6 +126,7 @@ export function buildArenaLeaderboard(input: {
   users: ArenaUser[];
   publishedDrafts: ArenaPublishedDraft[];
   requestingUserId: string;
+  period?: ArenaPeriod;
 }): ArenaLeaderboardResult {
   const statsByUser = new Map<string, {
     user: ArenaUser;
@@ -222,7 +225,7 @@ export function buildArenaLeaderboard(input: {
     });
 
   return {
-    period: "last_30_days",
+    period: input.period ?? "last_30_days",
     entries,
     userRank: entries.find((entry) => entry.userId === input.requestingUserId) ?? null,
   };
