@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildArenaLeaderboard, type ArenaPublishedDraft } from "../lib/arena";
-import { calculateStreaksForUsers, type StreakResult } from "../lib/streak";
+import { calculateStreak, calculateStreaksForUsers } from "../lib/streak";
 
 export const arenaRouter = Router();
 arenaRouter.use(authenticate);
@@ -120,17 +120,44 @@ arenaRouter.get("/leaderboard", async (req: AuthRequest, res) => {
       });
     }
 
+    // Real consecutive-day streak across ALL analytics activity (drafts,
+    // feedback, voice refinement, session starts, etc.) — replaces the old
+    // proxy that only looked at DRAFT_POSTED events. Graceful fallback:
+    // if the streak query fails we still return a valid leaderboard using
+    // the post-dates proxy that buildArenaLeaderboard computes internally.
+    const streakResults = await calculateStreaksForUsers(userIds).catch(
+      () => new Map<string, { currentStreak: number; longestStreak: number; status: "active" | "at_risk" | "broken"; lastActivityAt: Date | null }>()
+    );
+    const streakByUserId = new Map<string, number>();
+    for (const [id, result] of streakResults.entries()) {
+      streakByUserId.set(id, result.currentStreak);
+    }
+
     const leaderboard = buildArenaLeaderboard({
       users,
       publishedDrafts,
       requestingUserId: req.userId!,
       period,
+      streakByUserId,
     });
+
+    // Surface full streak detail (current, longest, status) on every entry
+    // so the portal can render "On Fire", "At Risk", etc. without a second
+    // round-trip.
+    const entries = leaderboard.entries.map((entry) => {
+      const streak = streakResults.get(entry.userId);
+      return {
+        ...entry,
+        longestStreak: streak?.longestStreak ?? entry.consistencyStreak,
+        streakStatus: streak?.status ?? "broken",
+      };
+    });
+    const userRank = entries.find((entry) => entry.userId === req.userId) ?? null;
 
     res.json(success({
       period: leaderboard.period,
-      entries: leaderboard.entries,
-      userRank: leaderboard.userRank,
+      entries,
+      userRank,
     }));
   } catch (err: any) {
     res.status(500).json(error("Failed to load arena leaderboard", 500));
@@ -200,13 +227,36 @@ arenaRouter.get("/me", async (req: AuthRequest, res) => {
         });
       }
 
-      return buildArenaLeaderboard({ users: [user], publishedDrafts, requestingUserId: req.userId! });
+      // Real streak computed from every analytics event for this user,
+      // not just DRAFT_POSTED rows. Graceful fallback to a "broken" streak
+      // if the query fails so /me never 500s over a nice-to-have field.
+      const realStreak = await calculateStreak(req.userId!).catch(() => ({
+        currentStreak: 0,
+        longestStreak: 0,
+        status: "broken" as const,
+        lastActivityAt: null,
+      }));
+      const streakByUserId = new Map<string, number>([
+        [req.userId!, realStreak.currentStreak],
+      ]);
+
+      const built = buildArenaLeaderboard({
+        users: [user],
+        publishedDrafts,
+        requestingUserId: req.userId!,
+        streakByUserId,
+      });
+      return { built, realStreak };
     })();
 
-    if (!leaderboard || !leaderboard.userRank) {
+    if (!leaderboard || !leaderboard.built.userRank) {
       return res.status(404).json(error("User not found in arena", 404));
     }
-    res.json(success({ ...leaderboard.userRank }));
+    res.json(success({
+      ...leaderboard.built.userRank,
+      longestStreak: leaderboard.realStreak.longestStreak,
+      streakStatus: leaderboard.realStreak.status,
+    }));
   } catch (err: any) {
     res.status(500).json(error("Failed to load arena rank", 500));
   }
