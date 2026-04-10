@@ -313,13 +313,19 @@ authRouter.get("/me", authenticate, async (req: AuthRequest, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
-      include: { voiceProfile: true },
+      select: {
+        id: true,
+        handle: true,
+        role: true,
+        xBio: true,
+        xAvatarUrl: true,
+        xFollowerCount: true,
+        voiceProfile: true,
+      },
     });
     if (!user) return res.status(404).json(error("User not found"));
 
-    res.json(success({
-      user: { id: user.id, handle: user.handle, role: user.role, voiceProfile: user.voiceProfile },
-    }));
+    res.json(success({ user }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Me error:", err.message);
     res.status(500).json(error("Failed to get user"));
