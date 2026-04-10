@@ -57,6 +57,9 @@ const mockUser = {
   handle: "testuser",
   email: "test@example.com",
   role: "ANALYST",
+  xBio: "Crypto analyst",
+  xAvatarUrl: "https://example.com/avatar.jpg",
+  xFollowerCount: 12345,
   voiceProfile: null,
 };
 
@@ -145,5 +148,20 @@ describe("GET /api/auth/me", () => {
     const data = expectSuccessResponse<any>(res.body);
     expect(data.user.id).toBe("user-123");
     expect(data.user.voiceProfile).toBeDefined();
+    expect(data.user.xBio).toBe("Crypto analyst");
+    expect(data.user.xAvatarUrl).toBe("https://example.com/avatar.jpg");
+    expect(data.user.xFollowerCount).toBe(12345);
+    expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "user-123" },
+      select: {
+        id: true,
+        handle: true,
+        role: true,
+        xBio: true,
+        xAvatarUrl: true,
+        xFollowerCount: true,
+        voiceProfile: true,
+      },
+    });
   });
 });

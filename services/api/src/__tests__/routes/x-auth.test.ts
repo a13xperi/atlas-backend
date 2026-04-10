@@ -33,6 +33,7 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/twitter", () => ({
   generateOAuthUrl: jest.fn(),
   exchangeCodeForTokens: jest.fn(),
+  fetchTwitterUserProfile: jest.fn(),
   lookupUser: jest.fn(),
 }));
 
@@ -42,13 +43,13 @@ const setIntervalSpy = jest.spyOn(global, "setInterval").mockImplementation(
 );
 
 import { prisma } from "../../lib/prisma";
-import { generateOAuthUrl, exchangeCodeForTokens } from "../../lib/twitter";
+import { generateOAuthUrl, exchangeCodeForTokens, fetchTwitterUserProfile } from "../../lib/twitter";
 import { xAuthRouter } from "../../routes/x-auth";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 const mockGenerateOAuthUrl = generateOAuthUrl as jest.MockedFunction<typeof generateOAuthUrl>;
 const mockExchangeCodeForTokens = exchangeCodeForTokens as jest.MockedFunction<typeof exchangeCodeForTokens>;
-const mockFetch = jest.fn();
+const mockFetchTwitterUserProfile = fetchTwitterUserProfile as jest.MockedFunction<typeof fetchTwitterUserProfile>;
 
 const app = express();
 app.use(express.json());
@@ -56,27 +57,18 @@ app.use(requestIdMiddleware);
 app.use("/api/auth/x", xAuthRouter);
 
 const AUTH = { Authorization: "Bearer mock_token" };
-const originalFetch = global.fetch;
 
 beforeAll(() => {
   process.env.JWT_SECRET = "test-secret";
-  global.fetch = mockFetch as typeof fetch;
 });
 
 afterAll(() => {
   delete process.env.JWT_SECRET;
   setIntervalSpy.mockRestore();
-
-  if (originalFetch) {
-    global.fetch = originalFetch;
-  } else {
-    (global as any).fetch = undefined;
-  }
 });
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockFetch.mockReset();
 
   mockGenerateOAuthUrl.mockImplementation((state: string) => ({
     url: `https://twitter.example.com/i/oauth2/authorize?state=${state}`,
@@ -87,6 +79,18 @@ beforeEach(() => {
     accessToken: "access-token",
     refreshToken: "refresh-token",
     expiresIn: 3600,
+  });
+  mockFetchTwitterUserProfile.mockResolvedValue({
+    id: "x-user-1",
+    username: "atlas_handle",
+    name: "Atlas Handle",
+    description: "Crypto analyst",
+    profile_image_url: "https://example.com/avatar_400x400.jpg",
+    public_metrics: {
+      followers_count: 12345,
+      following_count: 50,
+      tweet_count: 100,
+    },
   });
 
   (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue(null);
@@ -165,25 +169,18 @@ describe("POST /api/auth/x/callback", () => {
     expect(callbackRes.body.error).toBe("OAuth session expired. Please try again.");
     expect(callbackRes.body.message).toBe("OAuth session expired. Please try again.");
     expect(mockExchangeCodeForTokens).not.toHaveBeenCalled();
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockFetchTwitterUserProfile).not.toHaveBeenCalled();
 
     nowSpy.mockRestore();
   });
 
-  it("exchanges code for tokens and stores them", async () => {
+  it("exchanges code for tokens and stores the X profile", async () => {
     const authorizeRes = await request(app)
       .post("/api/auth/x/authorize")
       .set(AUTH);
 
     expect(authorizeRes.status).toBe(200);
     const { state } = expectSuccessResponse<{ url: string; state: string }>(authorizeRes.body);
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: jest.fn().mockResolvedValue({
-        data: { username: "atlas_handle" },
-      }),
-    });
 
     const callbackRes = await request(app)
       .post("/api/auth/x/callback")
@@ -196,9 +193,7 @@ describe("POST /api/auth/x/callback", () => {
     expect(data.linked).toBe(true);
     expect(data.xHandle).toBe("atlas_handle");
     expect(mockExchangeCodeForTokens).toHaveBeenCalledWith("oauth-code", "verifier-123");
-    expect(mockFetch).toHaveBeenCalledWith("https://api.twitter.com/2/users/me", {
-      headers: { Authorization: "Bearer access-token" },
-    });
+    expect(mockFetchTwitterUserProfile).toHaveBeenCalledWith("access-token");
     expect(mockPrisma.user.update).toHaveBeenCalledWith({
       where: { id: "user-123" },
       data: {
@@ -206,6 +201,9 @@ describe("POST /api/auth/x/callback", () => {
         xRefreshToken: "refresh-token",
         xTokenExpiresAt: expect.any(Date),
         xHandle: "atlas_handle",
+        xBio: "Crypto analyst",
+        xAvatarUrl: "https://example.com/avatar_400x400.jpg",
+        xFollowerCount: 12345,
       },
     });
   });
