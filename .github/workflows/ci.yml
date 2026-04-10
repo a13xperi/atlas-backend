@@ -44,6 +44,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Generate Prisma client
+        run: npx prisma generate
+
       - name: Type check
         run: npx tsc --noEmit
 
