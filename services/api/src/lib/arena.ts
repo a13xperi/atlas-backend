@@ -67,24 +67,32 @@ function normalize(value: number, maxValue: number): number {
 }
 
 export function calculateConsistencyStreak(postDates: Date[]): number {
-  const uniqueDays = [...new Set(postDates.map(toUtcDayStart))].sort((a, b) => b - a);
+  const dayMs = 86400000;
+  const uniqueDays = new Set(
+    postDates
+      .map(toUtcDayStart)
+      .filter((value) => Number.isFinite(value)),
+  );
 
-  if (uniqueDays.length === 0) {
+  if (uniqueDays.size === 0) {
     return 0;
   }
 
-  let streak = 1;
+  const todayUtc = toUtcDayStart(new Date());
+  const startDay = uniqueDays.has(todayUtc)
+    ? todayUtc
+    : uniqueDays.has(todayUtc - dayMs)
+      ? todayUtc - dayMs
+      : null;
 
-  for (let index = 1; index < uniqueDays.length; index += 1) {
-    const previousDay = uniqueDays[index - 1];
-    const currentDay = uniqueDays[index];
+  if (startDay === null) {
+    return 0;
+  }
 
-    if (previousDay - currentDay === 86400000) {
-      streak += 1;
-      continue;
-    }
+  let streak = 0;
 
-    break;
+  for (let day = startDay; uniqueDays.has(day); day -= dayMs) {
+    streak += 1;
   }
 
   return streak;
