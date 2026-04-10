@@ -13,12 +13,21 @@ if (!QA_SUPABASE_KEY) {
   logger.warn("QA_SUPABASE_KEY not set — QA routes will fail");
 }
 
-const qaSupabase = createClient(QA_SUPABASE_URL, QA_SUPABASE_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const qaSupabase: any = QA_SUPABASE_KEY
+  ? createClient(QA_SUPABASE_URL, QA_SUPABASE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
+  : null;
 
 export const qaRouter = Router();
 qaRouter.use(authenticate);
+qaRouter.use((_req, res, next) => {
+  if (!qaSupabase) {
+    return res.status(503).json({ success: false, error: "QA service unavailable — QA_SUPABASE_KEY not configured" });
+  }
+  next();
+});
 
 const TABLE = "qa_test_runs";
 
