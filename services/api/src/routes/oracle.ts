@@ -1,6 +1,8 @@
-import { Router } from "express";
+import { Prisma } from "@prisma/client";
+import { Response, Router } from "express";
 import { z } from "zod";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { getAnthropicClient } from "../lib/anthropic";
 import { routeCompletion } from "../lib/providers/router";
 import {
   buildCalibrationCommentary,
@@ -21,6 +23,19 @@ oracleRouter.use(authenticate);
 
 // ── Schema ───────────────────────────────────────────────────────
 
+const oracleSessionMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+  timestamp: z.string(),
+});
+
+const oracleSessionContextSchema = z.record(z.unknown());
+
+const oracleSessionRequestSchema = z.object({
+  content: z.string().trim().min(1).max(4000),
+  context: oracleSessionContextSchema.optional(),
+});
+
 const dimensionsSchema = z.object({
   humor: z.number(),
   formality: z.number(),
@@ -36,7 +51,7 @@ const dimensionsSchema = z.object({
   selfPromotionalIntensity: z.number().optional(),
 });
 
-const messageSchema = z.object({
+const legacyMessageSchema = z.object({
   track: z.enum(["a", "b"]),
   step: z.string(),
   action: z.string(),
@@ -61,11 +76,187 @@ const messageSchema = z.object({
     .optional(),
 });
 
+type OracleSessionMessage = z.infer<typeof oracleSessionMessageSchema>;
+type OracleSessionContext = z.infer<typeof oracleSessionContextSchema>;
+
+function normalizeOracleSessionMessages(raw: unknown): OracleSessionMessage[] {
+  const parsed = z.array(oracleSessionMessageSchema).safeParse(raw);
+  return parsed.success ? parsed.data : [];
+}
+
+function normalizeOracleSessionContext(raw: unknown): OracleSessionContext | null {
+  if (raw == null) {
+    return null;
+  }
+
+  const parsed = oracleSessionContextSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+function createOracleSessionMessage(
+  role: OracleSessionMessage["role"],
+  content: string,
+): OracleSessionMessage {
+  return {
+    role,
+    content,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+async function getOrCreateOracleSession(userId: string) {
+  const existingSession = await prisma.oracleSession.findFirst({
+    where: { userId },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  if (existingSession) {
+    return existingSession;
+  }
+
+  return prisma.oracleSession.create({
+    data: {
+      userId,
+      messages: [] as Prisma.InputJsonArray,
+    },
+  });
+}
+
+function buildOracleSessionSystemPrompt(context: OracleSessionContext | null): string {
+  const contextSuffix =
+    context && Object.keys(context).length > 0
+      ? `\n\nSession context:\n${JSON.stringify(context)}`
+      : "";
+
+  return (
+    `${buildOracleSystemPrompt()}\n\n` +
+    `You are in a persistent one-on-one chat with the authenticated Atlas user. ` +
+    `Use the saved conversation state when it matters. Keep responses concise unless the user asks for detail.` +
+    contextSuffix
+  );
+}
+
+async function handleSessionMessage(req: AuthRequest, res: Response) {
+  const body = oracleSessionRequestSchema.parse(req.body);
+  const session = await getOrCreateOracleSession(req.userId!);
+  const existingMessages = normalizeOracleSessionMessages(session.messages);
+  const userMessage = createOracleSessionMessage("user", body.content);
+  const messagesWithUser = [...existingMessages, userMessage];
+  const nextContext = body.context ?? normalizeOracleSessionContext(session.context);
+
+  await prisma.oracleSession.update({
+    where: { id: session.id },
+    data: {
+      messages: messagesWithUser as Prisma.InputJsonArray,
+      ...(body.context !== undefined
+        ? { context: body.context as Prisma.InputJsonObject }
+        : {}),
+    },
+  });
+
+  try {
+    const client = getAnthropicClient();
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 800,
+      system: buildOracleSessionSystemPrompt(nextContext),
+      messages: messagesWithUser.slice(-20).map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+    });
+
+    const text = response.content
+      .filter((block): block is { type: "text"; text: string } => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .trim();
+
+    if (!text) {
+      throw new Error("Empty response from Claude");
+    }
+
+    const assistantMessage = createOracleSessionMessage("assistant", text);
+    const persistedMessages = [...messagesWithUser, assistantMessage];
+
+    const updatedSession = await prisma.oracleSession.update({
+      where: { id: session.id },
+      data: {
+        messages: persistedMessages as Prisma.InputJsonArray,
+        ...(body.context !== undefined
+          ? { context: body.context as Prisma.InputJsonObject }
+          : {}),
+      },
+    });
+
+    res.json(
+      success({
+        sessionId: updatedSession.id,
+        reply: assistantMessage,
+        messages: normalizeOracleSessionMessages(updatedSession.messages),
+        context: normalizeOracleSessionContext(updatedSession.context),
+      }),
+    );
+  } catch (err) {
+    logger.error({ error: err }, "Oracle session message error");
+    res.status(502).json({ error: "Oracle response failed" });
+  }
+}
+
 // ── Route ────────────────────────────────────────────────────────
+
+oracleRouter.get("/session", async (req: AuthRequest, res) => {
+  try {
+    const session = await getOrCreateOracleSession(req.userId!);
+
+    res.json(
+      success({
+        sessionId: session.id,
+        messages: normalizeOracleSessionMessages(session.messages),
+        context: normalizeOracleSessionContext(session.context),
+      }),
+    );
+  } catch (err) {
+    logger.error({ error: err }, "Oracle session load error");
+    res.status(500).json({ error: "Failed to load oracle session" });
+  }
+});
+
+oracleRouter.delete("/session", async (req: AuthRequest, res) => {
+  try {
+    const session = await getOrCreateOracleSession(req.userId!);
+    const clearedSession = await prisma.oracleSession.update({
+      where: { id: session.id },
+      data: {
+        messages: [] as Prisma.InputJsonArray,
+      },
+    });
+
+    res.json(
+      success({
+        sessionId: clearedSession.id,
+        messages: normalizeOracleSessionMessages(clearedSession.messages),
+        context: normalizeOracleSessionContext(clearedSession.context),
+      }),
+    );
+  } catch (err) {
+    logger.error({ error: err }, "Oracle session clear error");
+    res.status(500).json({ error: "Failed to clear oracle session" });
+  }
+});
 
 oracleRouter.post("/message", async (req: AuthRequest, res) => {
   try {
-    const body = messageSchema.parse(req.body);
+    if (
+      typeof req.body === "object" &&
+      req.body !== null &&
+      "content" in req.body
+    ) {
+      await handleSessionMessage(req, res);
+      return;
+    }
+
+    const body = legacyMessageSchema.parse(req.body);
     const ctx = body.context ?? {};
 
     let messages: Array<{ content: string; role: "oracle" }> = [];
@@ -153,7 +344,7 @@ interface ResolvedPrompt {
 function resolvePrompt(
   action: string,
   step: string,
-  ctx: z.infer<typeof messageSchema>["context"] & {},
+  ctx: z.infer<typeof legacyMessageSchema>["context"] & {},
 ): ResolvedPrompt | null {
   // Calibration commentary — after voice scan completes
   if (
