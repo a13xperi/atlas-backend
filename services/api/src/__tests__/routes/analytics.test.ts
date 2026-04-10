@@ -28,6 +28,9 @@ jest.mock("../../lib/prisma", () => ({
       count: jest.fn(),
       findMany: jest.fn(),
     },
+    tweetDraft: {
+      count: jest.fn().mockResolvedValue(0),
+    },
     learningLogEntry: {
       create: jest.fn(),
       findMany: jest.fn(),

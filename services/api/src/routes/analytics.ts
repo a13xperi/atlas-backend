@@ -17,24 +17,41 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
 
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-    const [draftsCreated, draftsPosted, feedbackGiven, refinements, reportsIngested] =
-      await Promise.all([
-        prisma.analyticsEvent.count({
-          where: { userId: req.userId, type: "DRAFT_CREATED", createdAt: { gte: thirtyDaysAgo } },
-        }),
-        prisma.analyticsEvent.count({
-          where: { userId: req.userId, type: "DRAFT_POSTED", createdAt: { gte: thirtyDaysAgo } },
-        }),
-        prisma.analyticsEvent.count({
-          where: { userId: req.userId, type: "FEEDBACK_GIVEN", createdAt: { gte: thirtyDaysAgo } },
-        }),
-        prisma.analyticsEvent.count({
-          where: { userId: req.userId, type: "VOICE_REFINEMENT", createdAt: { gte: thirtyDaysAgo } },
-        }),
-        prisma.analyticsEvent.count({
-          where: { userId: req.userId, type: "REPORT_INGESTED", createdAt: { gte: thirtyDaysAgo } },
-        }),
-      ]);
+    const [
+      draftsCreatedEvent,
+      draftsPostedEvent,
+      feedbackGiven,
+      refinements,
+      reportsIngested,
+      draftsCreatedDirect,
+      draftsPostedDirect,
+    ] = await Promise.all([
+      prisma.analyticsEvent.count({
+        where: { userId: req.userId, type: "DRAFT_CREATED", createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.analyticsEvent.count({
+        where: { userId: req.userId, type: "DRAFT_POSTED", createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.analyticsEvent.count({
+        where: { userId: req.userId, type: "FEEDBACK_GIVEN", createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.analyticsEvent.count({
+        where: { userId: req.userId, type: "VOICE_REFINEMENT", createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.analyticsEvent.count({
+        where: { userId: req.userId, type: "REPORT_INGESTED", createdAt: { gte: thirtyDaysAgo } },
+      }),
+      // Fallback: count tweetDraft rows directly (covers seeded/imported drafts that bypass events)
+      prisma.tweetDraft.count({
+        where: { userId: req.userId, createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.tweetDraft.count({
+        where: { userId: req.userId, status: "POSTED", createdAt: { gte: thirtyDaysAgo } },
+      }),
+    ]);
+
+    const draftsCreated = Math.max(draftsCreatedEvent, draftsCreatedDirect);
+    const draftsPosted = Math.max(draftsPostedEvent, draftsPostedDirect);
 
     res.json(success({
       summary: {

@@ -234,6 +234,16 @@ const mockPrisma = {
     }),
   },
   tweetDraft: {
+    count: jest.fn(async (args: any) => {
+      let drafts = mockState.drafts.filter((draft) => draft.userId === args.where.userId);
+      if (args.where.status) {
+        drafts = drafts.filter((draft) => draft.status === args.where.status);
+      }
+      if (args.where.createdAt?.gte) {
+        drafts = drafts.filter((draft) => draft.createdAt >= args.where.createdAt.gte);
+      }
+      return drafts.length;
+    }),
     findMany: jest.fn(async (args: any) => {
       let drafts = mockState.drafts.filter((draft) => draft.userId === args.where.userId);
 
