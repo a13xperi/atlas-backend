@@ -12,6 +12,8 @@
  *   - 5 reference voices  (Delphi, Messari, Naval, paulg, pmarca)
  *   - 3 saved blends
  *   - 8 sample drafts (mix of POSTED / APPROVED / DRAFT)
+ *   - 2 campaigns (Modular Rollups Report / DeFi Market Update) with
+ *     report-sourced tweet drafts linked for the campaign queue view
  *
  * Run:
  *   cd ~/projects/atlas-backend
@@ -349,6 +351,105 @@ async function ensureDrafts(userId: string, blendIdByName: Map<string, string>) 
   console.log(`  drafts: seeded           (${SAMPLE_DRAFTS.length}) ${summary}`);
 }
 
+type CampaignSeed = {
+  name: string;
+  description: string;
+  status: "DRAFT" | "ACTIVE" | "COMPLETED" | "PAUSED";
+  // Predicate to pick which drafts belong to this campaign.
+  pickDrafts: (drafts: Array<{ id: string; status: string; sourceType: string }>) => string[];
+};
+
+const CAMPAIGNS: CampaignSeed[] = [
+  {
+    name: "Modular Rollups Report",
+    description:
+      "Report-sourced campaign from Delphi's modular rollups quarterly note — drives the shared sequencer narrative with supporting trending commentary.",
+    status: "ACTIVE",
+    // Link all drafts sourced from REPORT or TRENDING_TOPIC (3 total).
+    pickDrafts: (drafts) =>
+      drafts
+        .filter(
+          (d) => d.sourceType === "REPORT" || d.sourceType === "TRENDING_TOPIC",
+        )
+        .map((d) => d.id),
+  },
+  {
+    name: "DeFi Market Update",
+    description:
+      "Working campaign for the upcoming DeFi update — stablecoin payments angle plus the restaking thread idea, both still in DRAFT status.",
+    status: "DRAFT",
+    // Link the 2 DRAFT-status drafts that fit the DeFi update narrative
+    // (stablecoin volumes ARTICLE + restaking MANUAL). Skip the AI/content
+    // creation draft — unrelated to the DeFi theme.
+    pickDrafts: (drafts) =>
+      drafts
+        .filter(
+          (d) =>
+            d.status === "DRAFT" &&
+            (d.sourceType === "ARTICLE" || d.sourceType === "MANUAL"),
+        )
+        .filter((_, idx, arr) => {
+          // Keep the stablecoin ARTICLE draft and the restaking MANUAL draft.
+          // With 3 DRAFT rows (ARTICLE, MANUAL, MANUAL), take the ARTICLE and
+          // the last MANUAL (restaking).
+          return arr.length <= 2 || idx === 0 || idx === arr.length - 1;
+        })
+        .map((d) => d.id),
+  },
+];
+
+async function ensureCampaigns(userId: string) {
+  // Wipe and reseed for clean, predictable demo state.
+  // Unlink any drafts from old campaigns first (campaignId is nullable).
+  await prisma.tweetDraft.updateMany({
+    where: { userId, campaignId: { not: null } },
+    data: { campaignId: null },
+  });
+  const deleted = await prisma.campaign.deleteMany({ where: { userId } });
+  if (deleted.count > 0) {
+    console.log(`  campaigns: cleared       (${deleted.count} old)`);
+  }
+
+  // Fetch existing drafts so we can link them by id.
+  const draftRows = await prisma.tweetDraft.findMany({
+    where: { userId },
+    select: { id: true, status: true, sourceType: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  let totalLinked = 0;
+  for (const c of CAMPAIGNS) {
+    const campaign = await prisma.campaign.create({
+      data: {
+        userId,
+        name: c.name,
+        description: c.description,
+        status: c.status,
+      },
+    });
+
+    const draftIds = c.pickDrafts(
+      draftRows.map((d) => ({
+        id: d.id,
+        status: d.status,
+        sourceType: d.sourceType,
+      })),
+    );
+
+    if (draftIds.length > 0) {
+      await prisma.tweetDraft.updateMany({
+        where: { id: { in: draftIds }, userId },
+        data: { campaignId: campaign.id },
+      });
+    }
+    totalLinked += draftIds.length;
+    console.log(
+      `  campaign: ${c.name.padEnd(22)} ${c.status.padEnd(8)} linked=${draftIds.length}`,
+    );
+  }
+  console.log(`  campaigns: seeded        (${CAMPAIGNS.length}) drafts_linked=${totalLinked}`);
+}
+
 async function main() {
   console.log("seeding Anil demo account");
 
@@ -357,6 +458,7 @@ async function main() {
   const refIds = await ensureReferenceVoices(user.id);
   const blendIds = await ensureBlends(user.id, refIds);
   await ensureDrafts(user.id, blendIds);
+  await ensureCampaigns(user.id);
 
   console.log("\ndone — Anil demo account is ready");
   console.log(`  email:        ${ANIL_EMAIL}`);
