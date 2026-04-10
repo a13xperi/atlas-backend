@@ -12,7 +12,7 @@ import {
   buildOracleSystemPrompt,
 } from "../lib/oracle-prompt";
 import { ORACLE_TOOLS, CONFIRMATION_REQUIRED, SERVER_EXECUTABLE } from "../lib/oracle-tools";
-import { success } from "../lib/response";
+import { error, success } from "../lib/response";
 import { logger } from "../lib/logger";
 import { prisma } from "../lib/prisma";
 import { withTimeout } from "../lib/timeout";
@@ -78,6 +78,8 @@ const legacyMessageSchema = z.object({
 
 type OracleSessionMessage = z.infer<typeof oracleSessionMessageSchema>;
 type OracleSessionContext = z.infer<typeof oracleSessionContextSchema>;
+type OraclePromptDimensions = Parameters<typeof buildCalibrationCommentary>[0];
+type OracleBlendVoices = Parameters<typeof buildBlendPreview>[1];
 
 function normalizeOracleSessionMessages(raw: unknown): OracleSessionMessage[] {
   const parsed = z.array(oracleSessionMessageSchema).safeParse(raw);
@@ -166,11 +168,13 @@ async function handleSessionMessage(req: AuthRequest, res: Response) {
       })),
     });
 
-    const text = response.content
-      .filter((block): block is { type: "text"; text: string } => block.type === "text")
-      .map((block) => block.text)
-      .join("\n")
-      .trim();
+    const text = response.content.reduce((combinedText, block) => {
+      if (block.type !== "text") {
+        return combinedText;
+      }
+
+      return combinedText ? `${combinedText}\n${block.text}` : block.text;
+    }, "").trim();
 
     if (!text) {
       throw new Error("Empty response from Claude");
@@ -199,7 +203,7 @@ async function handleSessionMessage(req: AuthRequest, res: Response) {
     );
   } catch (err) {
     logger.error({ error: err }, "Oracle session message error");
-    res.status(502).json({ error: "Oracle response failed" });
+    res.status(502).json(error("Oracle response failed", 502));
   }
 }
 
@@ -218,7 +222,7 @@ oracleRouter.get("/session", async (req: AuthRequest, res) => {
     );
   } catch (err) {
     logger.error({ error: err }, "Oracle session load error");
-    res.status(500).json({ error: "Failed to load oracle session" });
+    res.status(500).json(error("Failed to load oracle session", 500));
   }
 });
 
@@ -241,7 +245,7 @@ oracleRouter.delete("/session", async (req: AuthRequest, res) => {
     );
   } catch (err) {
     logger.error({ error: err }, "Oracle session clear error");
-    res.status(500).json({ error: "Failed to clear oracle session" });
+    res.status(500).json(error("Failed to clear oracle session", 500));
   }
 });
 
@@ -323,11 +327,11 @@ oracleRouter.post("/message", async (req: AuthRequest, res) => {
     res.json(success({ messages, llmGenerated }));
   } catch (err) {
     if (err instanceof z.ZodError) {
-      res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
+      res.status(400).json(error("Invalid request", 400, err.errors));
       return;
     }
     logger.error({ error: err }, "Oracle message error");
-    res.status(500).json({ ok: false, error: "Internal server error" });
+    res.status(500).json(error("Internal server error", 500));
   }
 });
 
@@ -346,14 +350,16 @@ function resolvePrompt(
   step: string,
   ctx: z.infer<typeof legacyMessageSchema>["context"] & {},
 ): ResolvedPrompt | null {
+  const parsedDimensions = ctx.dimensions as OraclePromptDimensions | undefined;
+
   // Calibration commentary — after voice scan completes
   if (
     action === "scan-complete" &&
     ctx.calibrationResult &&
-    ctx.dimensions
+    parsedDimensions
   ) {
     const { system, userMessage } = buildCalibrationCommentary(
-      ctx.dimensions,
+      parsedDimensions,
       ctx.calibrationResult.tweetsAnalyzed,
       ctx.handle,
     );
@@ -361,17 +367,17 @@ function resolvePrompt(
   }
 
   // Blend preview tweet
-  if (action === "blend-preview" && ctx.dimensions && ctx.blendVoices) {
+  if (action === "blend-preview" && parsedDimensions && ctx.blendVoices) {
     const { system, userMessage } = buildBlendPreview(
-      ctx.dimensions,
-      ctx.blendVoices,
+      parsedDimensions,
+      ctx.blendVoices as OracleBlendVoices,
     );
     return { system, userMessage, taskType: "oracle_smart", maxTokens: 300, temperature: 0.7 };
   }
 
   // Dimension reaction for unusual combos
-  if (action === "dims-continue" && ctx.dimensions) {
-    const reaction = buildDimensionReaction(ctx.dimensions);
+  if (action === "dims-continue" && parsedDimensions) {
+    const reaction = buildDimensionReaction(parsedDimensions);
     if (reaction) {
       return {
         system: reaction.system,
@@ -388,7 +394,7 @@ function resolvePrompt(
     const { system, userMessage } = buildFreeTextResponse(ctx.freeText, {
       track: undefined, // will be set from body.track in a future pass
       step,
-      dimensions: ctx.dimensions,
+      dimensions: parsedDimensions,
     });
     return { system, userMessage, taskType: "oracle_fast", maxTokens: 100, temperature: 0.7 };
   }

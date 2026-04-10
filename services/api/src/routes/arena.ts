@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildArenaLeaderboard, type ArenaPublishedDraft } from "../lib/arena";
+import { calculateStreaksForUsers, type StreakResult } from "../lib/streak";
 
 export const arenaRouter = Router();
 arenaRouter.use(authenticate);
