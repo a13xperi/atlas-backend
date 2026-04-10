@@ -37,6 +37,7 @@ model User {
   analyticsEvents   AnalyticsEvent[]
   alertSubscriptions AlertSubscription[]
   sessions          Session[]
+  oracleSessions    OracleSession[]
   researchResults   ResearchResult[]
   generatedImages   GeneratedImage[]
   alerts            Alert[]
@@ -71,6 +72,18 @@ model Session {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("sessions")
+}
+
+model OracleSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Json     @default("[]")
+  context   Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("oracle_sessions")
 }
 
 model VoiceProfile {
