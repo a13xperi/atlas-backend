@@ -38,6 +38,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../lib/gemini", () => ({
+  generateImage: jest.fn(),
   generateVisualConcept: jest.fn(),
 }));
 
@@ -50,8 +51,9 @@ jest.mock("../../lib/config", () => ({
 }));
 
 import { prisma } from "../../lib/prisma";
-import { generateVisualConcept } from "../../lib/gemini";
+import { generateImage, generateVisualConcept } from "../../lib/gemini";
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
+const mockGenerateImage = generateImage as jest.Mock;
 const mockGenerateVisualConcept = generateVisualConcept as jest.Mock;
 
 const app = express();
@@ -62,9 +64,10 @@ app.use("/api/images", imagesRouter);
 const AUTH = { Authorization: "Bearer mock_token" };
 
 const mockConcept = {
-  description: "A bold crypto-themed graphic",
+  concept: "A bold crypto-themed graphic",
   colorScheme: ["#F7931A", "#FFFFFF"],
-  layout: "centered",
+  layout: "centered-quote",
+  elements: ["candlestick chart", "headline frame"],
 };
 
 const mockImage = {
@@ -72,8 +75,14 @@ const mockImage = {
   userId: "user-123",
   prompt: "BTC is mooning",
   style: "quote_card",
-  imageUrl: JSON.stringify(mockConcept),
-  mimeType: "application/json",
+  imageUrl: "data:image/png;base64,ZmFrZS1pbWFnZQ==",
+  mimeType: "image/png",
+};
+
+const mockGeneratedAsset = {
+  imageData: "ZmFrZS1pbWFnZQ==",
+  mimeType: "image/png",
+  promptUsed: "prompt used",
 };
 
 beforeAll(() => {
@@ -82,6 +91,11 @@ beforeAll(() => {
 
 afterAll(() => {
   delete process.env.JWT_SECRET;
+});
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockConfig.GOOGLE_AI_API_KEY = "test-key";
 });
 
 describe("POST /api/images/generate", () => {
@@ -97,6 +111,7 @@ describe("POST /api/images/generate", () => {
   });
 
   it("generates image concept and returns it", async () => {
+    mockGenerateImage.mockResolvedValueOnce(mockGeneratedAsset);
     mockGenerateVisualConcept.mockResolvedValueOnce(mockConcept);
     (mockPrisma.generatedImage.create as jest.Mock).mockResolvedValueOnce(mockImage);
     (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValueOnce({});
@@ -110,10 +125,16 @@ describe("POST /api/images/generate", () => {
     const data = expectSuccessResponse<any>(res.body);
     expect(data.image.id).toBe("img-1");
     expect(data.image.concept).toEqual(mockConcept);
+    expect(mockPrisma.generatedImage.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        imageUrl: "data:image/png;base64,ZmFrZS1pbWFnZQ==",
+        mimeType: "image/png",
+      }),
+    });
   });
 
   it("returns 502 when AI generation fails", async () => {
-    mockGenerateVisualConcept.mockRejectedValueOnce(new Error("Gemini error"));
+    mockGenerateImage.mockRejectedValueOnce(new Error("Gemini error"));
 
     const res = await request(app)
       .post("/api/images/generate")
@@ -135,6 +156,23 @@ describe("POST /api/images/generate", () => {
 
     expect(res.status).toBe(503);
     mockConfig.GOOGLE_AI_API_KEY = original;
+  });
+
+  it("falls back to a deterministic concept when concept generation fails", async () => {
+    mockGenerateImage.mockResolvedValueOnce(mockGeneratedAsset);
+    mockGenerateVisualConcept.mockRejectedValueOnce(new Error("structured output failed"));
+    (mockPrisma.generatedImage.create as jest.Mock).mockResolvedValueOnce(mockImage);
+    (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValueOnce({});
+
+    const res = await request(app)
+      .post("/api/images/generate")
+      .set(AUTH)
+      .send({ prompt: "BTC is mooning", style: "quote_card" });
+
+    expect(res.status).toBe(200);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.image.concept.colorScheme).toEqual(["#4ecdc4", "#1a1a2e", "#2d3748"]);
+    expect(data.image.concept.layout).toBe("centered-quote");
   });
 });
 
@@ -162,6 +200,7 @@ describe("POST /api/images/generate-for-draft", () => {
   it("generates image for a draft", async () => {
     const draft = { id: "draft-1", content: "BTC is mooning", userId: "user-123" };
     (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(draft);
+    mockGenerateImage.mockResolvedValueOnce(mockGeneratedAsset);
     mockGenerateVisualConcept.mockResolvedValueOnce(mockConcept);
     const img = { ...mockImage, draftId: "draft-1" };
     (mockPrisma.generatedImage.create as jest.Mock).mockResolvedValueOnce(img);
@@ -189,6 +228,20 @@ describe("GET /api/images/for-draft/:draftId", () => {
     const res = await request(app).get("/api/images/for-draft/draft-1").set(AUTH);
     expect(res.status).toBe(200);
     expect(expectSuccessResponse<any>(res.body).images).toHaveLength(1);
+  });
+
+  it("hydrates concept payloads from legacy JSON image records", async () => {
+    const legacyImage = {
+      ...mockImage,
+      imageUrl: JSON.stringify(mockConcept),
+      mimeType: "application/json",
+    };
+    (mockPrisma.generatedImage.findMany as jest.Mock).mockResolvedValueOnce([legacyImage]);
+
+    const res = await request(app).get("/api/images/for-draft/draft-1").set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(expectSuccessResponse<any>(res.body).images[0].concept).toEqual(mockConcept);
   });
 
   it("returns 500 when loading images fails", async () => {

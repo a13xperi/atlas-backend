@@ -1,6 +1,12 @@
-import { Router } from "express";
+import { Prisma } from "@prisma/client";
+import { Response, Router } from "express";
 import { z } from "zod";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { getAnthropicClient } from "../lib/anthropic";
+import {
+  runOracleCompletion,
+  resolveProfileForPhase,
+} from "../lib/openclaw-router";
 import { routeCompletion } from "../lib/providers/router";
 import {
   buildCalibrationCommentary,
@@ -10,7 +16,7 @@ import {
   buildOracleSystemPrompt,
 } from "../lib/oracle-prompt";
 import { ORACLE_TOOLS, CONFIRMATION_REQUIRED, SERVER_EXECUTABLE } from "../lib/oracle-tools";
-import { success } from "../lib/response";
+import { error, success } from "../lib/response";
 import { logger } from "../lib/logger";
 import { prisma } from "../lib/prisma";
 import { withTimeout } from "../lib/timeout";
@@ -20,6 +26,19 @@ export const oracleRouter = Router();
 oracleRouter.use(authenticate);
 
 // ── Schema ───────────────────────────────────────────────────────
+
+const oracleSessionMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+  timestamp: z.string(),
+});
+
+const oracleSessionContextSchema = z.record(z.unknown());
+
+const oracleSessionRequestSchema = z.object({
+  content: z.string().trim().min(1).max(4000),
+  context: oracleSessionContextSchema.optional(),
+});
 
 const dimensionsSchema = z.object({
   humor: z.number(),
@@ -36,7 +55,7 @@ const dimensionsSchema = z.object({
   selfPromotionalIntensity: z.number().optional(),
 });
 
-const messageSchema = z.object({
+const legacyMessageSchema = z.object({
   track: z.enum(["a", "b"]),
   step: z.string(),
   action: z.string(),
@@ -61,11 +80,191 @@ const messageSchema = z.object({
     .optional(),
 });
 
+type OracleSessionMessage = z.infer<typeof oracleSessionMessageSchema>;
+type OracleSessionContext = z.infer<typeof oracleSessionContextSchema>;
+type OraclePromptDimensions = Parameters<typeof buildCalibrationCommentary>[0];
+type OracleBlendVoices = Parameters<typeof buildBlendPreview>[1];
+
+function normalizeOracleSessionMessages(raw: unknown): OracleSessionMessage[] {
+  const parsed = z.array(oracleSessionMessageSchema).safeParse(raw);
+  return parsed.success ? parsed.data : [];
+}
+
+function normalizeOracleSessionContext(raw: unknown): OracleSessionContext | null {
+  if (raw == null) {
+    return null;
+  }
+
+  const parsed = oracleSessionContextSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+function createOracleSessionMessage(
+  role: OracleSessionMessage["role"],
+  content: string,
+): OracleSessionMessage {
+  return {
+    role,
+    content,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+async function getOrCreateOracleSession(userId: string) {
+  const existingSession = await prisma.oracleSession.findFirst({
+    where: { userId },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  if (existingSession) {
+    return existingSession;
+  }
+
+  return prisma.oracleSession.create({
+    data: {
+      userId,
+      messages: [] as Prisma.InputJsonArray,
+    },
+  });
+}
+
+function buildOracleSessionSystemPrompt(context: OracleSessionContext | null): string {
+  const contextSuffix =
+    context && Object.keys(context).length > 0
+      ? `\n\nSession context:\n${JSON.stringify(context)}`
+      : "";
+
+  return (
+    `${buildOracleSystemPrompt()}\n\n` +
+    `You are in a persistent one-on-one chat with the authenticated Atlas user. ` +
+    `Use the saved conversation state when it matters. Keep responses concise unless the user asks for detail.` +
+    contextSuffix
+  );
+}
+
+async function handleSessionMessage(req: AuthRequest, res: Response) {
+  const body = oracleSessionRequestSchema.parse(req.body);
+  const session = await getOrCreateOracleSession(req.userId!);
+  const existingMessages = normalizeOracleSessionMessages(session.messages);
+  const userMessage = createOracleSessionMessage("user", body.content);
+  const messagesWithUser = [...existingMessages, userMessage];
+  const nextContext = body.context ?? normalizeOracleSessionContext(session.context);
+
+  await prisma.oracleSession.update({
+    where: { id: session.id },
+    data: {
+      messages: messagesWithUser as Prisma.InputJsonArray,
+      ...(body.context !== undefined
+        ? { context: body.context as Prisma.InputJsonObject }
+        : {}),
+    },
+  });
+
+  try {
+    const client = getAnthropicClient();
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 800,
+      system: buildOracleSessionSystemPrompt(nextContext),
+      messages: messagesWithUser.slice(-20).map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+    });
+
+    const text = response.content.reduce((combinedText, block) => {
+      if (block.type !== "text") {
+        return combinedText;
+      }
+
+      return combinedText ? `${combinedText}\n${block.text}` : block.text;
+    }, "").trim();
+
+    if (!text) {
+      throw new Error("Empty response from Claude");
+    }
+
+    const assistantMessage = createOracleSessionMessage("assistant", text);
+    const persistedMessages = [...messagesWithUser, assistantMessage];
+
+    const updatedSession = await prisma.oracleSession.update({
+      where: { id: session.id },
+      data: {
+        messages: persistedMessages as Prisma.InputJsonArray,
+        ...(body.context !== undefined
+          ? { context: body.context as Prisma.InputJsonObject }
+          : {}),
+      },
+    });
+
+    res.json(
+      success({
+        sessionId: updatedSession.id,
+        reply: assistantMessage,
+        messages: normalizeOracleSessionMessages(updatedSession.messages),
+        context: normalizeOracleSessionContext(updatedSession.context),
+      }),
+    );
+  } catch (err) {
+    logger.error({ error: err }, "Oracle session message error");
+    res.status(502).json(error("Oracle response failed", 502));
+  }
+}
+
 // ── Route ────────────────────────────────────────────────────────
+
+oracleRouter.get("/session", async (req: AuthRequest, res) => {
+  try {
+    const session = await getOrCreateOracleSession(req.userId!);
+
+    res.json(
+      success({
+        sessionId: session.id,
+        messages: normalizeOracleSessionMessages(session.messages),
+        context: normalizeOracleSessionContext(session.context),
+      }),
+    );
+  } catch (err) {
+    logger.error({ error: err }, "Oracle session load error");
+    res.status(500).json(error("Failed to load oracle session", 500));
+  }
+});
+
+oracleRouter.delete("/session", async (req: AuthRequest, res) => {
+  try {
+    const session = await getOrCreateOracleSession(req.userId!);
+    const clearedSession = await prisma.oracleSession.update({
+      where: { id: session.id },
+      data: {
+        messages: [] as Prisma.InputJsonArray,
+      },
+    });
+
+    res.json(
+      success({
+        sessionId: clearedSession.id,
+        messages: normalizeOracleSessionMessages(clearedSession.messages),
+        context: normalizeOracleSessionContext(clearedSession.context),
+      }),
+    );
+  } catch (err) {
+    logger.error({ error: err }, "Oracle session clear error");
+    res.status(500).json(error("Failed to clear oracle session", 500));
+  }
+});
 
 oracleRouter.post("/message", async (req: AuthRequest, res) => {
   try {
-    const body = messageSchema.parse(req.body);
+    if (
+      typeof req.body === "object" &&
+      req.body !== null &&
+      "content" in req.body
+    ) {
+      await handleSessionMessage(req, res);
+      return;
+    }
+
+    const body = legacyMessageSchema.parse(req.body);
     const ctx = body.context ?? {};
 
     let messages: Array<{ content: string; role: "oracle" }> = [];
@@ -132,11 +331,11 @@ oracleRouter.post("/message", async (req: AuthRequest, res) => {
     res.json(success({ messages, llmGenerated }));
   } catch (err) {
     if (err instanceof z.ZodError) {
-      res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
+      res.status(400).json(error("Invalid request", 400, err.errors));
       return;
     }
     logger.error({ error: err }, "Oracle message error");
-    res.status(500).json({ ok: false, error: "Internal server error" });
+    res.status(500).json(error("Internal server error", 500));
   }
 });
 
@@ -153,16 +352,18 @@ interface ResolvedPrompt {
 function resolvePrompt(
   action: string,
   step: string,
-  ctx: z.infer<typeof messageSchema>["context"] & {},
+  ctx: z.infer<typeof legacyMessageSchema>["context"] & {},
 ): ResolvedPrompt | null {
+  const parsedDimensions = ctx.dimensions as OraclePromptDimensions | undefined;
+
   // Calibration commentary — after voice scan completes
   if (
     action === "scan-complete" &&
     ctx.calibrationResult &&
-    ctx.dimensions
+    parsedDimensions
   ) {
     const { system, userMessage } = buildCalibrationCommentary(
-      ctx.dimensions,
+      parsedDimensions,
       ctx.calibrationResult.tweetsAnalyzed,
       ctx.handle,
     );
@@ -170,17 +371,17 @@ function resolvePrompt(
   }
 
   // Blend preview tweet
-  if (action === "blend-preview" && ctx.dimensions && ctx.blendVoices) {
+  if (action === "blend-preview" && parsedDimensions && ctx.blendVoices) {
     const { system, userMessage } = buildBlendPreview(
-      ctx.dimensions,
-      ctx.blendVoices,
+      parsedDimensions,
+      ctx.blendVoices as OracleBlendVoices,
     );
     return { system, userMessage, taskType: "oracle_smart", maxTokens: 300, temperature: 0.7 };
   }
 
   // Dimension reaction for unusual combos
-  if (action === "dims-continue" && ctx.dimensions) {
-    const reaction = buildDimensionReaction(ctx.dimensions);
+  if (action === "dims-continue" && parsedDimensions) {
+    const reaction = buildDimensionReaction(parsedDimensions);
     if (reaction) {
       return {
         system: reaction.system,
@@ -197,7 +398,7 @@ function resolvePrompt(
     const { system, userMessage } = buildFreeTextResponse(ctx.freeText, {
       track: undefined, // will be set from body.track in a future pass
       step,
-      dimensions: ctx.dimensions,
+      dimensions: parsedDimensions,
     });
     return { system, userMessage, taskType: "oracle_fast", maxTokens: 100, temperature: 0.7 };
   }
@@ -208,7 +409,10 @@ function resolvePrompt(
 
 // ── General Chat ────────────────────────────────────────────────
 
-const chatSchema = z.object({
+// Legacy shape — used by the floating widget / crafting advisor:
+//   { messages: [{ role, content }], page?: string }
+// Response: { text }
+const chatLegacySchema = z.object({
   messages: z
     .array(z.object({ role: z.enum(["user", "oracle"]), content: z.string().max(2000) }))
     .min(1)
@@ -216,42 +420,165 @@ const chatSchema = z.object({
   page: z.string().optional(),
 });
 
-oracleRouter.post("/chat", async (req: AuthRequest, res) => {
+// New OpenClaw-routed shape:
+//   { message: string, userId?: string, context?: object, phase?: string }
+// Response: { reply, model, tokens }
+const chatOpenClawSchema = z.object({
+  message: z.string().trim().min(1).max(4000),
+  userId: z.string().optional(),
+  context: z.record(z.unknown()).optional(),
+  phase: z.string().max(64).optional(),
+});
+
+/**
+ * Build personalized context (voice profile + recent activity) for the
+ * Oracle. Mirrors how other routes build context — safe to call per request.
+ */
+async function buildOracleUserContext(userId: string): Promise<{
+  voiceHint: string;
+  activityHint: string;
+}> {
+  let voiceHint = "";
+  let activityHint = "";
+
   try {
-    const body = chatSchema.parse(req.body);
+    const profile = await prisma.voiceProfile.findUnique({ where: { userId } });
+    if (profile) {
+      voiceHint =
+        `\nVoice: Humor ${profile.humor}/100, Formality ${profile.formality}/100, ` +
+        `Brevity ${profile.brevity}/100, Contrarian ${profile.contrarianTone}/100.`;
+    }
+  } catch {
+    /* non-fatal */
+  }
 
-    const pageHint = body.page ? `\nThe user is on the ${body.page} page.` : "";
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
+    const [draftsRecent, postsRecent] = await Promise.all([
+      prisma.tweetDraft.count({
+        where: { userId, createdAt: { gte: sevenDaysAgo } },
+      }),
+      prisma.tweetDraft.count({
+        where: { userId, status: "POSTED", updatedAt: { gte: sevenDaysAgo } },
+      }),
+    ]);
+    if (draftsRecent > 0 || postsRecent > 0) {
+      activityHint = `\nLast 7 days: ${draftsRecent} drafts created, ${postsRecent} posted.`;
+    }
+  } catch {
+    /* non-fatal */
+  }
 
-    let voiceHint = "";
-    try {
-      const profile = await prisma.voiceProfile.findUnique({ where: { userId: req.userId! } });
-      if (profile) {
-        voiceHint = `\nVoice: Humor ${profile.humor}/100, Formality ${profile.formality}/100, Brevity ${profile.brevity}/100, Contrarian ${profile.contrarianTone}/100.`;
-      }
-    } catch {}
+  return { voiceHint, activityHint };
+}
 
-    const systemPrompt =
-      buildOracleSystemPrompt() +
-      `\n\nYou are in the floating chat widget inside Atlas.` +
-      pageHint + voiceHint +
-      `\n\nKeep responses under 50 words. Be helpful and personalized.`;
+/** New OpenClaw-routed handler — { reply, model, tokens } */
+async function handleOpenClawChat(req: AuthRequest, res: Response) {
+  const body = chatOpenClawSchema.parse(req.body);
+  const userId = req.userId!;
+  const profile = resolveProfileForPhase(body.phase);
+  const { voiceHint, activityHint } = await buildOracleUserContext(userId);
 
-    const llmMessages = [
-      { role: "system" as const, content: systemPrompt },
-      ...body.messages.map((m) => ({
-        role: (m.role === "oracle" ? "assistant" : "user") as "system" | "user" | "assistant",
-        content: m.content,
-      })),
-    ];
+  const contextSuffix =
+    body.context && Object.keys(body.context).length > 0
+      ? `\n\nSession context:\n${JSON.stringify(body.context).slice(0, 1500)}`
+      : "";
+  const phaseLine = body.phase ? `\nCurrent phase: ${body.phase}.` : "";
 
-    const response = await withTimeout(
-      routeCompletion({ taskType: "oracle_fast", maxTokens: 150, temperature: 0.7, messages: llmMessages }),
-      8_000,
-      "oracle-chat",
+  const systemPrompt =
+    buildOracleSystemPrompt() +
+    `\n\nYou are in a chat with the authenticated Atlas user.` +
+    phaseLine +
+    voiceHint +
+    activityHint +
+    `\n\nKeep responses concise unless the user asks for detail.` +
+    contextSuffix;
+
+  try {
+    const result = await runOracleCompletion({
+      profile,
+      systemPrompt,
+      userMessage: body.message,
+      label: "oracle-chat-openclaw",
+    });
+
+    logger.info(
+      {
+        profile,
+        provider: result.provider,
+        model: result.model,
+        latencyMs: result.latencyMs,
+        tokens: result.tokens,
+        phase: body.phase,
+      },
+      "Oracle OpenClaw chat response",
     );
 
-    logger.info({ provider: response.provider, latencyMs: response.latencyMs, page: body.page }, "Oracle chat response");
-    res.json(success({ text: response.content.trim() }));
+    res.json(
+      success({
+        reply: result.reply,
+        model: result.model,
+        tokens: result.tokens,
+      }),
+    );
+  } catch (err) {
+    logger.error({ error: err }, "Oracle OpenClaw chat error");
+    res.status(502).json(error("Oracle response failed", 502));
+  }
+}
+
+/** Legacy handler — preserves { text } response shape for existing callers. */
+async function handleLegacyChat(req: AuthRequest, res: Response) {
+  const body = chatLegacySchema.parse(req.body);
+
+  const pageHint = body.page ? `\nThe user is on the ${body.page} page.` : "";
+
+  let voiceHint = "";
+  try {
+    const profile = await prisma.voiceProfile.findUnique({ where: { userId: req.userId! } });
+    if (profile) {
+      voiceHint = `\nVoice: Humor ${profile.humor}/100, Formality ${profile.formality}/100, Brevity ${profile.brevity}/100, Contrarian ${profile.contrarianTone}/100.`;
+    }
+  } catch {}
+
+  const systemPrompt =
+    buildOracleSystemPrompt() +
+    `\n\nYou are in the floating chat widget inside Atlas.` +
+    pageHint + voiceHint +
+    `\n\nKeep responses under 50 words. Be helpful and personalized.`;
+
+  const llmMessages = [
+    { role: "system" as const, content: systemPrompt },
+    ...body.messages.map((m) => ({
+      role: (m.role === "oracle" ? "assistant" : "user") as "system" | "user" | "assistant",
+      content: m.content,
+    })),
+  ];
+
+  const response = await withTimeout(
+    routeCompletion({ taskType: "oracle_fast", maxTokens: 150, temperature: 0.7, messages: llmMessages }),
+    8_000,
+    "oracle-chat",
+  );
+
+  logger.info({ provider: response.provider, latencyMs: response.latencyMs, page: body.page }, "Oracle chat response");
+  res.json(success({ text: response.content.trim() }));
+}
+
+oracleRouter.post("/chat", async (req: AuthRequest, res) => {
+  try {
+    // Discriminate by body shape — the new OpenClaw route uses `message`
+    // (singular string); the legacy widget path uses `messages` (array).
+    if (
+      typeof req.body === "object" &&
+      req.body !== null &&
+      typeof (req.body as { message?: unknown }).message === "string"
+    ) {
+      await handleOpenClawChat(req, res);
+      return;
+    }
+
+    await handleLegacyChat(req, res);
   } catch (err) {
     if (err instanceof z.ZodError) {
       res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
