@@ -582,7 +582,12 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     logger.error({ err: err.message }, "Calibration failed");
-    res.status(502).json(error("Voice calibration failed"));
+    // Surface Twitter API errors to the client so the frontend can show a useful message
+    const msg = err.message ?? "";
+    if (msg.includes("429")) return res.status(429).json(error(`Twitter API rate limit: ${msg}`));
+    if (msg.includes("404") || msg.includes("not found")) return res.status(404).json(error(msg));
+    if (msg.includes("403")) return res.status(403).json(error(msg));
+    res.status(502).json(error(`Voice calibration failed: ${msg}`));
   }
 });
 
