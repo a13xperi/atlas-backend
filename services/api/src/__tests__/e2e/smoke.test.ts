@@ -274,6 +274,12 @@ const mockPrisma = {
       mockState.drafts.push(draft);
       return clone(draft);
     }),
+    count: jest.fn(async (args: any) => {
+      let drafts = mockState.drafts.filter((d: any) => d.userId === args.where.userId);
+      if (args.where.status) drafts = drafts.filter((d: any) => d.status === args.where.status);
+      if (args.where.createdAt?.gte) drafts = drafts.filter((d: any) => d.createdAt >= args.where.createdAt.gte);
+      return drafts.length;
+    }),
   },
   analyticsEvent: {
     count: jest.fn(async (args: any) => {
