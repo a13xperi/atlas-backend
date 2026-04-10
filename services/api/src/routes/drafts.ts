@@ -445,18 +445,10 @@ draftsRouter.post("/:id/enqueue", async (req: AuthRequest, res) => {
   }
 });
 
-// List team drafts (APPROVED + POSTED) — MANAGER/ADMIN only
+// List team drafts (APPROVED + POSTED) — visible to all authenticated users
 draftsRouter.get("/team", async (req: AuthRequest, res) => {
   try {
     const { limit = "50", offset = "0" } = req.query;
-
-    const requestingUser = await prisma.user.findUnique({
-      where: { id: req.userId! },
-      select: { role: true },
-    });
-    if (!requestingUser || requestingUser.role === "ANALYST") {
-      return res.status(403).json({ error: "Manager or Admin role required" });
-    }
 
     const drafts = await prisma.tweetDraft.findMany({
       where: { status: { in: ["APPROVED", "POSTED"] } },
