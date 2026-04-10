@@ -191,19 +191,11 @@ xAuthRouter.post("/callback", authenticate, async (req: AuthRequest, res) => {
     // Exchange code for tokens
     const { accessToken, refreshToken, expiresIn } = await exchangeCodeForTokens(code, pending.codeVerifier);
 
-    // Look up the user's X handle
-    let xHandle: string | undefined;
-    try {
-      const meRes = await fetch("https://api.twitter.com/2/users/me", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (meRes.ok) {
-        const meData = await meRes.json() as { data: { username: string } };
-        xHandle = meData.data.username;
-      }
-    } catch {
-      // Non-critical — we can proceed without the handle
-    }
+    const profile = await fetchTwitterUserProfile(accessToken);
+    const xHandle = profile.username;
+    const xBio = profile.description ?? null;
+    const xAvatarUrl = profile.profile_image_url ?? null;
+    const xFollowerCount = profile.public_metrics?.followers_count ?? null;
 
     // Store tokens on the user
     await prisma.user.update({
@@ -212,7 +204,10 @@ xAuthRouter.post("/callback", authenticate, async (req: AuthRequest, res) => {
         xAccessToken: accessToken,
         xRefreshToken: refreshToken,
         xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
-        ...(xHandle && { xHandle }),
+        xHandle,
+        xBio,
+        xAvatarUrl,
+        xFollowerCount,
       },
     });
 
