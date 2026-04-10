@@ -486,6 +486,8 @@ model FeatureFlag {
   @@map("feature_flags")
 }
 
+// ── Backup subsystem ────────────────────────────────────────────
+
 enum BackupStatus {
   PENDING
   SUCCESS

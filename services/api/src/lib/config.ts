@@ -55,13 +55,15 @@ const envSchema = z.object({
   // Monitoring
   SENTRY_DSN: z.string().optional(),
 
-  // Backups
+  // Backup — R2 (Cloudflare) logical dumps
   R2_ENDPOINT: z.string().optional(),
   R2_BUCKET: z.string().optional(),
   R2_ACCESS_KEY_ID: z.string().optional(),
   R2_SECRET_ACCESS_KEY: z.string().optional(),
-  BACKUP_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
-  BACKUP_LOCAL_DIR: z.string().default("backups"),
+
+  // Backup — local logical dumps
+  BACKUP_LOCAL_DIR: z.string().optional().default("./backups"),
+  BACKUP_RETENTION_DAYS: z.coerce.number().optional().default(7),
 });
 
 type Env = z.infer<typeof envSchema>;
