@@ -45,6 +45,8 @@ export interface PipelineContext {
   articleUrl?: string;
   /** Set by fetchArticleStep when URL fetch fails */
   fetchArticleError?: string;
+  /** Last 3 generated drafts for this user — used to avoid repeating angles */
+  recentDraftTexts?: string[];
 
   // --- Observability ---
   stepResults: StepResult[];

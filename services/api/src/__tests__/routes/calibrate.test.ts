@@ -331,7 +331,7 @@ describe("POST /api/voice/calibrate", () => {
       .send({ handle: "atlasanalyst" });
 
     expect(res.status).toBe(502);
-    expectErrorResponse(res.body, "Voice calibration failed");
+    expectErrorResponse(res.body, "Voice calibration failed: twitter unavailable");
     expect(mockCalibrateFromTweets).not.toHaveBeenCalled();
     expect(mockPrisma.voiceProfile.upsert).not.toHaveBeenCalled();
     expect(mockPrisma.analyticsEvent.create).not.toHaveBeenCalled();
@@ -349,7 +349,7 @@ describe("POST /api/voice/calibrate", () => {
       .send({ handle: "atlasanalyst" });
 
     expect(res.status).toBe(502);
-    expectErrorResponse(res.body, "Voice calibration failed");
+    expectErrorResponse(res.body, "Voice calibration failed: model unavailable");
     expect(mockPrisma.voiceProfile.upsert).not.toHaveBeenCalled();
     expect(mockPrisma.analyticsEvent.create).not.toHaveBeenCalled();
   });
