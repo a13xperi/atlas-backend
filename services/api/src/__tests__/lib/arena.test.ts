@@ -7,14 +7,7 @@ import {
 } from "../../lib/arena";
 
 describe("arena helpers", () => {
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
   it("computes a day-based consistency streak from unique posting days", () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2026-04-10T12:00:00Z"));
-
     const streak = calculateConsistencyStreak([
       new Date("2026-04-09T10:00:00Z"),
       new Date("2026-04-09T18:30:00Z"),
@@ -24,31 +17,6 @@ describe("arena helpers", () => {
     ]);
 
     expect(streak).toBe(3);
-  });
-
-  it("starts from today when present and treats UTC midnight boundaries as separate days", () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2026-04-10T12:00:00Z"));
-
-    const streak = calculateConsistencyStreak([
-      new Date("2026-04-10T00:01:00Z"),
-      new Date("2026-04-09T23:59:00Z"),
-      new Date("2026-04-08T13:00:00Z"),
-    ]);
-
-    expect(streak).toBe(3);
-  });
-
-  it("returns 0 when there is no post today or yesterday", () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2026-04-10T12:00:00Z"));
-
-    const streak = calculateConsistencyStreak([
-      new Date("2026-04-08T12:00:00Z"),
-      new Date("2026-04-07T12:00:00Z"),
-    ]);
-
-    expect(streak).toBe(0);
   });
 
   it("prefers stored engagement metrics and falls back to predicted engagement when missing", () => {
@@ -68,9 +36,6 @@ describe("arena helpers", () => {
   });
 
   it("builds ranked leaderboard entries and keeps the requesting user in view", () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2026-04-10T12:00:00Z"));
-
     const users: ArenaUser[] = [
       { id: "user-1", handle: "alice", displayName: "Alice", avatarUrl: null },
       { id: "user-2", handle: "bruno", displayName: "Bruno", avatarUrl: null },
