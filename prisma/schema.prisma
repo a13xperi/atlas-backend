@@ -22,6 +22,9 @@ model User {
   xAccessToken      String?
   xRefreshToken     String?
   xTokenExpiresAt   DateTime?
+  xBio              String?
+  xAvatarUrl        String?
+  xFollowerCount    Int?
   tourCompleted     Boolean  @default(false)
   tourStep          Int      @default(0)
   createdAt         DateTime @default(now())
