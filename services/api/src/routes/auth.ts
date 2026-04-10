@@ -28,7 +28,7 @@ const registerSchema = z.object({
   handle: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(6),
-  onboardingTrack: z.enum(["A", "B"]).optional(),
+  onboardingTrack: z.enum(["A", "B", "TRACK_A", "TRACK_B"]).optional(),
 });
 
 const loginSchema = z.object({
@@ -103,7 +103,9 @@ authRouter.post("/register", async (req, res) => {
         passwordHash,
         ...(body.onboardingTrack && {
           onboardingTrack:
-            body.onboardingTrack === "A" ? "TRACK_A" : "TRACK_B",
+            body.onboardingTrack === "TRACK_A" || body.onboardingTrack === "A"
+              ? "TRACK_A"
+              : "TRACK_B",
         }),
         voiceProfile: { create: {} },
       },
