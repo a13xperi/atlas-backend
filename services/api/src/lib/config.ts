@@ -27,6 +27,7 @@ const envSchema = z.object({
   // AI providers
   GOOGLE_AI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_IMAGE_MODEL: z.string().optional(),
   XAI_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
