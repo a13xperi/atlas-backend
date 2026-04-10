@@ -27,6 +27,7 @@ export const generateStep: PipelineStep = {
       researchContext: ctx.researchContext,
       replyAngle: ctx.replyAngle,
       angleInstruction: ctx.angleInstruction,
+      recentDrafts: ctx.recentDraftTexts,
     });
 
     ctx.generatedContent = result.content;

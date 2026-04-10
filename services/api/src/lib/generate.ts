@@ -31,6 +31,7 @@ interface GenerateParams {
   researchContext?: string;
   replyAngle?: string;
   angleInstruction?: string;
+  recentDrafts?: string[];
 }
 
 interface GenerateResult {
