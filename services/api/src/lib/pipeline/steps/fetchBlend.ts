@@ -19,6 +19,24 @@ const NUMERIC_DIMENSIONS = [
 
 type NumericDimKey = (typeof NUMERIC_DIMENSIONS)[number];
 
+/**
+ * Dimensions stored on a mixed scale depending on source:
+ *   - Calibration-sourced profiles store these at 0–100
+ *   - Manually-set profiles (slider input) store them at 0–10
+ * When the blended average is <= 10 for these keys, we assume it came from the
+ * 0–10 scale and rescale it to 0–100 so the prompt builder sees a consistent scale.
+ */
+const EXTENDED_DIMENSIONS: ReadonlySet<NumericDimKey> = new Set([
+  "directness",
+  "warmth",
+  "technicalDepth",
+  "confidence",
+  "evidenceOrientation",
+  "solutionOrientation",
+  "socialPosture",
+  "selfPromotionalIntensity",
+]);
+
 function normalizeHandle(handle?: string | null) {
   return handle?.replace(/^@/, "").trim().toLowerCase() ?? "";
 }
@@ -31,12 +49,25 @@ export const fetchBlendStep: PipelineStep = {
   async execute(ctx) {
     if (!ctx.blendId) return;
 
-    const blend = await prisma.savedBlend.findFirst({
-      where: { id: ctx.blendId, userId: ctx.userId },
-      include: { voices: { include: { referenceVoice: { include: { voiceProfile: true } } } } },
-    });
+    let blend;
+    try {
+      blend = await prisma.savedBlend.findFirst({
+        where: { id: ctx.blendId, userId: ctx.userId },
+        include: { voices: { include: { referenceVoice: { include: { voiceProfile: true } } } } },
+      });
+    } catch (err) {
+      // DB lookup failed — fall back to base voice and surface a soft warning.
+      ctx.blendedDimensions = undefined;
+      ctx.blendWarning = "blend_not_found";
+      throw err;
+    }
 
-    if (!blend || !ctx.voiceProfile) return;
+    if (!blend || !ctx.voiceProfile) {
+      // The user asked for a blend but we couldn't load it. Surface this as a
+      // soft warning so the response layer can tell the frontend.
+      ctx.blendWarning = "blend_not_found";
+      return;
+    }
 
     ctx.blendVoices = blend.voices.map((v) => ({
       label: v.referenceVoice?.name || v.label,
@@ -101,7 +132,12 @@ export const fetchBlendStep: PipelineStep = {
       });
     }
 
-    if (resolved.length === 0) return;
+    if (resolved.length === 0) {
+      // Blend exists but none of its voices resolved to a profile — fall back
+      // to the base voice and warn the caller so the UI can surface it.
+      ctx.blendWarning = "blend_not_found";
+      return;
+    }
 
     // Normalise weights so they sum to 1.0 (in case only some voices resolved)
     const totalWeight = resolved.reduce((s, r) => s + r.weight, 0);
@@ -115,7 +151,17 @@ export const fetchBlendStep: PipelineStep = {
         (acc, r) => acc + (r.weight / totalWeight) * Number(r.profile[key]),
         0,
       );
-      (blended as Record<NumericDimKey, number>)[key] = Math.round(sum * 100) / 100;
+      let avg = Math.round(sum * 100) / 100;
+
+      // Extended dimensions are stored on a mixed scale: calibration writes
+      // 0–100, manual slider writes 0–10. If the weighted average lands <= 10
+      // for one of these keys, assume it came from the 0–10 scale and rescale
+      // so the prompt builder sees a consistent 0–100 value.
+      if (EXTENDED_DIMENSIONS.has(key) && avg <= 10) {
+        avg = Math.round(avg * 10 * 100) / 100;
+      }
+
+      (blended as Record<NumericDimKey, number>)[key] = avg;
     }
 
     ctx.blendedDimensions = blended;

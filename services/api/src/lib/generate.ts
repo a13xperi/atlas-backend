@@ -15,6 +15,8 @@ interface VoiceDimensions {
   socialPosture?: number;
   selfPromotionalIntensity?: number;
   maturity?: string;
+  /** Calibration-generated natural language voice summary */
+  analysis?: string | null;
 }
 
 interface BlendVoice {

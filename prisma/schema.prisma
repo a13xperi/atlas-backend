@@ -103,6 +103,7 @@ model VoiceProfile {
   selfPromotionalIntensity Int     @default(50)
   maturity        VoiceMaturity @default(BEGINNER)
   tweetsAnalyzed  Int      @default(0)
+  analysis        String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

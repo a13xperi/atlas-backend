@@ -16,6 +16,8 @@ interface VoiceDimensions {
   solutionOrientation?: number;
   socialPosture?: number;
   selfPromotionalIntensity?: number;
+  /** Natural language voice summary produced by the calibration step */
+  analysis?: string | null;
 }
 
 interface BlendVoice {
@@ -193,7 +195,16 @@ export function buildTweetPrompt(params: PromptParams): { system: string; userMe
   let system = `You are Atlas, a crypto analyst's tweet-crafting AI. You generate tweets styled to the user's voice profile.
 
 ## Voice Profile
-${voiceDescription}
+${voiceDescription}`;
+
+  // Inject the calibration-generated natural language voice summary (if present).
+  // This gives the model a human-readable persona in addition to the numeric dimensions,
+  // which significantly improves voice fidelity on calibrated profiles.
+  if (voiceProfile.analysis && voiceProfile.analysis.trim().length > 0) {
+    system += `\n\n## Voice Summary\n${voiceProfile.analysis.trim()}`;
+  }
+
+  system += `
 
 ## Rules
 - Output ONLY the tweet text. No quotes, no explanations, no preamble.

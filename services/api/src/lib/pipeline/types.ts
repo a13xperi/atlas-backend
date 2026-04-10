@@ -18,6 +18,8 @@ export interface VoiceDimensions {
   socialPosture?: number;
   selfPromotionalIntensity?: number;
   maturity?: string;
+  /** Calibration-generated natural language voice summary (2-3 sentences) */
+  analysis?: string | null;
 }
 
 export interface PipelineContext {
@@ -35,6 +37,8 @@ export interface PipelineContext {
   blendVoices?: { label: string; percentage: number }[];
   /** Weighted-average dimensions computed from reference voice profiles in a blend */
   blendedDimensions?: Partial<VoiceDimensions>;
+  /** Set by fetchBlend when the requested blend cannot be resolved (blend missing, no voices mapped, etc.) */
+  blendWarning?: string;
   researchContext?: string;
   generatedContent?: string;
   confidence?: number;

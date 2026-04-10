@@ -110,7 +110,8 @@ draftsRouter.post("/generate", aiGenerationLimiter, async (req: AuthRequest, res
       data: { userId: req.userId!, type: "DRAFT_CREATED" },
     });
 
-    res.json(success({ draft }));
+    const blendWarning = result.ctx.blendWarning === "blend_not_found" ? "blend_not_found" : undefined;
+    res.json(success({ draft, ...(blendWarning ? { blendWarning } : {}) }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res
@@ -192,7 +193,8 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
       });
     }
 
-    res.json(success({ draft }));
+    const blendWarning = result.ctx.blendWarning === "blend_not_found" ? "blend_not_found" : undefined;
+    res.json(success({ draft, ...(blendWarning ? { blendWarning } : {}) }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res
@@ -300,7 +302,8 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
       data: { userId: req.userId!, type: "FEEDBACK_GIVEN" },
     });
 
-    res.json(success({ draft }));
+    const blendWarning = result.ctx.blendWarning === "blend_not_found" ? "blend_not_found" : undefined;
+    res.json(success({ draft, ...(blendWarning ? { blendWarning } : {}) }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
