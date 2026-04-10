@@ -114,6 +114,9 @@ xAuthRouter.get("/callback", async (req, res) => {
     const xHandle = profile.username;
     const displayName = profile.name;
     const avatarUrl = profile.profile_image_url || null;
+    const xBio = profile.description ?? null;
+    const xAvatarUrl = profile.profile_image_url ?? null;
+    const xFollowerCount = profile.public_metrics?.followers_count ?? null;
 
     let user = await prisma.user.findFirst({ where: { xHandle } });
 
@@ -126,6 +129,9 @@ xAuthRouter.get("/callback", async (req, res) => {
           xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
           displayName: displayName || user.displayName,
           avatarUrl: avatarUrl || user.avatarUrl,
+          xBio: xBio ?? user.xBio,
+          xAvatarUrl: xAvatarUrl ?? user.xAvatarUrl,
+          xFollowerCount: xFollowerCount ?? user.xFollowerCount,
         },
       });
       logger.info({ userId: user.id, xHandle }, "Twitter login — returning user");
@@ -139,6 +145,9 @@ xAuthRouter.get("/callback", async (req, res) => {
           xAccessToken: accessToken,
           xRefreshToken: refreshToken,
           xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          xBio,
+          xAvatarUrl,
+          xFollowerCount,
           onboardingTrack: "TRACK_B",
           voiceProfile: { create: {} },
         },
@@ -348,7 +357,8 @@ twitterLoginRouter.get("/callback", async (req, res) => {
     const xHandle = profile.username;
     const displayName = profile.name;
     const avatarUrl = profile.profile_image_url || null;
-    const xBio = profile.description || null;
+    const xBio = profile.description ?? null;
+    const xAvatarUrl = profile.profile_image_url ?? null;
     const xFollowerCount = profile.public_metrics?.followers_count ?? null;
 
     // Find existing user by xHandle, or create new one
@@ -364,6 +374,9 @@ twitterLoginRouter.get("/callback", async (req, res) => {
           xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
           displayName: displayName || user.displayName,
           avatarUrl: avatarUrl || user.avatarUrl,
+          xBio: xBio ?? user.xBio,
+          xAvatarUrl: xAvatarUrl ?? user.xAvatarUrl,
+          xFollowerCount: xFollowerCount ?? user.xFollowerCount,
         },
       });
       logger.info({ userId: user.id, xHandle }, "Twitter login — returning user");
@@ -378,6 +391,9 @@ twitterLoginRouter.get("/callback", async (req, res) => {
           xAccessToken: accessToken,
           xRefreshToken: refreshToken,
           xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          xBio,
+          xAvatarUrl,
+          xFollowerCount,
           onboardingTrack: "TRACK_B", // Twitter-first = Track B (Anil's flow)
           voiceProfile: { create: {} },
         },
