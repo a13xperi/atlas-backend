@@ -1,6 +1,6 @@
 /**
  * Analytics routes test suite
- * Tests GET /summary, /learning-log, /engagement, /engagement-summary, /team
+ * Tests GET /summary, /learning-log, /engagement, /team
  * Mocks: Prisma, jsonwebtoken
  */
 
@@ -30,7 +30,6 @@ jest.mock("../../lib/prisma", () => ({
     },
     tweetDraft: {
       count: jest.fn().mockResolvedValue(0),
-      findMany: jest.fn(),
     },
     learningLogEntry: {
       create: jest.fn(),
@@ -74,9 +73,6 @@ describe("GET /api/analytics/summary", () => {
       .mockResolvedValueOnce(3)  // feedbackGiven
       .mockResolvedValueOnce(2)  // refinements
       .mockResolvedValueOnce(1); // reportsIngested
-    (mockPrisma.tweetDraft.count as jest.Mock)
-      .mockResolvedValueOnce(8)  // draftsCreatedDirect
-      .mockResolvedValueOnce(4); // draftsPostedDirect
 
     const res = await request(app).get("/api/analytics/summary").set(AUTH);
     expect(res.status).toBe(200);
@@ -120,84 +116,6 @@ describe("GET /api/analytics/engagement", () => {
     const res = await request(app).get("/api/analytics/engagement").set(AUTH);
     expect(res.status).toBe(200);
     expect(expectSuccessResponse<any>(res.body).events).toHaveLength(1);
-  });
-});
-
-describe("GET /api/analytics/engagement-summary", () => {
-  it("aggregates engagement stats across posted drafts", async () => {
-    (mockPrisma.tweetDraft.findMany as jest.Mock).mockResolvedValueOnce([
-      {
-        id: "draft-1",
-        content: "Higher engagement tweet",
-        createdAt: new Date("2026-01-02T10:00:00.000Z"),
-        actualEngagement: 1200,
-        engagementMetrics: { likes: 12, retweets: 4, replies: 2, impressions: 1200 },
-      },
-      {
-        id: "draft-2",
-        content: "Lower engagement tweet",
-        createdAt: new Date("2026-01-01T10:00:00.000Z"),
-        actualEngagement: 800,
-        engagementMetrics: { likes: 8, retweets: 2, replies: 1, impressions: 800 },
-      },
-    ]);
-
-    const res = await request(app).get("/api/analytics/engagement-summary").set(AUTH);
-
-    expect(res.status).toBe(200);
-    const data = expectSuccessResponse<any>(res.body).summary;
-    expect(data.totalTweets).toBe(2);
-    expect(data.totals).toEqual({
-      likes: 20,
-      retweets: 6,
-      replies: 3,
-      impressions: 2000,
-      engagement: 29,
-    });
-    expect(data.avgPerTweet).toEqual({
-      likes: 10,
-      retweets: 3,
-      replies: 1.5,
-      impressions: 1000,
-      engagement: 14.5,
-    });
-    expect(data.bestPerformingTweet).toEqual({
-      id: "draft-1",
-      content: "Higher engagement tweet",
-      createdAt: "2026-01-02T10:00:00.000Z",
-      metrics: {
-        likes: 12,
-        retweets: 4,
-        replies: 2,
-        impressions: 1200,
-      },
-      performanceScore: 18,
-    });
-  });
-
-  it("returns zeroed engagement stats when no posted drafts exist", async () => {
-    (mockPrisma.tweetDraft.findMany as jest.Mock).mockResolvedValueOnce([]);
-
-    const res = await request(app).get("/api/analytics/engagement-summary").set(AUTH);
-
-    expect(res.status).toBe(200);
-    const data = expectSuccessResponse<any>(res.body).summary;
-    expect(data.totalTweets).toBe(0);
-    expect(data.totals).toEqual({
-      likes: 0,
-      retweets: 0,
-      replies: 0,
-      impressions: 0,
-      engagement: 0,
-    });
-    expect(data.avgPerTweet).toEqual({
-      likes: 0,
-      retweets: 0,
-      replies: 0,
-      impressions: 0,
-      engagement: 0,
-    });
-    expect(data.bestPerformingTweet).toBeNull();
   });
 });
 

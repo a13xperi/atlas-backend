@@ -23,6 +23,12 @@ jest.mock("../../lib/prisma", () => ({
       create: jest.fn(),
       update: jest.fn(),
     },
+    voiceProfile: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
+    tweetDraft: {
+      count: jest.fn().mockResolvedValue(0),
+    },
   },
 }));
 
@@ -32,6 +38,17 @@ jest.mock("../../lib/anthropic", () => ({
 
 jest.mock("../../lib/providers/router", () => ({
   routeCompletion: jest.fn(),
+}));
+
+jest.mock("../../lib/openclaw-router", () => ({
+  runOracleCompletion: jest.fn(),
+  resolveProfileForPhase: jest.fn((phase?: string) => {
+    if (!phase) return "fast";
+    const p = phase.toLowerCase();
+    return p.includes("calibrat") || p.includes("analy") || p.includes("smart")
+      ? "smart"
+      : "fast";
+  }),
 }));
 
 jest.mock("../../lib/oracle-prompt", () => ({
@@ -62,11 +79,15 @@ jest.mock("../../lib/logger", () => ({
 
 import { prisma } from "../../lib/prisma";
 import { getAnthropicClient } from "../../lib/anthropic";
+import { runOracleCompletion } from "../../lib/openclaw-router";
 import { oracleRouter } from "../../routes/oracle";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 const mockGetAnthropicClient = getAnthropicClient as jest.Mock;
 const mockAnthropicCreate = jest.fn();
+const mockRunOracleCompletion = runOracleCompletion as jest.MockedFunction<
+  typeof runOracleCompletion
+>;
 
 const app = express();
 app.use(express.json());
@@ -244,6 +265,91 @@ describe("POST /api/oracle/message", () => {
         where: { id: "oracle-session-1" },
       }),
     );
+  });
+});
+
+describe("POST /api/oracle/chat (OpenClaw shape)", () => {
+  it("returns 401 without auth", async () => {
+    const res = await request(app)
+      .post("/api/oracle/chat")
+      .send({ message: "Hey Oracle" });
+    expect(res.status).toBe(401);
+  });
+
+  it("routes `message` payloads through the OpenClaw router", async () => {
+    mockRunOracleCompletion.mockResolvedValueOnce({
+      reply: "Your voice leans contrarian — lean in.",
+      model: "claude-haiku-4-5-20251001",
+      provider: "anthropic",
+      tokens: 248,
+      latencyMs: 512,
+    });
+
+    const res = await request(app)
+      .post("/api/oracle/chat")
+      .set(AUTH)
+      .send({
+        message: "Help me calibrate my voice",
+        phase: "calibration",
+        context: { track: "a" },
+      });
+
+    expect(res.status).toBe(200);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.reply).toContain("contrarian");
+    expect(data.model).toBe("claude-haiku-4-5-20251001");
+    expect(data.tokens).toBe(248);
+
+    expect(mockRunOracleCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: "smart",
+        userMessage: "Help me calibrate my voice",
+        systemPrompt: expect.stringContaining("Current phase: calibration"),
+      }),
+    );
+  });
+
+  it("defaults to the fast profile for quick chat", async () => {
+    mockRunOracleCompletion.mockResolvedValueOnce({
+      reply: "Try opening with a contrarian hook.",
+      model: "claude-haiku-4-5-20251001",
+      provider: "anthropic",
+      tokens: 90,
+      latencyMs: 320,
+    });
+
+    const res = await request(app)
+      .post("/api/oracle/chat")
+      .set(AUTH)
+      .send({ message: "What should I tweet about ETH?" });
+
+    expect(res.status).toBe(200);
+    expect(mockRunOracleCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ profile: "fast" }),
+    );
+  });
+
+  it("still supports the legacy { messages, page } shape", async () => {
+    const { routeCompletion } = jest.requireMock("../../lib/providers/router");
+    (routeCompletion as jest.Mock).mockResolvedValueOnce({
+      content: "Legacy reply",
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+      latencyMs: 100,
+    });
+
+    const res = await request(app)
+      .post("/api/oracle/chat")
+      .set(AUTH)
+      .send({
+        messages: [{ role: "user", content: "hi" }],
+        page: "dashboard",
+      });
+
+    expect(res.status).toBe(200);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.text).toBe("Legacy reply");
+    expect(mockRunOracleCompletion).not.toHaveBeenCalled();
   });
 });
 

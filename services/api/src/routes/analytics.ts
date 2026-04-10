@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { buildErrorResponse } from "../middleware/requestId";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { calculateStreak, calculateStreakFromDates } from "../lib/streak";
 
 export const analyticsRouter = Router();
 analyticsRouter.use(authenticate);
@@ -677,26 +678,10 @@ function clampScore(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
+// Delegates to the shared streak lib so Atlas Score matches the arena
+// leaderboard and the new /analytics/streak endpoint byte-for-byte.
 function computeStreak(dates: Date[]): number {
-  if (dates.length === 0) return 0;
-  const days = new Set<string>();
-  for (const d of dates) {
-    days.add(d.toISOString().slice(0, 10));
-  }
-
-  // Walk backwards from today; allow break only if today has no activity
-  // (so a streak ending yesterday still counts even if user hasn't posted today).
-  let streak = 0;
-  const cursor = new Date();
-  cursor.setHours(0, 0, 0, 0);
-  if (!days.has(cursor.toISOString().slice(0, 10))) {
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  while (days.has(cursor.toISOString().slice(0, 10))) {
-    streak++;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  return streak;
+  return calculateStreakFromDates(dates).currentStreak;
 }
 
 function computeAtlasScore(u: ScoreUserInput): ScoreBreakdown {
@@ -797,6 +782,80 @@ async function loadScoreInput(userId: string): Promise<ScoreUserInput | null> {
     activityDates: user.tweetDrafts.map((d) => d.createdAt),
   };
 }
+
+// ============================================================
+// Streak — real consecutive-day activity tracking
+// ============================================================
+// Returns currentStreak, longestStreak, status, lastActivityAt
+// computed from the user's full AnalyticsEvent history. Replaces the
+// session-count proxy previously shown in the portal.
+// ============================================================
+
+analyticsRouter.get("/streak", async (req: AuthRequest, res) => {
+  try {
+    emptyQuerySchema.parse(req.query);
+
+    const streak = await calculateStreak(req.userId!);
+    res.json(success({
+      userId: req.userId,
+      currentStreak: streak.currentStreak,
+      longestStreak: streak.longestStreak,
+      status: streak.status,
+      lastActivityAt: streak.lastActivityAt,
+    }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Failed to load streak", 500));
+  }
+});
+
+analyticsRouter.get("/streak/:userId", async (req: AuthRequest, res) => {
+  try {
+    emptyQuerySchema.parse(req.query);
+
+    const rawUserId = req.params.userId;
+    const targetUserId = Array.isArray(rawUserId) ? rawUserId[0] : rawUserId;
+    if (!targetUserId || typeof targetUserId !== "string") {
+      return res.status(400).json(error("Missing userId", 400));
+    }
+
+    // Analysts can only look up their own streak; managers/admins can
+    // inspect any teammate.
+    if (targetUserId !== req.userId) {
+      const viewer = await prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { role: true },
+      });
+      if (!viewer || viewer.role === "ANALYST") {
+        return res.status(403).json(error("Manager access required", 403));
+      }
+    }
+
+    const target = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true },
+    });
+    if (!target) {
+      return res.status(404).json(error("User not found", 404));
+    }
+
+    const streak = await calculateStreak(targetUserId);
+    res.json(success({
+      userId: targetUserId,
+      currentStreak: streak.currentStreak,
+      longestStreak: streak.longestStreak,
+      status: streak.status,
+      lastActivityAt: streak.lastActivityAt,
+    }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Failed to load streak", 500));
+  }
+});
 
 // Get current user's Atlas Score with full breakdown
 analyticsRouter.get("/atlas-score", async (req: AuthRequest, res) => {
@@ -951,8 +1010,45 @@ analyticsRouter.get("/team", async (req: AuthRequest, res) => {
       },
     });
 
+    // Real consecutive-day streaks (drafts + feedback + voice + sessions + ...)
+    // replace the session-count proxy the portal used to display. If the
+    // streak query fails we still return the base team payload — the streak
+    // fields just default to zero/broken.
+    const analystIds = analysts.map((a) => a.id);
+    const streakMap = new Map<string, { currentStreak: number; longestStreak: number; status: string }>();
+    if (analystIds.length > 0) {
+      try {
+        const events = await prisma.analyticsEvent.findMany({
+          where: { userId: { in: analystIds } },
+          select: { userId: true, createdAt: true },
+        });
+        const eventRows = Array.isArray(events) ? events : [];
+        const byUser = new Map<string, Date[]>();
+        for (const id of analystIds) byUser.set(id, []);
+        for (const e of eventRows) byUser.get(e.userId)?.push(e.createdAt);
+        for (const [uid, dates] of byUser.entries()) {
+          const s = calculateStreakFromDates(dates);
+          streakMap.set(uid, {
+            currentStreak: s.currentStreak,
+            longestStreak: s.longestStreak,
+            status: s.status,
+          });
+        }
+      } catch {
+        // swallow — streak is a nice-to-have, not load-bearing
+      }
+    }
+
     res.json(success({
-      analysts: analysts.map(({ passwordHash, ...a }) => a),
+      analysts: analysts.map(({ passwordHash, ...a }) => {
+        const streak = streakMap.get(a.id);
+        return {
+          ...a,
+          currentStreak: streak?.currentStreak ?? 0,
+          longestStreak: streak?.longestStreak ?? 0,
+          streakStatus: streak?.status ?? "broken",
+        };
+      }),
     }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {

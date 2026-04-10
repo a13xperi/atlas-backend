@@ -67,32 +67,24 @@ function normalize(value: number, maxValue: number): number {
 }
 
 export function calculateConsistencyStreak(postDates: Date[]): number {
-  const dayMs = 86400000;
-  const uniqueDays = new Set(
-    postDates
-      .map(toUtcDayStart)
-      .filter((value) => Number.isFinite(value)),
-  );
+  const uniqueDays = [...new Set(postDates.map(toUtcDayStart))].sort((a, b) => b - a);
 
-  if (uniqueDays.size === 0) {
+  if (uniqueDays.length === 0) {
     return 0;
   }
 
-  const todayUtc = toUtcDayStart(new Date());
-  const startDay = uniqueDays.has(todayUtc)
-    ? todayUtc
-    : uniqueDays.has(todayUtc - dayMs)
-      ? todayUtc - dayMs
-      : null;
+  let streak = 1;
 
-  if (startDay === null) {
-    return 0;
-  }
+  for (let index = 1; index < uniqueDays.length; index += 1) {
+    const previousDay = uniqueDays[index - 1];
+    const currentDay = uniqueDays[index];
 
-  let streak = 0;
+    if (previousDay - currentDay === 86400000) {
+      streak += 1;
+      continue;
+    }
 
-  for (let day = startDay; uniqueDays.has(day); day -= dayMs) {
-    streak += 1;
+    break;
   }
 
   return streak;
@@ -135,6 +127,13 @@ export function buildArenaLeaderboard(input: {
   publishedDrafts: ArenaPublishedDraft[];
   requestingUserId: string;
   period?: ArenaPeriod;
+  /**
+   * Optional map of userId → real consecutive-day activity streak computed
+   * from the full AnalyticsEvent history (drafts, feedback, voice refinement,
+   * session starts, etc.). When provided, replaces the post-dates proxy so
+   * the leaderboard reflects true cross-activity consistency.
+   */
+  streakByUserId?: ReadonlyMap<string, number>;
 }): ArenaLeaderboardResult {
   const statsByUser = new Map<string, {
     user: ArenaUser;
@@ -164,7 +163,11 @@ export function buildArenaLeaderboard(input: {
   const computed = [...statsByUser.values()]
     .map<LeaderboardComputation>((stats) => {
       const displayName = stats.user.displayName?.trim() || stats.user.handle;
-      const consistencyStreak = calculateConsistencyStreak(stats.postDates);
+      // Prefer the real cross-activity streak when the caller supplies it;
+      // fall back to the post-dates proxy so pure unit tests (and any
+      // legacy call sites) keep working without a DB round-trip.
+      const consistencyStreak = input.streakByUserId?.get(stats.user.id)
+        ?? calculateConsistencyStreak(stats.postDates);
       const postsPerWeek = roundToSingleDecimal((stats.tweetsPublished / 30) * 7);
 
       return {
