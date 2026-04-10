@@ -3,6 +3,10 @@ import { Response, Router } from "express";
 import { z } from "zod";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { getAnthropicClient } from "../lib/anthropic";
+import {
+  runOracleCompletion,
+  resolveProfileForPhase,
+} from "../lib/openclaw-router";
 import { routeCompletion } from "../lib/providers/router";
 import {
   buildCalibrationCommentary,
@@ -405,7 +409,10 @@ function resolvePrompt(
 
 // ── General Chat ────────────────────────────────────────────────
 
-const chatSchema = z.object({
+// Legacy shape — used by the floating widget / crafting advisor:
+//   { messages: [{ role, content }], page?: string }
+// Response: { text }
+const chatLegacySchema = z.object({
   messages: z
     .array(z.object({ role: z.enum(["user", "oracle"]), content: z.string().max(2000) }))
     .min(1)
@@ -413,42 +420,165 @@ const chatSchema = z.object({
   page: z.string().optional(),
 });
 
-oracleRouter.post("/chat", async (req: AuthRequest, res) => {
+// New OpenClaw-routed shape:
+//   { message: string, userId?: string, context?: object, phase?: string }
+// Response: { reply, model, tokens }
+const chatOpenClawSchema = z.object({
+  message: z.string().trim().min(1).max(4000),
+  userId: z.string().optional(),
+  context: z.record(z.unknown()).optional(),
+  phase: z.string().max(64).optional(),
+});
+
+/**
+ * Build personalized context (voice profile + recent activity) for the
+ * Oracle. Mirrors how other routes build context — safe to call per request.
+ */
+async function buildOracleUserContext(userId: string): Promise<{
+  voiceHint: string;
+  activityHint: string;
+}> {
+  let voiceHint = "";
+  let activityHint = "";
+
   try {
-    const body = chatSchema.parse(req.body);
+    const profile = await prisma.voiceProfile.findUnique({ where: { userId } });
+    if (profile) {
+      voiceHint =
+        `\nVoice: Humor ${profile.humor}/100, Formality ${profile.formality}/100, ` +
+        `Brevity ${profile.brevity}/100, Contrarian ${profile.contrarianTone}/100.`;
+    }
+  } catch {
+    /* non-fatal */
+  }
 
-    const pageHint = body.page ? `\nThe user is on the ${body.page} page.` : "";
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
+    const [draftsRecent, postsRecent] = await Promise.all([
+      prisma.tweetDraft.count({
+        where: { userId, createdAt: { gte: sevenDaysAgo } },
+      }),
+      prisma.tweetDraft.count({
+        where: { userId, status: "POSTED", updatedAt: { gte: sevenDaysAgo } },
+      }),
+    ]);
+    if (draftsRecent > 0 || postsRecent > 0) {
+      activityHint = `\nLast 7 days: ${draftsRecent} drafts created, ${postsRecent} posted.`;
+    }
+  } catch {
+    /* non-fatal */
+  }
 
-    let voiceHint = "";
-    try {
-      const profile = await prisma.voiceProfile.findUnique({ where: { userId: req.userId! } });
-      if (profile) {
-        voiceHint = `\nVoice: Humor ${profile.humor}/100, Formality ${profile.formality}/100, Brevity ${profile.brevity}/100, Contrarian ${profile.contrarianTone}/100.`;
-      }
-    } catch {}
+  return { voiceHint, activityHint };
+}
 
-    const systemPrompt =
-      buildOracleSystemPrompt() +
-      `\n\nYou are in the floating chat widget inside Atlas.` +
-      pageHint + voiceHint +
-      `\n\nKeep responses under 50 words. Be helpful and personalized.`;
+/** New OpenClaw-routed handler — { reply, model, tokens } */
+async function handleOpenClawChat(req: AuthRequest, res: Response) {
+  const body = chatOpenClawSchema.parse(req.body);
+  const userId = req.userId!;
+  const profile = resolveProfileForPhase(body.phase);
+  const { voiceHint, activityHint } = await buildOracleUserContext(userId);
 
-    const llmMessages = [
-      { role: "system" as const, content: systemPrompt },
-      ...body.messages.map((m) => ({
-        role: (m.role === "oracle" ? "assistant" : "user") as "system" | "user" | "assistant",
-        content: m.content,
-      })),
-    ];
+  const contextSuffix =
+    body.context && Object.keys(body.context).length > 0
+      ? `\n\nSession context:\n${JSON.stringify(body.context).slice(0, 1500)}`
+      : "";
+  const phaseLine = body.phase ? `\nCurrent phase: ${body.phase}.` : "";
 
-    const response = await withTimeout(
-      routeCompletion({ taskType: "oracle_fast", maxTokens: 150, temperature: 0.7, messages: llmMessages }),
-      8_000,
-      "oracle-chat",
+  const systemPrompt =
+    buildOracleSystemPrompt() +
+    `\n\nYou are in a chat with the authenticated Atlas user.` +
+    phaseLine +
+    voiceHint +
+    activityHint +
+    `\n\nKeep responses concise unless the user asks for detail.` +
+    contextSuffix;
+
+  try {
+    const result = await runOracleCompletion({
+      profile,
+      systemPrompt,
+      userMessage: body.message,
+      label: "oracle-chat-openclaw",
+    });
+
+    logger.info(
+      {
+        profile,
+        provider: result.provider,
+        model: result.model,
+        latencyMs: result.latencyMs,
+        tokens: result.tokens,
+        phase: body.phase,
+      },
+      "Oracle OpenClaw chat response",
     );
 
-    logger.info({ provider: response.provider, latencyMs: response.latencyMs, page: body.page }, "Oracle chat response");
-    res.json(success({ text: response.content.trim() }));
+    res.json(
+      success({
+        reply: result.reply,
+        model: result.model,
+        tokens: result.tokens,
+      }),
+    );
+  } catch (err) {
+    logger.error({ error: err }, "Oracle OpenClaw chat error");
+    res.status(502).json(error("Oracle response failed", 502));
+  }
+}
+
+/** Legacy handler — preserves { text } response shape for existing callers. */
+async function handleLegacyChat(req: AuthRequest, res: Response) {
+  const body = chatLegacySchema.parse(req.body);
+
+  const pageHint = body.page ? `\nThe user is on the ${body.page} page.` : "";
+
+  let voiceHint = "";
+  try {
+    const profile = await prisma.voiceProfile.findUnique({ where: { userId: req.userId! } });
+    if (profile) {
+      voiceHint = `\nVoice: Humor ${profile.humor}/100, Formality ${profile.formality}/100, Brevity ${profile.brevity}/100, Contrarian ${profile.contrarianTone}/100.`;
+    }
+  } catch {}
+
+  const systemPrompt =
+    buildOracleSystemPrompt() +
+    `\n\nYou are in the floating chat widget inside Atlas.` +
+    pageHint + voiceHint +
+    `\n\nKeep responses under 50 words. Be helpful and personalized.`;
+
+  const llmMessages = [
+    { role: "system" as const, content: systemPrompt },
+    ...body.messages.map((m) => ({
+      role: (m.role === "oracle" ? "assistant" : "user") as "system" | "user" | "assistant",
+      content: m.content,
+    })),
+  ];
+
+  const response = await withTimeout(
+    routeCompletion({ taskType: "oracle_fast", maxTokens: 150, temperature: 0.7, messages: llmMessages }),
+    8_000,
+    "oracle-chat",
+  );
+
+  logger.info({ provider: response.provider, latencyMs: response.latencyMs, page: body.page }, "Oracle chat response");
+  res.json(success({ text: response.content.trim() }));
+}
+
+oracleRouter.post("/chat", async (req: AuthRequest, res) => {
+  try {
+    // Discriminate by body shape — the new OpenClaw route uses `message`
+    // (singular string); the legacy widget path uses `messages` (array).
+    if (
+      typeof req.body === "object" &&
+      req.body !== null &&
+      typeof (req.body as { message?: unknown }).message === "string"
+    ) {
+      await handleOpenClawChat(req, res);
+      return;
+    }
+
+    await handleLegacyChat(req, res);
   } catch (err) {
     if (err instanceof z.ZodError) {
       res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
