@@ -29,8 +29,8 @@ export function setAuthCookies(res: Response, accessToken: string, refreshToken:
 }
 
 export function clearAuthCookies(res: Response): void {
-  res.clearCookie("atlas_access_token", { path: "/" });
-  res.clearCookie("atlas_refresh_token", { path: "/" });
+  res.clearCookie("atlas_access_token", COOKIE_OPTIONS);
+  res.clearCookie("atlas_refresh_token", COOKIE_OPTIONS);
 }
 
 export function getAccessToken(req: Request): string | null {

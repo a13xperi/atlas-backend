@@ -19,6 +19,10 @@ const NUMERIC_DIMENSIONS = [
 
 type NumericDimKey = (typeof NUMERIC_DIMENSIONS)[number];
 
+function normalizeHandle(handle?: string | null) {
+  return handle?.replace(/^@/, "").trim().toLowerCase() ?? "";
+}
+
 export const fetchBlendStep: PipelineStep = {
   name: "fetchBlend",
   group: "prepare",
@@ -29,49 +33,72 @@ export const fetchBlendStep: PipelineStep = {
 
     const blend = await prisma.savedBlend.findFirst({
       where: { id: ctx.blendId, userId: ctx.userId },
-      include: { voices: { include: { referenceVoice: true } } },
+      include: { voices: { include: { referenceVoice: { include: { voiceProfile: true } } } } },
     });
 
-    if (!blend) return;
+    if (!blend || !ctx.voiceProfile) return;
 
     ctx.blendVoices = blend.voices.map((v) => ({
       label: v.referenceVoice?.name || v.label,
       percentage: v.percentage,
     }));
 
-    // --- Algorithmic dimension interpolation ---
-    // For each reference voice that has a handle, look up whether a user with
-    // that handle exists and has a calibrated voice profile. If so, include
-    // that profile's dimensions in the weighted average.
-    const handles = blend.voices
-      .map((v) => v.referenceVoice?.handle)
-      .filter((h): h is string => Boolean(h));
+    const resolved: { weight: number; profile: VoiceDimensions }[] = [];
+    const unresolvedHandles = new Set<string>();
+    let selfWeight = 0;
 
-    if (handles.length === 0) return;
+    for (const v of blend.voices) {
+      if (v.referenceVoice?.voiceProfile) {
+        resolved.push({
+          weight: v.percentage / 100,
+          profile: v.referenceVoice.voiceProfile as unknown as VoiceDimensions,
+        });
+        continue;
+      }
 
-    // Batch-fetch users + profiles for all referenced handles
-    const users = await prisma.user.findMany({
-      where: { handle: { in: handles } },
-      include: { voiceProfile: true },
-    });
+      const normalizedHandle = normalizeHandle(v.referenceVoice?.handle);
+      if (normalizedHandle) {
+        unresolvedHandles.add(normalizedHandle);
+        continue;
+      }
 
-    const profileByHandle = new Map<string, VoiceDimensions>();
-    for (const u of users) {
-      if (u.voiceProfile) {
-        profileByHandle.set(u.handle, u.voiceProfile as unknown as VoiceDimensions);
+      if (!v.referenceVoiceId) {
+        selfWeight += v.percentage / 100;
       }
     }
 
-    // Collect voices that resolved to a profile
-    const resolved: { weight: number; profile: VoiceDimensions }[] = [];
-    for (const v of blend.voices) {
-      const handle = v.referenceVoice?.handle;
-      if (handle && profileByHandle.has(handle)) {
-        resolved.push({
-          weight: v.percentage / 100,
-          profile: profileByHandle.get(handle)!,
-        });
+    if (unresolvedHandles.size > 0) {
+      const users = await prisma.user.findMany({
+        where: { handle: { in: Array.from(unresolvedHandles) } },
+        include: { voiceProfile: true },
+      });
+
+      const profileByHandle = new Map<string, VoiceDimensions>();
+      for (const user of users) {
+        if (user.voiceProfile) {
+          profileByHandle.set(
+            normalizeHandle(user.handle),
+            user.voiceProfile as unknown as VoiceDimensions,
+          );
+        }
       }
+
+      for (const v of blend.voices) {
+        const normalizedHandle = normalizeHandle(v.referenceVoice?.handle);
+        if (normalizedHandle && profileByHandle.has(normalizedHandle)) {
+          resolved.push({
+            weight: v.percentage / 100,
+            profile: profileByHandle.get(normalizedHandle)!,
+          });
+        }
+      }
+    }
+
+    if (selfWeight > 0) {
+      resolved.push({
+        weight: selfWeight,
+        profile: ctx.voiceProfile,
+      });
     }
 
     if (resolved.length === 0) return;

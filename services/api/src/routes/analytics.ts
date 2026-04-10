@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
+import { buildErrorResponse } from "../middleware/requestId";
 import { authenticate, AuthRequest } from "../middleware/auth";
 
 export const analyticsRouter = Router();
@@ -16,24 +17,41 @@ analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
 
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-    const [draftsCreated, draftsPosted, feedbackGiven, refinements, reportsIngested] =
-      await Promise.all([
-        prisma.analyticsEvent.count({
-          where: { userId: req.userId, type: "DRAFT_CREATED", createdAt: { gte: thirtyDaysAgo } },
-        }),
-        prisma.analyticsEvent.count({
-          where: { userId: req.userId, type: "DRAFT_POSTED", createdAt: { gte: thirtyDaysAgo } },
-        }),
-        prisma.analyticsEvent.count({
-          where: { userId: req.userId, type: "FEEDBACK_GIVEN", createdAt: { gte: thirtyDaysAgo } },
-        }),
-        prisma.analyticsEvent.count({
-          where: { userId: req.userId, type: "VOICE_REFINEMENT", createdAt: { gte: thirtyDaysAgo } },
-        }),
-        prisma.analyticsEvent.count({
-          where: { userId: req.userId, type: "REPORT_INGESTED", createdAt: { gte: thirtyDaysAgo } },
-        }),
-      ]);
+    const [
+      draftsCreatedEvent,
+      draftsPostedEvent,
+      feedbackGiven,
+      refinements,
+      reportsIngested,
+      draftsCreatedDirect,
+      draftsPostedDirect,
+    ] = await Promise.all([
+      prisma.analyticsEvent.count({
+        where: { userId: req.userId, type: "DRAFT_CREATED", createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.analyticsEvent.count({
+        where: { userId: req.userId, type: "DRAFT_POSTED", createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.analyticsEvent.count({
+        where: { userId: req.userId, type: "FEEDBACK_GIVEN", createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.analyticsEvent.count({
+        where: { userId: req.userId, type: "VOICE_REFINEMENT", createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.analyticsEvent.count({
+        where: { userId: req.userId, type: "REPORT_INGESTED", createdAt: { gte: thirtyDaysAgo } },
+      }),
+      // Fallback: count tweetDraft rows directly (covers seeded/imported drafts that bypass events)
+      prisma.tweetDraft.count({
+        where: { userId: req.userId, createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.tweetDraft.count({
+        where: { userId: req.userId, status: "POSTED", createdAt: { gte: thirtyDaysAgo } },
+      }),
+    ]);
+
+    const draftsCreated = Math.max(draftsCreatedEvent, draftsCreatedDirect);
+    const draftsPosted = Math.max(draftsPostedEvent, draftsPostedDirect);
 
     res.json(success({
       summary: {
@@ -357,6 +375,419 @@ analyticsRouter.get("/days-to-peak", async (req: AuthRequest, res) => {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     res.status(500).json(error("Failed to load days-to-peak", 500));
+  }
+});
+
+// Daily activity sparkline (last 30 days)
+analyticsRouter.get("/activity-daily", async (req: AuthRequest, res) => {
+  try {
+    emptyQuerySchema.parse(req.query);
+
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+    const events = await prisma.analyticsEvent.findMany({
+      where: {
+        userId: req.userId,
+        createdAt: { gte: thirtyDaysAgo },
+      },
+      select: { createdAt: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // Pre-populate all 30 days
+    const buckets = new Map<string, number>();
+    for (let i = 0; i < 30; i++) {
+      const d = new Date(thirtyDaysAgo);
+      d.setDate(d.getDate() + i);
+      buckets.set(d.toISOString().slice(0, 10), 0);
+    }
+
+    // Count events per day
+    for (const event of events) {
+      const key = event.createdAt.toISOString().slice(0, 10);
+      if (buckets.has(key)) {
+        buckets.set(key, buckets.get(key)! + 1);
+      }
+    }
+
+    const days = Array.from(buckets.entries()).map(([date, count]) => ({
+      date,
+      count,
+    }));
+
+    res.json({ days });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load daily activity", { message: err.message }));
+  }
+});
+
+// Team engagement daily (manager only — predicted vs actual across all analysts, last 7 days)
+analyticsRouter.get("/team-engagement-daily", async (req: AuthRequest, res) => {
+  try {
+    emptyQuerySchema.parse(req.query);
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || user.role === "ANALYST") {
+      return res.status(403).json(buildErrorResponse(req, "Manager access required"));
+    }
+
+    const now = new Date();
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    const drafts = await prisma.tweetDraft.findMany({
+      where: {
+        predictedEngagement: { not: null },
+        createdAt: { gte: sevenDaysAgo },
+      },
+      select: {
+        createdAt: true,
+        predictedEngagement: true,
+        actualEngagement: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const buckets = new Map<string, { predicted: number; actual: number; count: number }>();
+
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(sevenDaysAgo);
+      d.setDate(d.getDate() + i);
+      buckets.set(d.toISOString().slice(0, 10), { predicted: 0, actual: 0, count: 0 });
+    }
+
+    for (const draft of drafts) {
+      const key = draft.createdAt.toISOString().slice(0, 10);
+      const bucket = buckets.get(key);
+      if (!bucket) continue;
+      bucket.predicted += draft.predictedEngagement ?? 0;
+      bucket.actual += draft.actualEngagement ?? 0;
+      bucket.count++;
+    }
+
+    const days = Array.from(buckets.entries()).map(([date, bucket]) => ({
+      date,
+      dayLabel: dayNames[new Date(date + "T00:00:00").getDay()],
+      modelTarget: bucket.count > 0 ? Math.round(bucket.predicted / bucket.count) : 0,
+      teamActual: bucket.count > 0 ? Math.round(bucket.actual / bucket.count) : 0,
+    }));
+
+    res.json({ days });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+    res
+      .status(500)
+      .json(buildErrorResponse(req, "Failed to load team engagement daily", { message: err.message }));
+  }
+});
+
+// ============================================================
+// Atlas Score — composite 0-1000 score per user
+// ============================================================
+// Formula:
+//   Output         25% (250 pts)  — total drafts created (cap 100)
+//   Post Rate      20% (200 pts)  — postedDrafts / createdDrafts
+//   Engagement Δ   20% (200 pts)  — actual vs predicted engagement
+//   Voice Maturity 15% (150 pts)  — voice profile maturity tier + tweetsAnalyzed
+//   Feedback       10% (100 pts)  — feedback events given
+//   Streak         10% (100 pts)  — consecutive days with activity (cap 30)
+// ============================================================
+
+type ScoreUserInput = {
+  id: string;
+  handle: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  voiceProfile: {
+    maturity: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
+    tweetsAnalyzed: number;
+  } | null;
+  drafts: Array<{
+    status: string;
+    predictedEngagement: number | null;
+    actualEngagement: number | null;
+  }>;
+  feedbackCount: number;
+  activityDates: Date[];
+};
+
+type ScoreBreakdown = {
+  output: number;
+  postRate: number;
+  engagementDelta: number;
+  voiceMaturity: number;
+  feedback: number;
+  streak: number;
+  total: number;
+};
+
+function clampScore(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+function computeStreak(dates: Date[]): number {
+  if (dates.length === 0) return 0;
+  const days = new Set<string>();
+  for (const d of dates) {
+    days.add(d.toISOString().slice(0, 10));
+  }
+
+  // Walk backwards from today; allow break only if today has no activity
+  // (so a streak ending yesterday still counts even if user hasn't posted today).
+  let streak = 0;
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
+  if (!days.has(cursor.toISOString().slice(0, 10))) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  while (days.has(cursor.toISOString().slice(0, 10))) {
+    streak++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function computeAtlasScore(u: ScoreUserInput): ScoreBreakdown {
+  // Output (250 max) — cap at 100 drafts for full score
+  const totalDrafts = u.drafts.length;
+  const output = Math.round(clampScore(totalDrafts / 100, 0, 1) * 250);
+
+  // Post Rate (200 max) — posted+approved / created
+  const postedCount = u.drafts.filter(
+    (d) => d.status === "POSTED" || d.status === "APPROVED"
+  ).length;
+  const postRateRatio = totalDrafts > 0 ? postedCount / totalDrafts : 0;
+  const postRate = Math.round(clampScore(postRateRatio, 0, 1) * 200);
+
+  // Engagement Delta (200 max) — actual vs predicted ratio
+  // Map: 0 → 0pts, 1.0 → 100pts, 2.0+ → 200pts
+  const engagementDrafts = u.drafts.filter(
+    (d) =>
+      d.actualEngagement != null &&
+      d.predictedEngagement != null &&
+      (d.predictedEngagement ?? 0) > 0
+  );
+  let engagementDelta = 0;
+  if (engagementDrafts.length > 0) {
+    const ratios = engagementDrafts.map(
+      (d) => (d.actualEngagement ?? 0) / (d.predictedEngagement ?? 1)
+    );
+    const avgRatio = ratios.reduce((sum, r) => sum + r, 0) / ratios.length;
+    engagementDelta = Math.round(clampScore(avgRatio / 2, 0, 1) * 200);
+  }
+
+  // Voice Maturity (150 max) — tier base + tweetsAnalyzed bonus
+  let voiceMaturity = 0;
+  if (u.voiceProfile) {
+    const tierBase =
+      u.voiceProfile.maturity === "ADVANCED"
+        ? 100
+        : u.voiceProfile.maturity === "INTERMEDIATE"
+          ? 60
+          : 20;
+    const analyzedBonus = Math.round(
+      clampScore(u.voiceProfile.tweetsAnalyzed / 200, 0, 1) * 50
+    );
+    voiceMaturity = clampScore(tierBase + analyzedBonus, 0, 150);
+  }
+
+  // Feedback (100 max) — feedback events (cap at 50 events)
+  const feedback = Math.round(clampScore(u.feedbackCount / 50, 0, 1) * 100);
+
+  // Streak (100 max) — consecutive days with activity (cap 30 days)
+  const streakDays = computeStreak(u.activityDates);
+  const streak = Math.round(clampScore(streakDays / 30, 0, 1) * 100);
+
+  const total = output + postRate + engagementDelta + voiceMaturity + feedback + streak;
+
+  return { output, postRate, engagementDelta, voiceMaturity, feedback, streak, total };
+}
+
+async function loadScoreInput(userId: string): Promise<ScoreUserInput | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      handle: true,
+      displayName: true,
+      avatarUrl: true,
+      voiceProfile: {
+        select: { maturity: true, tweetsAnalyzed: true },
+      },
+      tweetDrafts: {
+        select: {
+          status: true,
+          predictedEngagement: true,
+          actualEngagement: true,
+          createdAt: true,
+        },
+      },
+    },
+  });
+  if (!user) return null;
+
+  const feedbackCount = await prisma.analyticsEvent.count({
+    where: { userId, type: "FEEDBACK_GIVEN" },
+  });
+
+  return {
+    id: user.id,
+    handle: user.handle,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+    voiceProfile: user.voiceProfile,
+    drafts: user.tweetDrafts.map((d) => ({
+      status: d.status,
+      predictedEngagement: d.predictedEngagement,
+      actualEngagement: d.actualEngagement,
+    })),
+    feedbackCount,
+    activityDates: user.tweetDrafts.map((d) => d.createdAt),
+  };
+}
+
+// Get current user's Atlas Score with full breakdown
+analyticsRouter.get("/atlas-score", async (req: AuthRequest, res) => {
+  try {
+    emptyQuerySchema.parse(req.query);
+
+    const input = await loadScoreInput(req.userId!);
+    if (!input) {
+      return res.status(404).json(error("User not found", 404));
+    }
+
+    const breakdown = computeAtlasScore(input);
+
+    res.json(
+      success({
+        score: breakdown.total,
+        breakdown: {
+          output: { points: breakdown.output, max: 250, weight: 0.25 },
+          postRate: { points: breakdown.postRate, max: 200, weight: 0.2 },
+          engagementDelta: { points: breakdown.engagementDelta, max: 200, weight: 0.2 },
+          voiceMaturity: { points: breakdown.voiceMaturity, max: 150, weight: 0.15 },
+          feedback: { points: breakdown.feedback, max: 100, weight: 0.1 },
+          streak: { points: breakdown.streak, max: 100, weight: 0.1 },
+        },
+        max: 1000,
+        user: {
+          id: input.id,
+          handle: input.handle,
+          displayName: input.displayName,
+          avatarUrl: input.avatarUrl,
+        },
+      })
+    );
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    console.error("atlas-score error:", err);
+    res.status(500).json(error("Failed to compute Atlas Score", 500));
+  }
+});
+
+// Leaderboard — top 20 users by Atlas Score
+analyticsRouter.get("/leaderboard", async (req: AuthRequest, res) => {
+  try {
+    emptyQuerySchema.parse(req.query);
+
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        handle: true,
+        displayName: true,
+        avatarUrl: true,
+        voiceProfile: {
+          select: { maturity: true, tweetsAnalyzed: true },
+        },
+        tweetDrafts: {
+          select: {
+            status: true,
+            predictedEngagement: true,
+            actualEngagement: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    // Batch fetch feedback counts for all users
+    const feedbackEvents = await prisma.analyticsEvent.groupBy({
+      by: ["userId"],
+      where: { type: "FEEDBACK_GIVEN" },
+      _count: { userId: true },
+    });
+    const feedbackByUser = new Map<string, number>();
+    for (const e of feedbackEvents) {
+      feedbackByUser.set(e.userId, e._count.userId);
+    }
+
+    const scored = users.map((u) => {
+      const input: ScoreUserInput = {
+        id: u.id,
+        handle: u.handle,
+        displayName: u.displayName,
+        avatarUrl: u.avatarUrl,
+        voiceProfile: u.voiceProfile,
+        drafts: u.tweetDrafts.map((d) => ({
+          status: d.status,
+          predictedEngagement: d.predictedEngagement,
+          actualEngagement: d.actualEngagement,
+        })),
+        feedbackCount: feedbackByUser.get(u.id) ?? 0,
+        activityDates: u.tweetDrafts.map((d) => d.createdAt),
+      };
+      const breakdown = computeAtlasScore(input);
+      return {
+        userId: u.id,
+        handle: u.handle,
+        displayName: u.displayName,
+        avatarUrl: u.avatarUrl,
+        score: breakdown.total,
+        breakdown,
+      };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const top = scored.slice(0, 20).map((entry, i) => ({ rank: i + 1, ...entry }));
+
+    // Find current user's rank if not in top 20
+    let currentUserRank: number | null = null;
+    const currentUserIndex = scored.findIndex((s) => s.userId === req.userId);
+    if (currentUserIndex >= 0) {
+      currentUserRank = currentUserIndex + 1;
+    }
+
+    res.json(
+      success({
+        leaderboard: top,
+        totalUsers: scored.length,
+        currentUserRank,
+      })
+    );
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    console.error("leaderboard error:", err);
+    res.status(500).json(error("Failed to load leaderboard", 500));
   }
 });
 

@@ -16,10 +16,11 @@ function signLegacyToken(userId: string): string {
 }
 
 export const authRouter = Router();
-
-// Rate limits: 20 login attempts/min, 10 registrations/min per IP
-const loginLimiter = rateLimit(20, 60 * 1000);
-const registerLimiter = rateLimit(10, 60 * 1000);
+const authRateLimiter = rateLimit(
+  config.RATE_LIMIT_AUTH_MAX_REQUESTS,
+  config.RATE_LIMIT_AUTH_WINDOW_MS,
+);
+authRouter.use(authRateLimiter);
 
 // --- Schemas ---
 
@@ -50,7 +51,7 @@ const linkAccountSchema = z.object({
 // --- Routes ---
 
 // Register — Supabase auth with legacy bcrypt fallback
-authRouter.post("/register", registerLimiter, async (req, res) => {
+authRouter.post("/register", async (req, res) => {
   try {
     const body = registerSchema.parse(req.body);
 
@@ -133,7 +134,7 @@ authRouter.post("/register", registerLimiter, async (req, res) => {
 });
 
 // Login — Supabase auth with legacy bcrypt fallback
-authRouter.post("/login", loginLimiter, async (req, res) => {
+authRouter.post("/login", async (req, res) => {
   try {
     const body = loginSchema.parse(req.body);
 
@@ -312,13 +313,19 @@ authRouter.get("/me", authenticate, async (req: AuthRequest, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
-      include: { voiceProfile: true },
+      select: {
+        id: true,
+        handle: true,
+        role: true,
+        xBio: true,
+        xAvatarUrl: true,
+        xFollowerCount: true,
+        voiceProfile: true,
+      },
     });
     if (!user) return res.status(404).json(error("User not found"));
 
-    res.json(success({
-      user: { id: user.id, handle: user.handle, role: user.role, voiceProfile: user.voiceProfile },
-    }));
+    res.json(success({ user }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Me error:", err.message);
     res.status(500).json(error("Failed to get user"));

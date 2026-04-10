@@ -6,8 +6,9 @@ import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { fetchTweetsByHandle } from "../lib/twitter";
-import { calibrateFromTweets } from "../lib/calibrate";
+import { calibrateFromTweets, type CalibrationResult } from "../lib/calibrate";
 import { getVoiceInsights } from "../lib/voice-insights";
+import { blendVoices } from "../lib/voice-blend";
 import { logger } from "../lib/logger";
 
 // Public router — no auth required
@@ -17,13 +18,78 @@ referenceAccountsRouter.get("/reference-accounts", async (_req, res) => {
   try {
     const accounts = await prisma.referenceVoice.findMany({
       where: { isGlobal: true, isActive: true },
-      select: { id: true, name: true, handle: true, avatarUrl: true, category: true },
+      include: { voiceProfile: true },
       orderBy: [{ category: "asc" }, { name: "asc" }],
     });
-    res.json(success({ accounts }));
+    res.json(success({ accounts: accounts.map(formatReferenceAccount) }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to load reference accounts");
     res.status(500).json(error("Failed to load reference accounts"));
+  }
+});
+
+const referenceAccountSeedSchema = z.object({
+  handle: z.string().min(1).max(50),
+});
+
+referenceAccountsRouter.post("/reference-accounts/seed", async (req, res) => {
+  try {
+    const body = referenceAccountSeedSchema.parse(req.body);
+    const normalizedHandle = normalizeReferenceHandle(body.handle);
+    const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle, 30);
+
+    if (tweets.length === 0) {
+      return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
+    }
+
+    const calibration = await calibrateFromTweets(tweets.map((tweet) => tweet.text));
+    const sampleTweets = tweets.slice(0, 5).map((tweet) => tweet.text);
+
+    const existingAccount = await prisma.referenceVoice.findFirst({
+      where: {
+        isGlobal: true,
+        OR: [{ handle: normalizedHandle }, { handle: `@${normalizedHandle}` }],
+      },
+    });
+
+    const account = existingAccount
+      ? await prisma.referenceVoice.update({
+          where: { id: existingAccount.id },
+          data: {
+            name: twitterUser.name,
+            handle: normalizedHandle,
+            avatarUrl: twitterUser.profile_image_url ?? null,
+            isGlobal: true,
+            isActive: true,
+          },
+        })
+      : await prisma.referenceVoice.create({
+          data: {
+            name: twitterUser.name,
+            handle: normalizedHandle,
+            avatarUrl: twitterUser.profile_image_url ?? null,
+            isGlobal: true,
+            isActive: true,
+          },
+        });
+
+    const voiceProfile = await prisma.referenceVoiceProfile.upsert({
+      where: { referenceVoiceId: account.id },
+      update: buildReferenceVoiceProfileData(calibration, sampleTweets),
+      create: {
+        referenceVoiceId: account.id,
+        ...buildReferenceVoiceProfileData(calibration, sampleTweets),
+      },
+    });
+
+    res.json(success(formatReferenceAccount({ ...account, voiceProfile })));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+
+    logger.error({ err: err.message }, "Failed to seed reference account");
+    res.status(502).json(error("Failed to seed reference account"));
   }
 });
 
@@ -63,6 +129,117 @@ function buildVoiceProfileData(body: ProfileInput) {
     ...(body.selfPromotionalIntensity !== undefined && {
       selfPromotionalIntensity: body.selfPromotionalIntensity,
     }),
+  };
+}
+
+function normalizeReferenceHandle(handle: string) {
+  return handle.replace(/^@/, "").trim().toLowerCase();
+}
+
+function resolveVoiceMaturity(tweetsAnalyzed: number) {
+  if (tweetsAnalyzed >= 100) return VoiceMaturity.ADVANCED;
+  if (tweetsAnalyzed >= 20) return VoiceMaturity.INTERMEDIATE;
+  return VoiceMaturity.BEGINNER;
+}
+
+function buildCalibrationDimensions(calibration: CalibrationResult) {
+  return {
+    humor: calibration.humor,
+    formality: calibration.formality,
+    brevity: calibration.brevity,
+    contrarianTone: calibration.contrarianTone,
+    directness: calibration.directness,
+    warmth: calibration.warmth,
+    technicalDepth: calibration.technicalDepth,
+    confidence: calibration.confidence,
+    evidenceOrientation: calibration.evidenceOrientation,
+    solutionOrientation: calibration.solutionOrientation,
+    socialPosture: calibration.socialPosture,
+    selfPromotionalIntensity: calibration.selfPromotionalIntensity,
+  };
+}
+
+function buildVoiceProfileUpdate(calibration: CalibrationResult) {
+  return {
+    ...buildCalibrationDimensions(calibration),
+    tweetsAnalyzed: calibration.tweetsAnalyzed,
+    maturity: resolveVoiceMaturity(calibration.tweetsAnalyzed),
+  };
+}
+
+function buildReferenceVoiceProfileData(
+  calibration: CalibrationResult,
+  sampleTweets: string[],
+) {
+  return {
+    ...buildCalibrationDimensions(calibration),
+    calibrationConfidence: calibration.calibrationConfidence,
+    analysis: calibration.analysis,
+    tweetsAnalyzed: calibration.tweetsAnalyzed,
+    sampleTweets,
+  };
+}
+
+type ReferenceVoiceProfileSnapshot = {
+  humor: number;
+  formality: number;
+  brevity: number;
+  contrarianTone: number;
+  directness: number;
+  warmth: number;
+  technicalDepth: number;
+  confidence: number;
+  evidenceOrientation: number;
+  solutionOrientation: number;
+  socialPosture: number;
+  selfPromotionalIntensity: number;
+  calibrationConfidence: number | null;
+  analysis: string | null;
+  tweetsAnalyzed: number;
+  sampleTweets: string[];
+};
+
+function formatReferenceVoiceProfile(profile: ReferenceVoiceProfileSnapshot | null) {
+  if (!profile) {
+    return null;
+  }
+
+  return {
+    humor: profile.humor,
+    formality: profile.formality,
+    brevity: profile.brevity,
+    contrarianTone: profile.contrarianTone,
+    directness: profile.directness,
+    warmth: profile.warmth,
+    technicalDepth: profile.technicalDepth,
+    confidence: profile.confidence,
+    evidenceOrientation: profile.evidenceOrientation,
+    solutionOrientation: profile.solutionOrientation,
+    socialPosture: profile.socialPosture,
+    selfPromotionalIntensity: profile.selfPromotionalIntensity,
+    calibrationConfidence: profile.calibrationConfidence,
+    analysis: profile.analysis,
+    tweetsAnalyzed: profile.tweetsAnalyzed,
+  };
+}
+
+function formatReferenceAccount(account: {
+  id: string;
+  name: string;
+  handle: string | null;
+  avatarUrl: string | null;
+  category: string | null;
+  voiceProfile: ReferenceVoiceProfileSnapshot | null;
+}) {
+  return {
+    id: account.id,
+    handle: account.handle ?? undefined,
+    displayName: account.name,
+    name: account.name,
+    avatarUrl: account.avatarUrl ?? undefined,
+    category: account.category ?? undefined,
+    voiceProfile: formatReferenceVoiceProfile(account.voiceProfile),
+    sampleTweets: account.voiceProfile?.sampleTweets ?? [],
   };
 }
 
@@ -364,36 +541,21 @@ const calibrateSchema = z.object({
 voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
   try {
     const body = calibrateSchema.parse(req.body);
+    const normalizedHandle = normalizeReferenceHandle(body.handle);
 
     // Fetch tweets from Twitter/X
-    const { user: twitterUser, tweets } = await fetchTweetsByHandle(body.handle);
+    const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle);
 
     if (tweets.length === 0) {
-      return res.status(400).json(error(`No tweets found for @${body.handle}`));
+      return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
     }
 
-    // Run calibration via Claude
+    // Claude calibration can take tens of seconds on larger tweet sets, so Railway deploys
+    // need RAILWAY_SERVICE_TIMEOUT=90000 for this endpoint.
     const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
 
     // Update voice profile with all 12 calibrated dimensions
-    const dimensionData = {
-      humor: calibration.humor,
-      formality: calibration.formality,
-      brevity: calibration.brevity,
-      contrarianTone: calibration.contrarianTone,
-      directness: calibration.directness,
-      warmth: calibration.warmth,
-      technicalDepth: calibration.technicalDepth,
-      confidence: calibration.confidence,
-      evidenceOrientation: calibration.evidenceOrientation,
-      solutionOrientation: calibration.solutionOrientation,
-      socialPosture: calibration.socialPosture,
-      selfPromotionalIntensity: calibration.selfPromotionalIntensity,
-      tweetsAnalyzed: calibration.tweetsAnalyzed,
-      maturity: calibration.tweetsAnalyzed >= 100 ? VoiceMaturity.ADVANCED
-        : calibration.tweetsAnalyzed >= 20 ? VoiceMaturity.INTERMEDIATE
-        : VoiceMaturity.BEGINNER,
-    };
+    const dimensionData = buildVoiceProfileUpdate(calibration);
 
     const profile = await prisma.voiceProfile.upsert({
       where: { userId: req.userId! },
@@ -420,7 +582,12 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     logger.error({ err: err.message }, "Calibration failed");
-    res.status(502).json(error("Voice calibration failed"));
+    // Surface Twitter API errors to the client so the frontend can show a useful message
+    const msg = err.message ?? "";
+    if (msg.includes("429")) return res.status(429).json(error(`Twitter API rate limit: ${msg}`));
+    if (msg.includes("404") || msg.includes("not found")) return res.status(404).json(error(msg));
+    if (msg.includes("403")) return res.status(403).json(error(msg));
+    res.status(502).json(error(`Voice calibration failed: ${msg}`));
   }
 });
 
@@ -449,5 +616,211 @@ voiceRouter.get("/insights", async (req: AuthRequest, res) => {
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to compute voice insights");
     res.status(500).json(error("Failed to compute voice insights"));
+  }
+});
+
+// --- Voice Blending Engine (primary + secondary weighting) ---
+
+const voiceBlendSchema = z.object({
+  primary_id: z.string().min(1, "primary_id is required"),
+  additional_ids: z.array(z.string().min(1)).default([]),
+  weights: z
+    .record(z.string(), z.number().min(0).max(1))
+    .optional(),
+});
+
+/**
+ * POST /api/voice/blend
+ *
+ * Blend voice inspirations from Twitter profiles into a unified voice profile.
+ * Fetches tweets from each inspiration, analyzes writing style, and produces
+ * weighted blended dimensions. Stores the result per user.
+ *
+ * Body: { primary_id, additional_ids?, weights? }
+ */
+voiceRouter.post("/blend", async (req: AuthRequest, res) => {
+  try {
+    const body = voiceBlendSchema.parse(req.body);
+
+    logger.info(
+      {
+        userId: req.userId,
+        primaryId: body.primary_id,
+        additionalCount: body.additional_ids.length,
+      },
+      "Starting voice blend",
+    );
+
+    // Run the blend engine
+    const result = await blendVoices(
+      body.primary_id,
+      body.additional_ids,
+      body.weights,
+    );
+
+    // Persist the blended profile
+    const profileData = {
+      primaryTwitterId: body.primary_id,
+      primaryHandle:
+        result.inspirationProfiles.find(
+          (p) => p.twitterId === body.primary_id,
+        )?.handle ?? null,
+      additionalTwitterIds: body.additional_ids,
+      additionalHandles: result.inspirationProfiles
+        .filter((p) => p.twitterId !== body.primary_id)
+        .map((p) => p.handle),
+      weights: result.appliedWeights as any,
+      humor: result.dimensions.humor,
+      formality: result.dimensions.formality,
+      brevity: result.dimensions.brevity,
+      contrarianTone: result.dimensions.contrarianTone,
+      directness: result.dimensions.directness,
+      warmth: result.dimensions.warmth,
+      technicalDepth: result.dimensions.technicalDepth,
+      confidence: result.dimensions.confidence,
+      evidenceOrientation: result.dimensions.evidenceOrientation,
+      solutionOrientation: result.dimensions.solutionOrientation,
+      socialPosture: result.dimensions.socialPosture,
+      selfPromotionalIntensity: result.dimensions.selfPromotionalIntensity,
+      styleSignals: result.styleSignals as any,
+      tweetsAnalyzed: result.totalTweetsAnalyzed,
+      blendSummary: result.summary,
+    };
+
+    const blendedProfile = await prisma.blendedVoiceProfile.upsert({
+      where: { userId: req.userId! },
+      update: profileData,
+      create: { userId: req.userId!, ...profileData },
+    });
+
+    // Also update the main voice profile so tweet generation uses blended values
+    await prisma.voiceProfile.upsert({
+      where: { userId: req.userId! },
+      update: {
+        humor: result.dimensions.humor,
+        formality: result.dimensions.formality,
+        brevity: result.dimensions.brevity,
+        contrarianTone: result.dimensions.contrarianTone,
+        directness: result.dimensions.directness,
+        warmth: result.dimensions.warmth,
+        technicalDepth: result.dimensions.technicalDepth,
+        confidence: result.dimensions.confidence,
+        evidenceOrientation: result.dimensions.evidenceOrientation,
+        solutionOrientation: result.dimensions.solutionOrientation,
+        socialPosture: result.dimensions.socialPosture,
+        selfPromotionalIntensity: result.dimensions.selfPromotionalIntensity,
+        tweetsAnalyzed: result.totalTweetsAnalyzed,
+        maturity:
+          result.totalTweetsAnalyzed >= 100
+            ? VoiceMaturity.ADVANCED
+            : result.totalTweetsAnalyzed >= 20
+              ? VoiceMaturity.INTERMEDIATE
+              : VoiceMaturity.BEGINNER,
+      },
+      create: {
+        userId: req.userId!,
+        humor: result.dimensions.humor,
+        formality: result.dimensions.formality,
+        brevity: result.dimensions.brevity,
+        contrarianTone: result.dimensions.contrarianTone,
+        directness: result.dimensions.directness,
+        warmth: result.dimensions.warmth,
+        technicalDepth: result.dimensions.technicalDepth,
+        confidence: result.dimensions.confidence,
+        evidenceOrientation: result.dimensions.evidenceOrientation,
+        solutionOrientation: result.dimensions.solutionOrientation,
+        socialPosture: result.dimensions.socialPosture,
+        selfPromotionalIntensity: result.dimensions.selfPromotionalIntensity,
+        tweetsAnalyzed: result.totalTweetsAnalyzed,
+        maturity:
+          result.totalTweetsAnalyzed >= 100
+            ? VoiceMaturity.ADVANCED
+            : result.totalTweetsAnalyzed >= 20
+              ? VoiceMaturity.INTERMEDIATE
+              : VoiceMaturity.BEGINNER,
+      },
+    });
+
+    // Log analytics event
+    await prisma.analyticsEvent.create({
+      data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
+    });
+
+    res.json(
+      success({
+        blendedProfile,
+        inspirations: result.inspirationProfiles.map((p) => ({
+          twitterId: p.twitterId,
+          handle: p.handle,
+          name: p.name,
+          tweetCount: p.tweetCount,
+          weight: result.appliedWeights[p.twitterId],
+        })),
+        dimensions: result.dimensions,
+        styleSignals: result.styleSignals,
+        summary: result.summary,
+      }),
+    );
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    logger.error({ err: err.message, userId: req.userId }, "Voice blend failed");
+    res.status(502).json(error(`Voice blend failed: ${err.message}`));
+  }
+});
+
+/**
+ * GET /api/voice/blended-profile
+ *
+ * Returns the current user's stored blended voice profile,
+ * including the source inspirations, weights, and blended dimensions.
+ */
+voiceRouter.get("/blended-profile", async (req: AuthRequest, res) => {
+  try {
+    const profile = await prisma.blendedVoiceProfile.findUnique({
+      where: { userId: req.userId! },
+    });
+
+    if (!profile) {
+      return res.status(404).json(
+        error("No blended voice profile found. Use POST /api/voice/blend to create one."),
+      );
+    }
+
+    res.json(
+      success({
+        profile: {
+          id: profile.id,
+          primaryTwitterId: profile.primaryTwitterId,
+          primaryHandle: profile.primaryHandle,
+          additionalTwitterIds: profile.additionalTwitterIds,
+          additionalHandles: profile.additionalHandles,
+          weights: profile.weights,
+          dimensions: {
+            humor: profile.humor,
+            formality: profile.formality,
+            brevity: profile.brevity,
+            contrarianTone: profile.contrarianTone,
+            directness: profile.directness,
+            warmth: profile.warmth,
+            technicalDepth: profile.technicalDepth,
+            confidence: profile.confidence,
+            evidenceOrientation: profile.evidenceOrientation,
+            solutionOrientation: profile.solutionOrientation,
+            socialPosture: profile.socialPosture,
+            selfPromotionalIntensity: profile.selfPromotionalIntensity,
+          },
+          styleSignals: profile.styleSignals,
+          tweetsAnalyzed: profile.tweetsAnalyzed,
+          blendSummary: profile.blendSummary,
+          createdAt: profile.createdAt,
+          updatedAt: profile.updatedAt,
+        },
+      }),
+    );
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to load blended voice profile");
+    res.status(500).json(error("Failed to load blended voice profile"));
   }
 });

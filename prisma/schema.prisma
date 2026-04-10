@@ -22,6 +22,9 @@ model User {
   xAccessToken      String?
   xRefreshToken     String?
   xTokenExpiresAt   DateTime?
+  xBio              String?
+  xAvatarUrl        String?
+  xFollowerCount    Int?
   tourCompleted     Boolean  @default(false)
   tourStep          Int      @default(0)
   createdAt         DateTime @default(now())
@@ -42,6 +45,7 @@ model User {
   nlpMonitors       NlpMonitor[]
   campaigns         Campaign[]
   voiceDimensionInsight VoiceDimensionInsight?
+  blendedVoiceProfile   BlendedVoiceProfile?
 
   @@map("users")
 }
@@ -111,10 +115,42 @@ model ReferenceVoice {
   isGlobal    Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  blendVoices BlendVoice[]
+  user         User?                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  blendVoices  BlendVoice[]
+  voiceProfile ReferenceVoiceProfile?
 
   @@map("reference_voices")
+}
+
+model ReferenceVoiceProfile {
+  id                       String   @id @default(cuid())
+  referenceVoiceId         String   @unique
+
+  // Voice dimensions (0-100)
+  humor                    Int      @default(50)
+  formality                Int      @default(50)
+  brevity                  Int      @default(50)
+  contrarianTone           Int      @default(50)
+  directness               Int      @default(50)
+  warmth                   Int      @default(50)
+  technicalDepth           Int      @default(50)
+  confidence               Int      @default(50)
+  evidenceOrientation      Int      @default(50)
+  solutionOrientation      Int      @default(50)
+  socialPosture            Int      @default(50)
+  selfPromotionalIntensity Int      @default(50)
+
+  // Calibration metadata
+  calibrationConfidence    Float?
+  analysis                 String?
+  tweetsAnalyzed           Int      @default(0)
+  sampleTweets             String[]
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  referenceVoice ReferenceVoice @relation(fields: [referenceVoiceId], references: [id], onDelete: Cascade)
+
+  @@map("reference_voice_profiles")
 }
 
 model SavedBlend {
@@ -405,4 +441,85 @@ model VoiceDimensionInsight {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("voice_dimension_insights")
+}
+
+model BlendedVoiceProfile {
+  id                       String   @id @default(cuid())
+  userId                   String   @unique
+  primaryTwitterId         String
+  primaryHandle            String?
+  additionalTwitterIds     String[]
+  additionalHandles        String[]
+  weights                  Json     // { "twitter_id": weight_value }
+
+  // Blended style dimensions (0-100)
+  humor                    Int      @default(50)
+  formality                Int      @default(50)
+  brevity                  Int      @default(50)
+  contrarianTone           Int      @default(50)
+  directness               Int      @default(50)
+  warmth                   Int      @default(50)
+  technicalDepth           Int      @default(50)
+  confidence               Int      @default(50)
+  evidenceOrientation      Int      @default(50)
+  solutionOrientation      Int      @default(50)
+  socialPosture            Int      @default(50)
+  selfPromotionalIntensity Int      @default(50)
+
+  // Raw style signals per inspiration (for transparency / debugging)
+  styleSignals             Json?    // { "twitter_id": { avgLength, emojiRate, ... } }
+
+  // Meta
+  tweetsAnalyzed           Int      @default(0)
+  blendSummary             String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("blended_voice_profiles")
+}
+
+model FeatureFlag {
+  key         String   @id
+  enabled     Boolean  @default(true)
+  rolloutRole String   @default("everyone")
+  updatedAt   DateTime @updatedAt
+
+  @@map("feature_flags")
+}
+
+// ── Backup subsystem ────────────────────────────────────────────
+
+enum BackupStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum BackupTriggerSource {
+  MANUAL
+  SCHEDULED
+}
+
+enum BackupProvider {
+  SUPABASE_RESTORE_POINT
+  R2_LOGICAL
+  LOCAL_LOGICAL
+}
+
+model BackupLog {
+  id            String              @id @default(cuid())
+  triggeredAt   DateTime            @default(now())
+  status        BackupStatus        @default(PENDING)
+  triggerSource BackupTriggerSource
+  provider      BackupProvider?
+  size          Int?
+  storageUrl    String?
+  errorMessage  String?
+  completedAt   DateTime?
+
+  @@index([triggeredAt])
+  @@index([triggerSource, triggeredAt])
+  @@map("backup_logs")
 }

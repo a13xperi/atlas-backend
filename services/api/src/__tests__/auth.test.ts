@@ -57,6 +57,9 @@ const mockUser = {
   handle: "testuser",
   email: "test@example.com",
   role: "ANALYST",
+  xBio: "Crypto analyst",
+  xAvatarUrl: "https://example.com/avatar.jpg",
+  xFollowerCount: 12345,
   voiceProfile: null,
 };
 
@@ -90,12 +93,26 @@ describe("POST /api/auth/register", () => {
 });
 
 describe("POST /api/auth/login", () => {
-  it("returns 401 when user not found (legacy fallback)", async () => {
+  it("returns 401 when Supabase is unavailable and no legacy user exists", async () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
     const res = await request(app)
       .post("/api/auth/login")
       .send({ email: "test@example.com", password: "secret123" });
     expect(res.status).toBe(401);
+  }, 15000);
+
+  it("returns a legacy JWT when Supabase is unavailable and credentials are valid", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      ...mockUser,
+      passwordHash: "hashed_password",
+    });
+
+    const res = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "test@example.com", password: "secret123" });
+
+    expect(res.status).toBe(200);
+    expect(expectSuccessResponse<any>(res.body).token).toBeDefined();
   }, 15000);
 });
 
@@ -131,5 +148,20 @@ describe("GET /api/auth/me", () => {
     const data = expectSuccessResponse<any>(res.body);
     expect(data.user.id).toBe("user-123");
     expect(data.user.voiceProfile).toBeDefined();
+    expect(data.user.xBio).toBe("Crypto analyst");
+    expect(data.user.xAvatarUrl).toBe("https://example.com/avatar.jpg");
+    expect(data.user.xFollowerCount).toBe(12345);
+    expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "user-123" },
+      select: {
+        id: true,
+        handle: true,
+        role: true,
+        xBio: true,
+        xAvatarUrl: true,
+        xFollowerCount: true,
+        voiceProfile: true,
+      },
+    });
   });
 });

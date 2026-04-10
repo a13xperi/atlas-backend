@@ -144,6 +144,8 @@ Sources: ${sources.join(", ")}
 
 Make it specific and actionable. Include at least one contrarian take.`;
 
+    // Briefing generation can route through Anthropic, so Railway deploys need
+    // RAILWAY_SERVICE_TIMEOUT=90000 even though this handler keeps a shorter app timeout.
     const response = await withTimeout(
       routeCompletion({
         taskType: "research",

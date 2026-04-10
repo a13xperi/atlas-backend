@@ -32,6 +32,7 @@ interface PromptParams {
   researchContext?: string;
   replyAngle?: string;
   angleInstruction?: string;
+  recentDrafts?: string[];
 }
 
 /** Prefix extreme dimension values with IMPORTANT for LLM emphasis */
@@ -199,6 +200,7 @@ ${voiceDescription}
 - Stay within 280 characters. This is a hard limit.
 - No hashtags unless the voice style explicitly demands them (very casual + high humor).
 - Sound like a real person, not a bot. No corporate speak.
+- Never use em dashes (—). Use a short hyphen (-) or restructure the sentence instead.
 - ${getSourceTypeInstruction(sourceType)}`;
 
   // Add blend instructions if applicable
@@ -232,6 +234,14 @@ ${voiceDescription}
   // Add feedback if this is a refinement
   if (feedback) {
     system += `\n\n## Refinement Request\nThe user gave this feedback on a previous version: "${feedback}"\nAdjust your output based on this feedback while maintaining the voice profile.`;
+  }
+
+  // Inject recent drafts to prevent angle repetition
+  if (params.recentDrafts && params.recentDrafts.length > 0) {
+    const draftList = params.recentDrafts
+      .map((d, i) => `${i + 1}. "${d.slice(0, 120)}${d.length > 120 ? "..." : ""}"`)
+      .join("\n");
+    system += `\n\n## Avoid These Angles\nThe user's recent drafts (do NOT repeat the same framing, hook, or angle):\n${draftList}\n\nWrite something fresh — different opening, different perspective, different structural approach.`;
   }
 
   const sourceLabel = sourceType.replace("_", " ").toLowerCase();
