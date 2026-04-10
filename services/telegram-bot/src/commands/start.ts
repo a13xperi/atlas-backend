@@ -1,11 +1,7 @@
 import type { Context, Telegraf } from "telegraf";
-import { buildOracleSystemPrompt } from "../../../api/src/lib/oracle-prompt";
-
-const oracleName =
-  buildOracleSystemPrompt().match(/You are (.+?) —/)?.[1] ?? "The Oracle";
 
 function buildWelcomeMessage(): string {
-  return `Welcome to Atlas. I'm ${oracleName}, and I've seen thousands of voices emerge from the noise. Link your Atlas account with /link <handle> so I know which signal is yours.`;
+  return `Hey — I'm the same brain from Atlas.\n\nDrop me a report, tweet link, or voice note anytime and I'll queue it straight to your Crafting Station.\n\nWhat's your Atlas handle? Reply with /link <your_handle> to connect your account.`;
 }
 
 export function registerStartCommand(bot: Telegraf<Context>): void {
