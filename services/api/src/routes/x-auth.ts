@@ -10,8 +10,10 @@ import { buildErrorResponse } from "../middleware/requestId";
 import { success } from "../lib/response";
 import { setAuthCookies } from "../lib/cookies";
 import { getCached, setCache, delCache } from "../lib/redis";
+import { rateLimit } from "../middleware/rateLimit";
 
 export const xAuthRouter = Router();
+xAuthRouter.use(rateLimit(20, 60 * 1000)); // 20 req/min for auth routes
 
 // ── PKCE state storage ─────────────────────────────────────────────
 // Primary: Redis (survives multi-instance deploys on Railway)
