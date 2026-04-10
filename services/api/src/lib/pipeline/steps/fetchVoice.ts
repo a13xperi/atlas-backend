@@ -28,6 +28,7 @@ export const fetchVoiceStep: PipelineStep = {
       socialPosture: profile.socialPosture,
       selfPromotionalIntensity: profile.selfPromotionalIntensity,
       maturity: profile.maturity,
+      analysis: profile.analysis,
     };
   },
 };

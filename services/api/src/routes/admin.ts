@@ -1,7 +1,15 @@
 import { Router, Response } from "express";
+import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { getAnthropicClient } from "../lib/anthropic";
+import {
+  getPromptCatalog,
+  getPromptById,
+  renderTemplate,
+} from "../lib/prompt-catalog";
+import { logger } from "../lib/logger";
 
 export const adminRouter = Router();
 adminRouter.use(authenticate);
@@ -266,6 +274,70 @@ adminRouter.get("/activity-daily", async (req: AuthRequest, res) => {
     res.json(success({ days }));
   } catch (err: any) {
     res.status(500).json(error("Failed to load admin activity daily", 500));
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Prompt Inspector — /api/admin/prompts
+// Exposes the AI prompt catalog for the /admin/prompts developer console
+// so Alex can see every Claude prompt in the system and test them live.
+// ─────────────────────────────────────────────────────────────────────
+
+// GET /api/admin/prompts — list all prompt configs
+adminRouter.get("/prompts", async (req: AuthRequest, res) => {
+  try {
+    if (!(await requireAdmin(req, res))) return;
+    res.json(success({ prompts: getPromptCatalog() }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to load prompt catalog");
+    res.status(500).json(error("Failed to load prompt catalog", 500));
+  }
+});
+
+const testPromptSchema = z.object({
+  promptId: z.string().min(1),
+  variables: z.record(z.string(), z.string()).default({}),
+});
+
+// POST /api/admin/prompts/test — run a prompt live with provided variables
+adminRouter.post("/prompts/test", async (req: AuthRequest, res) => {
+  const start = Date.now();
+  try {
+    if (!(await requireAdmin(req, res))) return;
+
+    const body = testPromptSchema.parse(req.body);
+    const prompt = getPromptById(body.promptId);
+    if (!prompt) {
+      return res.status(404).json(error(`Unknown promptId: ${body.promptId}`, 404));
+    }
+
+    const renderedSystem = renderTemplate(prompt.systemPrompt, body.variables);
+    const renderedUser = renderTemplate(prompt.userPromptTemplate, body.variables);
+
+    const client = getAnthropicClient();
+    // Always use Haiku for test runs — cheapest model, fastest roundtrip.
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 512,
+      system: renderedSystem,
+      messages: [{ role: "user", content: renderedUser }],
+    });
+
+    const textBlock = response.content.find((b) => b.type === "text");
+    const output = textBlock && "text" in textBlock ? textBlock.text.trim() : "";
+    const tokensUsed =
+      (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
+    const latencyMs = Date.now() - start;
+
+    res.json(success({ output, tokensUsed, latencyMs }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    logger.error({ err: err.message }, "Prompt test failed");
+    res
+      .status(502)
+      .json(error(`Prompt test failed: ${err.message}`, 502));
   }
 });
 

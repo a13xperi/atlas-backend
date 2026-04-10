@@ -110,7 +110,8 @@ draftsRouter.post("/generate", aiGenerationLimiter, async (req: AuthRequest, res
       data: { userId: req.userId!, type: "DRAFT_CREATED" },
     });
 
-    res.json(success({ draft }));
+    const blendWarning = result.ctx.blendWarning === "blend_not_found" ? "blend_not_found" : undefined;
+    res.json(success({ draft, ...(blendWarning ? { blendWarning } : {}) }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res
@@ -192,7 +193,8 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
       });
     }
 
-    res.json(success({ draft }));
+    const blendWarning = result.ctx.blendWarning === "blend_not_found" ? "blend_not_found" : undefined;
+    res.json(success({ draft, ...(blendWarning ? { blendWarning } : {}) }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res
@@ -300,7 +302,8 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
       data: { userId: req.userId!, type: "FEEDBACK_GIVEN" },
     });
 
-    res.json(success({ draft }));
+    const blendWarning = result.ctx.blendWarning === "blend_not_found" ? "blend_not_found" : undefined;
+    res.json(success({ draft, ...(blendWarning ? { blendWarning } : {}) }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
@@ -442,18 +445,10 @@ draftsRouter.post("/:id/enqueue", async (req: AuthRequest, res) => {
   }
 });
 
-// List team drafts (APPROVED + POSTED) — MANAGER/ADMIN only
+// List team drafts (APPROVED + POSTED) — visible to all authenticated users
 draftsRouter.get("/team", async (req: AuthRequest, res) => {
   try {
     const { limit = "50", offset = "0" } = req.query;
-
-    const requestingUser = await prisma.user.findUnique({
-      where: { id: req.userId! },
-      select: { role: true },
-    });
-    if (!requestingUser || requestingUser.role === "ANALYST") {
-      return res.status(403).json({ error: "Manager or Admin role required" });
-    }
 
     const drafts = await prisma.tweetDraft.findMany({
       where: { status: { in: ["APPROVED", "POSTED"] } },

@@ -164,6 +164,8 @@ function buildVoiceProfileUpdate(calibration: CalibrationResult) {
     ...buildCalibrationDimensions(calibration),
     tweetsAnalyzed: calibration.tweetsAnalyzed,
     maturity: resolveVoiceMaturity(calibration.tweetsAnalyzed),
+    // Persist the natural language voice summary so the tweet prompt can inject it
+    analysis: calibration.analysis,
   };
 }
 

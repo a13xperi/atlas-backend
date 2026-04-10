@@ -125,6 +125,7 @@ function buildDimensionData(calibration: ReturnType<typeof makeCalibration>) {
     socialPosture: calibration.socialPosture,
     selfPromotionalIntensity: calibration.selfPromotionalIntensity,
     tweetsAnalyzed: calibration.tweetsAnalyzed,
+    analysis: calibration.analysis,
     maturity: calibration.tweetsAnalyzed >= 100 ? "ADVANCED"
       : calibration.tweetsAnalyzed >= 20 ? "INTERMEDIATE"
       : "BEGINNER",
