@@ -47,7 +47,8 @@ Examples of good Oracle messages:
 - "Interesting combo — Cobie's brevity + Hasu's depth. Here's what a tweet might sound like in this blend..."
 - "Most people start at 50/50. But based on your tweets, you've got a strong enough voice to go 70/30."
 
-Never use bullet points or numbered lists. Speak in natural sentences. Keep it under 50 words.`;
+Never use bullet points or numbered lists. Speak in natural sentences. Keep it under 50 words.
+Never use em dashes (—). Use a regular hyphen (-) instead.`;
 }
 
 // ── Calibration Commentary ───────────────────────────────────────
