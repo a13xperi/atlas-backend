@@ -10,6 +10,54 @@ analyticsRouter.use(authenticate);
 
 const emptyQuerySchema = z.object({}).passthrough();
 
+type EngagementMetricsSummary = {
+  likes: number;
+  retweets: number;
+  replies: number;
+  impressions: number;
+};
+
+function getMetricValue(metrics: unknown, key: keyof EngagementMetricsSummary): number {
+  if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) {
+    return 0;
+  }
+
+  const value = (metrics as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function getDraftEngagementMetrics(
+  metrics: unknown,
+  actualEngagement: number | null,
+): EngagementMetricsSummary {
+  const impressions = getMetricValue(metrics, "impressions");
+
+  return {
+    likes: getMetricValue(metrics, "likes"),
+    retweets: getMetricValue(metrics, "retweets"),
+    replies: getMetricValue(metrics, "replies"),
+    impressions:
+      impressions > 0
+        ? impressions
+        : typeof actualEngagement === "number" && Number.isFinite(actualEngagement)
+          ? actualEngagement
+          : 0,
+  };
+}
+
+function getEngagementTotal(metrics: EngagementMetricsSummary): number {
+  return metrics.likes + metrics.retweets + metrics.replies;
+}
+
+function getBestPerformingScore(metrics: EngagementMetricsSummary): number {
+  const engagementTotal = getEngagementTotal(metrics);
+  return engagementTotal > 0 ? engagementTotal : metrics.impressions;
+}
+
+function roundToTwoDecimals(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 // Get user analytics summary
 analyticsRouter.get("/summary", async (req: AuthRequest, res) => {
   try {
@@ -119,6 +167,94 @@ analyticsRouter.get("/learning-log", async (req: AuthRequest, res) => {
   }
 });
 
+analyticsRouter.get("/engagement-summary", async (req: AuthRequest, res) => {
+  try {
+    emptyQuerySchema.parse(req.query);
+
+    const drafts = await prisma.tweetDraft.findMany({
+      where: {
+        userId: req.userId,
+        status: "POSTED",
+      },
+      select: {
+        id: true,
+        content: true,
+        createdAt: true,
+        actualEngagement: true,
+        engagementMetrics: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    let totalLikes = 0;
+    let totalRetweets = 0;
+    let totalReplies = 0;
+    let totalImpressions = 0;
+    let bestPerformingTweet: {
+      id: string;
+      content: string;
+      createdAt: Date;
+      metrics: EngagementMetricsSummary;
+      performanceScore: number;
+    } | null = null;
+    let bestScore = -1;
+
+    for (const draft of drafts) {
+      const metrics = getDraftEngagementMetrics(draft.engagementMetrics, draft.actualEngagement);
+      const performanceScore = getBestPerformingScore(metrics);
+
+      totalLikes += metrics.likes;
+      totalRetweets += metrics.retweets;
+      totalReplies += metrics.replies;
+      totalImpressions += metrics.impressions;
+
+      if (
+        !bestPerformingTweet ||
+        performanceScore > bestScore ||
+        (performanceScore === bestScore && metrics.impressions > bestPerformingTweet.metrics.impressions)
+      ) {
+        bestPerformingTweet = {
+          id: draft.id,
+          content: draft.content,
+          createdAt: draft.createdAt,
+          metrics,
+          performanceScore,
+        };
+        bestScore = performanceScore;
+      }
+    }
+
+    const totalTweets = drafts.length;
+    const totalEngagement = totalLikes + totalRetweets + totalReplies;
+
+    res.json(success({
+      summary: {
+        totalTweets,
+        totals: {
+          likes: totalLikes,
+          retweets: totalRetweets,
+          replies: totalReplies,
+          impressions: totalImpressions,
+          engagement: totalEngagement,
+        },
+        avgPerTweet: {
+          likes: totalTweets ? roundToTwoDecimals(totalLikes / totalTweets) : 0,
+          retweets: totalTweets ? roundToTwoDecimals(totalRetweets / totalTweets) : 0,
+          replies: totalTweets ? roundToTwoDecimals(totalReplies / totalTweets) : 0,
+          impressions: totalTweets ? roundToTwoDecimals(totalImpressions / totalTweets) : 0,
+          engagement: totalTweets ? roundToTwoDecimals(totalEngagement / totalTweets) : 0,
+        },
+        bestPerformingTweet,
+      },
+    }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Failed to load engagement summary", 500));
+  }
+});
+
 // Get engagement history (for charts)
 analyticsRouter.get("/engagement", async (req: AuthRequest, res) => {
   try {
@@ -129,7 +265,7 @@ analyticsRouter.get("/engagement", async (req: AuthRequest, res) => {
     const events = await prisma.analyticsEvent.findMany({
       where: {
         userId: req.userId,
-        type: "ENGAGEMENT_RECORDED",
+        type: { in: ["ENGAGEMENT_RECORDED", "ENGAGEMENT_UPDATED"] },
         createdAt: { gte: sevenDaysAgo },
       },
       orderBy: { createdAt: "asc" },

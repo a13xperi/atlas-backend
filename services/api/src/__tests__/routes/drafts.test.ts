@@ -1,6 +1,6 @@
 /**
  * Drafts routes test suite
- * Tests: GET /, GET /:id, POST /, PATCH /:id, DELETE /:id, POST /generate, POST /:id/regenerate
+ * Tests: GET /, GET /:id, POST /, PATCH /:id, DELETE /:id, POST /generate, POST /:id/regenerate, POST /:id/engagement
  * Mocks: Prisma, pipeline (runGenerationPipeline), JWT
  */
 
@@ -485,6 +485,91 @@ describe("DELETE /api/drafts/:id", () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Failed to delete draft");
     expect(res.body.requestId).toBeDefined();
+  });
+});
+
+// --- POST /:id/engagement ---
+
+describe("POST /api/drafts/:id/engagement", () => {
+  it("returns 400 for an invalid engagement payload", async () => {
+    const res = await request(app)
+      .post("/api/drafts/draft-1/engagement")
+      .set("Authorization", AUTH)
+      .send({ likes: 10, retweets: 3, impressions: 1500 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Invalid request");
+  });
+
+  it("returns 400 when the draft is not posted", async () => {
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(mockDraft);
+
+    const res = await request(app)
+      .post("/api/drafts/draft-1/engagement")
+      .set("Authorization", AUTH)
+      .send({ likes: 10, retweets: 3, replies: 1, impressions: 1500 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Can only record engagement on posted drafts");
+  });
+
+  it("stores engagement metrics and logs ENGAGEMENT_UPDATED", async () => {
+    const postedDraft = { ...mockDraft, status: "POSTED" };
+    const updatedDraft = {
+      ...postedDraft,
+      actualEngagement: 4200,
+      engagementMetrics: {
+        likes: 120,
+        retweets: 18,
+        replies: 9,
+        impressions: 4200,
+      },
+      metricsLastFetchedAt: new Date(),
+    };
+
+    (mockPrisma.tweetDraft.findFirst as jest.Mock).mockResolvedValueOnce(postedDraft);
+    (mockPrisma.tweetDraft.update as jest.Mock).mockResolvedValueOnce(updatedDraft);
+    (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValueOnce({});
+
+    const res = await request(app)
+      .post("/api/drafts/draft-1/engagement")
+      .set("Authorization", AUTH)
+      .send({ likes: 120, retweets: 18, replies: 9, impressions: 4200 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.draft.engagementMetrics).toEqual({
+      likes: 120,
+      retweets: 18,
+      replies: 9,
+      impressions: 4200,
+    });
+    expect(mockPrisma.tweetDraft.update).toHaveBeenCalledWith({
+      where: { id: "draft-1" },
+      data: {
+        actualEngagement: 4200,
+        engagementMetrics: {
+          likes: 120,
+          retweets: 18,
+          replies: 9,
+          impressions: 4200,
+        },
+        metricsLastFetchedAt: expect.any(Date),
+      },
+    });
+    expect(mockPrisma.analyticsEvent.create).toHaveBeenCalledWith({
+      data: {
+        userId: "user-123",
+        type: "ENGAGEMENT_UPDATED",
+        value: 4200,
+        metadata: {
+          draftId: "draft-1",
+          likes: 120,
+          retweets: 18,
+          replies: 9,
+          impressions: 4200,
+        },
+      },
+    });
   });
 });
 

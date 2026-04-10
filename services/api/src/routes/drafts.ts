@@ -51,6 +51,7 @@ const regenerateSchema = z.object({
 const engagementSchema = z.object({
   likes: z.number().int().min(0),
   retweets: z.number().int().min(0),
+  replies: z.number().int().min(0),
   impressions: z.number().int().min(0),
 });
 
@@ -646,20 +647,23 @@ draftsRouter.post("/:id/engagement", async (req: AuthRequest, res) => {
         engagementMetrics: {
           likes: body.likes,
           retweets: body.retweets,
+          replies: body.replies,
           impressions: body.impressions,
         },
+        metricsLastFetchedAt: new Date(),
       },
     });
 
     await prisma.analyticsEvent.create({
       data: {
         userId: req.userId!,
-        type: "ENGAGEMENT_RECORDED",
+        type: "ENGAGEMENT_UPDATED",
         value: body.impressions,
         metadata: {
           draftId: draft.id,
           likes: body.likes,
           retweets: body.retweets,
+          replies: body.replies,
           impressions: body.impressions,
         },
       },
