@@ -199,6 +199,7 @@ ${voiceDescription}
 - Stay within 280 characters. This is a hard limit.
 - No hashtags unless the voice style explicitly demands them (very casual + high humor).
 - Sound like a real person, not a bot. No corporate speak.
+- Never use em dashes (—). Use a short hyphen (-) or restructure the sentence instead.
 - ${getSourceTypeInstruction(sourceType)}`;
 
   // Add blend instructions if applicable

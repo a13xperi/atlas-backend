@@ -58,7 +58,7 @@ export interface PersistedDraftGeneration {
 const ROUTE_TIMEOUT_MS = 90_000;
 
 export function normalizeGeneratedTweet(content: string): string {
-  const trimmed = content.trim();
+  const trimmed = content.trim().replace(/—/g, " - ");
   if (trimmed.length <= 280) return trimmed;
   return `${trimmed.slice(0, 277).trimEnd()}...`;
 }
