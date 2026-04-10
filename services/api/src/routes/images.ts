@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma";
 import { config } from "../lib/config";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
-import { generateVisualConcept, ImageStyle } from "../lib/gemini";
+import { generateImage, generateVisualConcept, ImageStyle } from "../lib/gemini";
 import { logger } from "../lib/logger";
 
 export const imagesRouter = Router();
@@ -20,6 +20,89 @@ const generateForDraftSchema = z.object({
   style: z.enum(["infographic", "quote_card", "avatar", "thumbnail"]).default("quote_card"),
 });
 
+const DEFAULT_COLOR_SCHEME = ["#4ecdc4", "#1a1a2e", "#2d3748"];
+const LAYOUT_BY_STYLE: Record<ImageStyle, string> = {
+  infographic: "chart-overlay",
+  quote_card: "centered-quote",
+  avatar: "minimal-gradient",
+  thumbnail: "split-stat",
+};
+
+const ASPECT_RATIO_BY_STYLE: Record<ImageStyle, "1:1" | "16:9" | "4:5"> = {
+  infographic: "16:9",
+  quote_card: "4:5",
+  avatar: "1:1",
+  thumbnail: "16:9",
+};
+
+function buildFallbackConcept(prompt: string, style: ImageStyle) {
+  const truncatedPrompt = prompt.trim().slice(0, 180);
+
+  return {
+    concept: truncatedPrompt
+      ? `AI-generated ${style.replace("_", " ")} inspired by: ${truncatedPrompt}`
+      : `AI-generated ${style.replace("_", " ")}`,
+    colorScheme: DEFAULT_COLOR_SCHEME,
+    layout: LAYOUT_BY_STYLE[style],
+    elements: ["gradient background", "bold focal visual", "high-contrast composition"],
+  };
+}
+
+function normalizeStoredImage<T extends { imageUrl: string; mimeType: string }>(image: T) {
+  if (image.mimeType !== "application/json") {
+    return image;
+  }
+
+  try {
+    return {
+      ...image,
+      concept: JSON.parse(image.imageUrl),
+    };
+  } catch {
+    return image;
+  }
+}
+
+async function createImageRecord(userId: string, prompt: string, style: ImageStyle, draftId?: string) {
+  const imageResult = await generateImage({
+    content: prompt,
+    style,
+    aspectRatio: ASPECT_RATIO_BY_STYLE[style],
+  });
+
+  const conceptResult = await generateVisualConcept(prompt, style).catch((err: unknown) => {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), style },
+      "Falling back to deterministic visual concept",
+    );
+    return buildFallbackConcept(prompt, style);
+  });
+
+  const imageUrl = `data:${imageResult.mimeType};base64,${imageResult.imageData}`;
+
+  const image = await prisma.generatedImage.create({
+    data: {
+      userId,
+      ...(draftId ? { draftId } : {}),
+      prompt,
+      style,
+      imageUrl,
+      mimeType: imageResult.mimeType,
+    },
+  });
+
+  await prisma.analyticsEvent.create({
+    data: { userId, type: "IMAGE_GENERATED" },
+  });
+
+  return {
+    image: {
+      ...image,
+      concept: conceptResult,
+    },
+  };
+}
+
 // Standalone image concept generation
 imagesRouter.post("/generate", async (req: AuthRequest, res) => {
   try {
@@ -28,26 +111,9 @@ imagesRouter.post("/generate", async (req: AuthRequest, res) => {
     }
 
     const body = generateSchema.parse(req.body);
+    const result = await createImageRecord(req.userId!, body.prompt, body.style as ImageStyle);
 
-    const concept = await generateVisualConcept(body.prompt, body.style as ImageStyle);
-
-    // Persist
-    const image = await prisma.generatedImage.create({
-      data: {
-        userId: req.userId!,
-        prompt: body.prompt,
-        style: body.style,
-        imageUrl: JSON.stringify(concept), // Store concept as JSON
-        mimeType: "application/json",
-      },
-    });
-
-    // Log analytics
-    await prisma.analyticsEvent.create({
-      data: { userId: req.userId!, type: "IMAGE_GENERATED" },
-    });
-
-    res.json(success({ image: { ...image, concept } }));
+    res.json(success(result));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
@@ -72,26 +138,9 @@ imagesRouter.post("/generate-for-draft", async (req: AuthRequest, res) => {
     });
     if (!draft) return res.status(404).json(error("Draft not found"));
 
-    const concept = await generateVisualConcept(draft.content, body.style as ImageStyle);
+    const result = await createImageRecord(req.userId!, draft.content, body.style as ImageStyle, draft.id);
 
-    // Persist linked to draft
-    const image = await prisma.generatedImage.create({
-      data: {
-        userId: req.userId!,
-        draftId: draft.id,
-        prompt: draft.content,
-        style: body.style,
-        imageUrl: JSON.stringify(concept),
-        mimeType: "application/json",
-      },
-    });
-
-    // Log analytics
-    await prisma.analyticsEvent.create({
-      data: { userId: req.userId!, type: "IMAGE_GENERATED" },
-    });
-
-    res.json(success({ image: { ...image, concept } }));
+    res.json(success(result));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
@@ -108,7 +157,7 @@ imagesRouter.get("/for-draft/:draftId", async (req: AuthRequest, res) => {
       where: { draftId: req.params.draftId as string, userId: req.userId! },
       orderBy: { createdAt: "desc" },
     });
-    res.json(success({ images }));
+    res.json(success({ images: images.map(normalizeStoredImage) }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to load images");
     res.status(500).json(error("Failed to load images", 500, { message: err.message }));

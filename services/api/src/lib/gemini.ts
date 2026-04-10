@@ -4,6 +4,9 @@ import { withRetry } from "./retry";
 
 let client: GoogleGenerativeAI | null = null;
 
+const DEFAULT_GEMINI_TEXT_MODEL = "gemini-2.5-flash";
+const DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
+
 export function getGeminiClient(): GoogleGenerativeAI {
   if (!client) {
     if (!config.GOOGLE_AI_API_KEY) {
@@ -28,6 +31,22 @@ export interface ImageGenResult {
   promptUsed: string;
 }
 
+interface GeminiInlineDataPart {
+  inlineData?: {
+    data?: string;
+    mimeType?: string;
+  };
+  text?: string;
+}
+
+interface GeminiGenerateContentResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: GeminiInlineDataPart[];
+    };
+  }>;
+}
+
 const STYLE_PROMPTS: Record<ImageStyle, string> = {
   infographic:
     "Create a clean, modern infographic-style visual for a crypto/finance tweet. Dark background (#1a1a2e), teal accents (#4ecdc4). Include a simple chart or data visualization. Minimal text overlay. Professional and sleek.",
@@ -39,38 +58,116 @@ const STYLE_PROMPTS: Record<ImageStyle, string> = {
     "Create a thumbnail image for a crypto content piece. Eye-catching, dark theme with teal (#4ecdc4) accents. Modern, clean design suitable for social media preview cards.",
 };
 
-export async function generateImage(params: ImageGenParams): Promise<ImageGenResult> {
-  const { content, style, aspectRatio = "16:9" } = params;
+function resolveGeminiTextModel(): string {
+  const configuredModel = config.GEMINI_MODEL?.trim();
 
+  if (!configuredModel) return DEFAULT_GEMINI_TEXT_MODEL;
+  if (configuredModel.toLowerCase().includes("image")) return DEFAULT_GEMINI_TEXT_MODEL;
+
+  return configuredModel;
+}
+
+function resolveGeminiImageModel(): string {
+  const configuredImageModel = config.GEMINI_IMAGE_MODEL?.trim();
+  if (configuredImageModel) return configuredImageModel;
+
+  const legacyModel = config.GEMINI_MODEL?.trim();
+  if (legacyModel && legacyModel.toLowerCase().includes("image") && !legacyModel.startsWith("gemini-2.0")) {
+    return legacyModel;
+  }
+
+  return DEFAULT_GEMINI_IMAGE_MODEL;
+}
+
+function buildImagePrompt(content: string, style: ImageStyle, aspectRatio: ImageGenParams["aspectRatio"]): string {
   const stylePrompt = STYLE_PROMPTS[style] || STYLE_PROMPTS.quote_card;
-  const fullPrompt = `${stylePrompt}\n\nContext for the visual: "${content.slice(0, 200)}"`;
 
-  const client = getGeminiClient();
+  return `${stylePrompt}
 
-  // Use Gemini's image generation model
-  const model = client.getGenerativeModel({ model: config.GEMINI_MODEL });
+Create an original social image with no brand logos or watermarks.
+Keep any text in the image minimal and highly legible.
+Use aspect ratio ${aspectRatio}.
 
-  const result = await withRetry(
-    () =>
-      model.generateContent({
-        contents: [{ role: "user", parts: [{ text: `Generate an image: ${fullPrompt}. Aspect ratio: ${aspectRatio}.` }] }],
+Context for the visual: "${content.slice(0, 500)}"`;
+}
+
+async function postGeminiImageRequest(
+  model: string,
+  prompt: string,
+  aspectRatio: NonNullable<ImageGenParams["aspectRatio"]>,
+): Promise<GeminiGenerateContentResponse> {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": config.GOOGLE_AI_API_KEY!,
+      },
+      body: JSON.stringify({
+        contents: [{
+          role: "user",
+          parts: [{ text: prompt }],
+        }],
         generationConfig: {
-          maxOutputTokens: 1000,
+          responseModalities: ["Image"],
+          imageConfig: {
+            aspectRatio,
+          },
         },
       }),
+    },
+  );
+
+  if (!response.ok) {
+    let message = `Gemini image request failed with status ${response.status}`;
+    const rawBody = await response.text();
+
+    if (rawBody) {
+      try {
+        const payload = JSON.parse(rawBody) as { error?: { message?: string } };
+        if (payload.error?.message) {
+          message = payload.error.message;
+        } else {
+          message = rawBody;
+        }
+      } catch {
+        message = rawBody;
+      }
+    }
+
+    const error = new Error(message) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+
+  return response.json() as Promise<GeminiGenerateContentResponse>;
+}
+
+export async function generateImage(params: ImageGenParams): Promise<ImageGenResult> {
+  const { content, style, aspectRatio = "16:9" } = params;
+  const fullPrompt = buildImagePrompt(content, style, aspectRatio);
+  const model = resolveGeminiImageModel();
+
+  const result = await withRetry(
+    () => postGeminiImageRequest(model, fullPrompt, aspectRatio),
     "gemini:generateImage",
   );
 
-  const response = result.response;
-  const text = response.text();
+  const parts = result.candidates?.flatMap((candidate) => candidate.content?.parts ?? []) ?? [];
+  const imagePart = parts.find((part) => part.inlineData?.data);
 
-  // Gemini text models return text descriptions, not actual images.
-  // For actual image generation, we'd need Imagen API.
-  // For now, return a structured description that the frontend can use
-  // to create a visual via CSS/SVG, or we can swap to Imagen when available.
+  if (!imagePart?.inlineData?.data) {
+    const textPart = parts.find((part) => part.text?.trim())?.text?.trim();
+    if (textPart) {
+      throw new Error(`Gemini image model returned text instead of an image: ${textPart.slice(0, 200)}`);
+    }
+    throw new Error(`Gemini image model "${model}" returned no inline image data`);
+  }
+
   return {
-    imageData: text,
-    mimeType: "text/plain",
+    imageData: imagePart.inlineData.data,
+    mimeType: imagePart.inlineData.mimeType ?? "image/png",
     promptUsed: fullPrompt,
   };
 }
@@ -87,7 +184,7 @@ export async function generateVisualConcept(tweetContent: string, style: ImageSt
   elements: string[];
 }> {
   const client = getGeminiClient();
-  const model = client.getGenerativeModel({ model: config.GEMINI_MODEL });
+  const model = client.getGenerativeModel({ model: resolveGeminiTextModel() });
 
   const result = await withRetry(
     () =>
