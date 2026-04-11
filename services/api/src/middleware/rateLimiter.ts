@@ -28,12 +28,6 @@ if (config.NODE_ENV !== "test") {
   cleanup.unref();
 }
 
-function getClientIp(req: Request): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  const ip = typeof forwarded === "string" ? forwarded.split(",")[0].trim() : req.ip;
-  return ip || "unknown";
-}
-
 async function redisIncr(key: string, windowMs: number): Promise<{ count: number; ttl: number } | null> {
   const redis = getRedis();
   if (!redis) {
@@ -130,7 +124,7 @@ export function rateLimit(maxRequests: number, windowMs: number, namespace?: str
   return createRateLimit(
     maxRequests,
     windowMs,
-    (req) => `${prefix}:${getClientIp(req)}:${req.baseUrl}${req.path}`,
+    (req) => `${prefix}:${req.ip ?? "unknown"}:${req.baseUrl}${req.path}`,
   );
 }
 
@@ -138,6 +132,6 @@ export function rateLimitByUser(maxRequests: number, windowMs: number) {
   return createRateLimit(
     maxRequests,
     windowMs,
-    (req) => `rl:user:${(req as any).userId || getClientIp(req)}:${req.baseUrl}${req.path}`,
+    (req) => `rl:user:${(req as any).userId || (req.ip ?? "unknown")}:${req.baseUrl}${req.path}`,
   );
 }
