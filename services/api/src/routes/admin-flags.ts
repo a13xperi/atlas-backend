@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { logger } from "../lib/logger";
 
 export const adminFlagsRouter = Router();
 adminFlagsRouter.use(authenticate);
@@ -59,7 +60,7 @@ adminFlagsRouter.get("/", async (req: AuthRequest, res) => {
 
     res.json(success({ flags: merged }));
   } catch (err: any) {
-    console.error("GET /api/admin/feature-flags error:", err);
+    logger.error({ err: err.message }, "GET /api/admin/feature-flags error");
     res.status(500).json(error("Failed to fetch feature flags", 500));
   }
 });
@@ -97,7 +98,10 @@ adminFlagsRouter.patch("/:key", async (req: AuthRequest, res) => {
 
     res.json(success({ flag }));
   } catch (err: any) {
-    console.error(`PATCH /api/admin/feature-flags/${String(req.params.key)} error:`, err);
+    logger.error(
+      { err: err.message, key: String(req.params.key) },
+      "PATCH /api/admin/feature-flags error",
+    );
     res.status(500).json(error("Failed to update feature flag", 500));
   }
 });

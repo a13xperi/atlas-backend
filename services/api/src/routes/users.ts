@@ -115,7 +115,10 @@ usersRouter.patch("/:userId/role", async (req: AuthRequest, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid role", 400, err.errors));
     }
-    console.error("PATCH /api/users/:userId/role error:", err);
+    logger.error(
+      { err: err.message, userId: req.params.userId },
+      "PATCH /api/users/:userId/role error",
+    );
     res.status(500).json(error("Failed to update role"));
   }
 });

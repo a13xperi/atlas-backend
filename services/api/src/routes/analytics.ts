@@ -5,6 +5,7 @@ import { error, success } from "../lib/response";
 import { buildErrorResponse } from "../middleware/requestId";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { calculateStreak, calculateStreakFromDates } from "../lib/streak";
+import { logger } from "../lib/logger";
 
 export const analyticsRouter = Router();
 analyticsRouter.use(authenticate);
@@ -893,7 +894,7 @@ analyticsRouter.get("/atlas-score", async (req: AuthRequest, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    console.error("atlas-score error:", err);
+    logger.error({ err: err.message }, "atlas-score error");
     res.status(500).json(error("Failed to compute Atlas Score", 500));
   }
 });
@@ -981,7 +982,7 @@ analyticsRouter.get("/leaderboard", async (req: AuthRequest, res) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    console.error("leaderboard error:", err);
+    logger.error({ err: err.message }, "leaderboard error");
     res.status(500).json(error("Failed to load leaderboard", 500));
   }
 });
