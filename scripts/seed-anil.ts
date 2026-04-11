@@ -14,6 +14,10 @@
  *   - 8 sample drafts (mix of POSTED / APPROVED / DRAFT)
  *   - 2 campaigns (Modular Rollups Report / DeFi Market Update) with
  *     report-sourced tweet drafts linked for the campaign queue view
+ *   - Morning briefing preference + 3 CATEGORY alert subscriptions
+ *     (AI×crypto #1, Macro/rates/regulatory #2, Stablecoins/RWA #3) —
+ *     delivered to PORTAL + TELEGRAM, from Anil's Zight Part 2 preferences
+ *     (task #3971 / Atlas BO 8 + BO 11).
  *
  * Run:
  *   cd ~/projects/atlas-backend
@@ -450,6 +454,86 @@ async function ensureCampaigns(userId: string) {
   console.log(`  campaigns: seeded        (${CAMPAIGNS.length}) drafts_linked=${totalLinked}`);
 }
 
+// ── Briefing + alert subscriptions ────────────────────────────────────
+// Sourced from Anil's Zight Part 2 recording (captured in task #3971).
+// Priority order matters: topics[0] is the #1 lead topic that the
+// briefing engine leans into, topics[1] is the second beat, etc. We
+// also spin up three CATEGORY alert subscriptions on the same topics
+// so the alerts feed + Telegram bot stay in sync with the morning brief.
+const ANIL_BRIEFING_TOPICS = [
+  "AI×crypto",
+  "Macro/rates/regulatory",
+  "Stablecoins/RWA",
+];
+
+const ANIL_BRIEFING_SOURCES = [
+  "X/Twitter",
+  "Delphi Research",
+  "News",
+];
+
+async function ensureBriefingConfig(userId: string) {
+  // 1. Morning briefing preference — upsert by the unique userId constraint.
+  //    `channel` is a single String in the schema; "PORTAL" keeps the
+  //    in-app briefing card live, and the CATEGORY alert subscriptions
+  //    below carry the Telegram delivery.
+  const preference = await prisma.briefingPreference.upsert({
+    where: { userId },
+    create: {
+      userId,
+      deliveryTime: "08:00",
+      topics: ANIL_BRIEFING_TOPICS,
+      sources: ANIL_BRIEFING_SOURCES,
+      channel: "PORTAL",
+    },
+    update: {
+      deliveryTime: "08:00",
+      topics: ANIL_BRIEFING_TOPICS,
+      sources: ANIL_BRIEFING_SOURCES,
+      channel: "PORTAL",
+    },
+  });
+  console.log(
+    `  briefing pref: ok        ${preference.deliveryTime} topics=${preference.topics.length} channel=${preference.channel}`,
+  );
+
+  // 2. Three CATEGORY alert subscriptions on the same topics.
+  //    `delivery: [PORTAL, TELEGRAM]` routes matches to both the in-app
+  //    alerts feed and Anil's Telegram bot. The @@unique([userId, type, value])
+  //    constraint makes this idempotent — re-runs just flip isActive/delivery
+  //    back on in case someone toggled them off.
+  const desired: Array<{ value: string; delivery: ("PORTAL" | "TELEGRAM")[] }> =
+    ANIL_BRIEFING_TOPICS.map((value) => ({
+      value,
+      delivery: ["PORTAL", "TELEGRAM"],
+    }));
+
+  for (const sub of desired) {
+    const existing = await prisma.alertSubscription.findFirst({
+      where: { userId, type: "CATEGORY", value: sub.value },
+    });
+    if (existing) {
+      await prisma.alertSubscription.update({
+        where: { id: existing.id },
+        data: { isActive: true, delivery: sub.delivery },
+      });
+    } else {
+      await prisma.alertSubscription.create({
+        data: {
+          userId,
+          type: "CATEGORY",
+          value: sub.value,
+          isActive: true,
+          delivery: sub.delivery,
+        },
+      });
+    }
+  }
+  console.log(
+    `  alert subs: ok           (${desired.length}) delivery=[PORTAL,TELEGRAM]`,
+  );
+}
+
 async function main() {
   console.log("seeding Anil demo account");
 
@@ -459,6 +543,7 @@ async function main() {
   const blendIds = await ensureBlends(user.id, refIds);
   await ensureDrafts(user.id, blendIds);
   await ensureCampaigns(user.id);
+  await ensureBriefingConfig(user.id);
 
   console.log("\ndone — Anil demo account is ready");
   console.log(`  email:        ${ANIL_EMAIL}`);
@@ -466,6 +551,8 @@ async function main() {
   console.log(`  xHandle:      @${ANIL_X_HANDLE}`);
   console.log(`  role:         MANAGER`);
   console.log(`  tour:         completed`);
+  console.log(`  briefing:     08:00 on ${ANIL_BRIEFING_TOPICS.join(", ")}`);
+  console.log(`  alerts:       PORTAL + TELEGRAM on ${ANIL_BRIEFING_TOPICS.length} categories`);
 }
 
 main()
