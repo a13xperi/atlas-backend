@@ -25,7 +25,7 @@
 
 import "dotenv/config";
 
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, OnboardingTrack } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -200,7 +200,7 @@ async function ensureUser() {
     email: ANIL_EMAIL,
     displayName: "Anil",
     role: "MANAGER" as const,
-    onboardingTrack: "TRACK_A" as const,
+    onboardingTrack: OnboardingTrack.TRACK_A,
     xHandle: ANIL_X_HANDLE,
     tourCompleted: true,
     tourStep: 0,

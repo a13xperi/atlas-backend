@@ -19,7 +19,7 @@
 import * as dotenv from "dotenv";
 dotenv.config();
 
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, OnboardingTrack } from "@prisma/client";
 import { createClient } from "@supabase/supabase-js";
 import bcrypt from "bcryptjs";
 
@@ -84,7 +84,7 @@ async function main() {
       passwordHash,
       supabaseId,
       role: "MANAGER",
-      onboardingTrack: "TRACK_A",
+      onboardingTrack: OnboardingTrack.TRACK_A,
       voiceProfile: {
         create: {
           humor: 35,
