@@ -12,6 +12,7 @@ import { extractInsights } from "../lib/content-extraction";
 import { batchGenerateDrafts } from "../lib/batch-generate";
 import { config } from "../lib/config";
 import { rateLimitByUser } from "../middleware/rateLimit";
+import { emptyBodySchema, validationFailResponse } from "../lib/schemas";
 import {
   buildTokenWrite,
   readAccessToken,
@@ -434,6 +435,10 @@ draftsRouter.get("/queue", async (req: AuthRequest, res) => {
 
 // Enqueue a draft — mark as APPROVED and ready for the queue
 draftsRouter.post("/:id/enqueue", async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const draft = await prisma.tweetDraft.findFirst({
       where: { id: req.params.id as string, userId: req.userId },
@@ -586,6 +591,10 @@ draftsRouter.delete("/:id", async (req: AuthRequest, res) => {
 
 // Auto-fetch metrics from X for a posted draft
 draftsRouter.post("/:id/fetch-metrics", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const draftId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const draft = await prisma.tweetDraft.findUnique({ where: { id: draftId } });
@@ -685,6 +694,10 @@ draftsRouter.post("/:id/engagement", async (req: AuthRequest, res) => {
 
 // Split a draft into a numbered thread
 draftsRouter.post("/:id/thread", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const draftId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const draft = await prisma.tweetDraft.findUnique({
@@ -720,6 +733,10 @@ draftsRouter.post("/:id/thread", authenticate, async (req: AuthRequest, res) => 
 
 // Post a draft to X (accepts both /post and /post-to-x for backwards compat)
 draftsRouter.post("/:id/post", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const { postTweet, refreshAccessToken } = await import("../lib/twitter");
 
@@ -840,6 +857,10 @@ draftsRouter.post("/:id/schedule", authenticate, async (req: AuthRequest, res) =
 
 // Process scheduled drafts (called by cron or manually)
 draftsRouter.post("/process-scheduled", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const now = new Date();
     const dueDrafts = await prisma.tweetDraft.findMany({
@@ -941,6 +962,10 @@ draftsRouter.patch("/queue/reorder", authenticate, async (req: AuthRequest, res)
 
 // Reset queue to algorithm order
 draftsRouter.post("/queue/reset-order", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     await prisma.tweetDraft.updateMany({
       where: { userId: req.userId!, sortOrder: { not: null } },

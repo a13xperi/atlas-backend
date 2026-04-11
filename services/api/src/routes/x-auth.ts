@@ -1,5 +1,6 @@
 import { Router } from "express";
 import jwt from "jsonwebtoken";
+import { z } from "zod";
 import { OnboardingTrack } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
@@ -18,6 +19,16 @@ import { success } from "../lib/response";
 import { setAuthCookies } from "../lib/cookies";
 import { getCached, setCache, delCache } from "../lib/redis";
 import { rateLimit } from "../middleware/rateLimit";
+import { emptyBodySchema, validationFailResponse } from "../lib/schemas";
+
+// POST /callback is the only body-carrying handler in this router — it
+// receives the OAuth `code` + `state` from the frontend after X redirects
+// the user back. Everything else (authorize, disconnect) is an action
+// endpoint with an empty body.
+const xCallbackSchema = z.object({
+  code: z.string().min(1),
+  state: z.string().min(1),
+});
 
 export const xAuthRouter = Router();
 xAuthRouter.use(rateLimit(20, 60 * 1000)); // 20 req/min for auth routes
@@ -68,6 +79,10 @@ async function getPendingOAuth(state: string): Promise<PendingOAuthData | null> 
  * Returns the X OAuth consent URL. Frontend redirects the user there.
  */
 xAuthRouter.post("/authorize", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const state = `atlas_${req.userId}_${Date.now()}`;
     const { url, codeVerifier } = generateOAuthUrl(state);
@@ -187,12 +202,13 @@ xAuthRouter.get("/callback", async (req, res) => {
  * Frontend sends the code + state after X redirects back.
  */
 xAuthRouter.post("/callback", authenticate, async (req: AuthRequest, res) => {
-  try {
-    const { code, state } = req.body;
-    if (!code || !state) {
-      return res.status(400).json(buildErrorResponse(req, "Missing code or state"));
-    }
+  const parsed = xCallbackSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
+  const { code, state } = parsed.data;
 
+  try {
     // Retrieve and validate PKCE verifier
     const pending = await getPendingOAuth(state);
     if (!pending || pending.expiresAt < Date.now()) {
@@ -262,6 +278,10 @@ xAuthRouter.get("/status", authenticate, async (req: AuthRequest, res) => {
  * Remove X account link.
  */
 xAuthRouter.post("/disconnect", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     await prisma.user.update({
       where: { id: req.userId! },

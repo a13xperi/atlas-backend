@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import { z } from "zod";
 import { parsePagination } from "../lib/pagination";
+import { emptyBodySchema, validationFailResponse } from "../lib/schemas";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
@@ -228,6 +229,13 @@ alertsRouter.get("/:id", async (req: AuthRequest, res) => {
 alertsRouter.patch("/:id", async (req: AuthRequest, res) => {
   const userId = requireUserId(req, res);
   if (!userId) return;
+
+  // Dismiss carries no body — reject anything the caller sends so a typo'd
+  // field (e.g. `{ status: "read" }`) can't silently become a no-op PATCH.
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
 
   try {
     const alertId = req.params.id as string;

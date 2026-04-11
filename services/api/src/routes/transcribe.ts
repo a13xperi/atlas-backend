@@ -1,5 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
+import { z } from "zod";
 import OpenAI from "openai";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { rateLimitByUser } from "../middleware/rateLimit";
@@ -7,6 +8,12 @@ import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
 import { config } from "../lib/config";
 import { success } from "../lib/response";
+import { validationFailResponse } from "../lib/schemas";
+
+// Transcription only reads `req.file` from multer; the body itself is
+// expected to be empty. `.strict()` rejects any unexpected form field so
+// a typo-drift client can't silently bypass validation.
+const transcribeBodySchema = z.object({}).strict();
 
 export const transcribeRouter = Router();
 transcribeRouter.use(authenticate);
@@ -28,6 +35,13 @@ const upload = multer({
 // Rate-limit BEFORE multer so we don't waste the multipart parse on
 // requests we're going to reject anyway.
 transcribeRouter.post("/", aiGenerationLimiter, upload.single("audio"), async (req: AuthRequest, res) => {
+  // Multer exposes form fields on `req.body`, so we validate *after*
+  // multer has run. The schema is empty-strict — only the file on
+  // `req.file` is part of the contract.
+  const parsed = transcribeBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     if (!req.file) {
       return res.status(400).json(buildErrorResponse(req, "No audio file provided"));
