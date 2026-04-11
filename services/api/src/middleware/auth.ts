@@ -4,6 +4,7 @@ import { config } from "../lib/config";
 import { prisma } from "../lib/prisma";
 import { supabaseAdmin } from "../lib/supabase";
 import { getAccessToken } from "../lib/cookies";
+import { isJtiRevoked } from "../lib/jwt-revocation";
 
 export interface AuthRequest extends Request {
   userId?: string;
@@ -61,7 +62,16 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
     if (!secret) {
       return res.status(401).json({ error: "Invalid or expired token" });
     }
-    const payload = jwt.verify(token, secret) as { userId: string };
+    const payload = jwt.verify(token, secret) as { userId: string; jti?: string };
+
+    // C-6: reject revoked tokens. The blacklist is keyed by jti, populated
+    // on logout, and TTLs out at the token's natural expiry. Tokens minted
+    // before this deploy have no jti and are accepted as before — they
+    // expire under the existing 7-day cap.
+    if (payload.jti && (await isJtiRevoked(payload.jti))) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
     req.userId = payload.userId;
     return next();
   } catch {
