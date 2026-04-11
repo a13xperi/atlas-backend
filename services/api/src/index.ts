@@ -171,6 +171,22 @@ initBot();
 server.listen(PORT, () => {
   logger.info({ port: PORT }, `Atlas API running on port ${PORT}`);
   startScheduler();
+
+  // 2026-04-11: Enable queue + campaigns feature flags
+  void (async () => {
+    try {
+      for (const key of ["queue", "campaigns"]) {
+        await prisma.featureFlag.upsert({
+          where: { key },
+          update: { enabled: true },
+          create: { key, enabled: true, rolloutRole: "everyone" },
+        });
+      }
+      logger.info("Feature flags: queue + campaigns enabled");
+    } catch (err: any) {
+      logger.error({ err: err.message }, "Failed to enable feature flags on startup");
+    }
+  })();
 });
 
 export default app;
