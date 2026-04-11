@@ -12,6 +12,12 @@ import { extractInsights } from "../lib/content-extraction";
 import { batchGenerateDrafts } from "../lib/batch-generate";
 import { config } from "../lib/config";
 import { rateLimitByUser } from "../middleware/rateLimit";
+import {
+  buildTokenWrite,
+  readAccessToken,
+  readRefreshToken,
+  TOKEN_READ_SELECT,
+} from "../lib/crypto";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
@@ -725,25 +731,26 @@ draftsRouter.post("/:id/post", authenticate, async (req: AuthRequest, res) => {
 
     const user = await prisma.user.findUnique({
       where: { id: req.userId! },
-      select: { xAccessToken: true, xRefreshToken: true, xTokenExpiresAt: true },
+      select: { ...TOKEN_READ_SELECT, xTokenExpiresAt: true },
     });
 
-    if (!user?.xAccessToken) {
+    let accessToken = readAccessToken(user);
+    if (!accessToken) {
       return res.status(400).json(buildErrorResponse(req, "X account not linked. Connect your X account first."));
     }
 
     // Refresh token if expired
-    let accessToken = user.xAccessToken;
-    if (user.xTokenExpiresAt && user.xTokenExpiresAt < new Date() && user.xRefreshToken) {
-      const refreshed = await refreshAccessToken(user.xRefreshToken);
+    const currentRefreshToken = readRefreshToken(user);
+    if (user?.xTokenExpiresAt && user.xTokenExpiresAt < new Date() && currentRefreshToken) {
+      const refreshed = await refreshAccessToken(currentRefreshToken);
       accessToken = refreshed.accessToken;
       await prisma.user.update({
         where: { id: req.userId! },
-        data: {
-          xAccessToken: refreshed.accessToken,
-          xRefreshToken: refreshed.refreshToken,
-          xTokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
-        },
+        data: buildTokenWrite({
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+        }),
       });
     }
 
@@ -837,7 +844,7 @@ draftsRouter.post("/process-scheduled", authenticate, async (req: AuthRequest, r
     const now = new Date();
     const dueDrafts = await prisma.tweetDraft.findMany({
       where: { status: "SCHEDULED", scheduledAt: { lte: now } },
-      include: { user: { select: { id: true, xAccessToken: true, xRefreshToken: true, xTokenExpiresAt: true } } },
+      include: { user: { select: { id: true, xTokenExpiresAt: true, ...TOKEN_READ_SELECT } } },
     });
 
     if (dueDrafts.length === 0) {
@@ -850,23 +857,24 @@ draftsRouter.post("/process-scheduled", authenticate, async (req: AuthRequest, r
 
     for (const draft of dueDrafts) {
       try {
-        if (!draft.user.xAccessToken) {
+        let accessToken = readAccessToken(draft.user);
+        if (!accessToken) {
           logger.warn({ draftId: draft.id, userId: draft.userId }, "Scheduled draft skipped — no X token");
           failed++;
           continue;
         }
 
-        let accessToken = draft.user.xAccessToken;
-        if (draft.user.xTokenExpiresAt && draft.user.xTokenExpiresAt < now && draft.user.xRefreshToken) {
-          const refreshed = await refreshAccessToken(draft.user.xRefreshToken);
+        const draftRefreshToken = readRefreshToken(draft.user);
+        if (draft.user.xTokenExpiresAt && draft.user.xTokenExpiresAt < now && draftRefreshToken) {
+          const refreshed = await refreshAccessToken(draftRefreshToken);
           accessToken = refreshed.accessToken;
           await prisma.user.update({
             where: { id: draft.userId },
-            data: {
-              xAccessToken: refreshed.accessToken,
-              xRefreshToken: refreshed.refreshToken,
-              xTokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
-            },
+            data: buildTokenWrite({
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken,
+              expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+            }),
           });
         }
 
