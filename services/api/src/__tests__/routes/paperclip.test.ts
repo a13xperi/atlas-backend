@@ -1,6 +1,7 @@
 import request from "supertest";
 import express from "express";
 import { requestIdMiddleware } from "../../middleware/requestId";
+import { clearRateLimitStore } from "../../middleware/rateLimiter";
 import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
 
 jest.mock("../../middleware/auth", () => ({
@@ -85,6 +86,12 @@ const WEBHOOK_HEADERS = { "x-paperclip-secret": "paperclip-webhook-secret" };
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // The webhook route is rate-limited (30 req/min per IP, namespaced
+  // "paperclip-webhook"). Tests share a module-level memory store, so
+  // reset it between tests to avoid leaking counters from one test's
+  // burst into the next test's assertions — that would cause spurious
+  // 429s in unrelated tests as soon as the rate-limit suite lands.
+  clearRateLimitStore();
 });
 
 describe("POST /api/paperclip/webhook", () => {
@@ -275,5 +282,99 @@ describe("POST /api/paperclip/trigger", () => {
     expect(res.status).toBe(502);
     const body = expectErrorResponse(res.body, "Paperclip unavailable");
     expect(body.details).toEqual({ error: "down" });
+  });
+});
+
+// Rate-limit suite for atlas-backend #90230. The Paperclip webhook is
+// "public" (no Authorization header, guarded only by a shared secret),
+// and every accepted hit creates a briefing row + fires a Telegram
+// alert. A tighter per-IP limiter than the general 100/min /api limiter
+// keeps that blast radius bounded. The limiter lives inside the router
+// module (so production and tests see the same configuration).
+describe("POST /api/paperclip/webhook — rate limiting (#90230)", () => {
+  const WEBHOOK_BODY = { type: "task.completed", data: { taskId: "rate-test" } };
+
+  it("allows the first 30 requests through with 200", async () => {
+    for (let i = 0; i < 30; i++) {
+      const res = await request(app)
+        .post("/api/paperclip/webhook")
+        .set(WEBHOOK_HEADERS)
+        .send(WEBHOOK_BODY);
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it("returns 429 with Retry-After on the 31st request in the same window", async () => {
+    for (let i = 0; i < 30; i++) {
+      await request(app)
+        .post("/api/paperclip/webhook")
+        .set(WEBHOOK_HEADERS)
+        .send(WEBHOOK_BODY);
+    }
+
+    const res = await request(app)
+      .post("/api/paperclip/webhook")
+      .set(WEBHOOK_HEADERS)
+      .send(WEBHOOK_BODY);
+
+    expect(res.status).toBe(429);
+    // The rate limiter uses `buildErrorResponse` (shape: { error, message })
+    // rather than the `error()` helper from lib/response (shape:
+    // { ok: false, error, timestamp }). Assert against the actual shape.
+    expect(res.body.error).toBe("Too many requests. Please try again later.");
+    // Retry-After is set in seconds and must be positive.
+    expect(res.headers["retry-after"]).toBeDefined();
+    expect(Number(res.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
+  it("sets X-RateLimit-* headers on every response", async () => {
+    const res = await request(app)
+      .post("/api/paperclip/webhook")
+      .set(WEBHOOK_HEADERS)
+      .send(WEBHOOK_BODY);
+
+    expect(res.status).toBe(200);
+    expect(res.headers["x-ratelimit-limit"]).toBe("30");
+    // First call in a clean window → remaining should be 29.
+    expect(res.headers["x-ratelimit-remaining"]).toBe("29");
+    // Reset timestamp is a unix seconds value in the future.
+    const reset = Number(res.headers["x-ratelimit-reset"]);
+    expect(reset).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
+  it("fires even when the secret is wrong — secret check happens AFTER the limiter", async () => {
+    // This is the key property: a burst of bad-secret requests from an
+    // attacker cannot be used to enumerate past the limiter, because the
+    // limiter is the first middleware on the route. 30 bad-secret hits
+    // count against the same bucket as 30 good-secret hits.
+    for (let i = 0; i < 30; i++) {
+      await request(app)
+        .post("/api/paperclip/webhook")
+        .set("x-paperclip-secret", "wrong")
+        .send(WEBHOOK_BODY);
+    }
+
+    const res = await request(app)
+      .post("/api/paperclip/webhook")
+      .set(WEBHOOK_HEADERS)
+      .send(WEBHOOK_BODY);
+
+    expect(res.status).toBe(429);
+  });
+
+  it("does NOT rate-limit /api/paperclip/trigger (authenticated route)", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue({ role: "ADMIN" });
+    mockTriggerPaperclipTask.mockResolvedValue({ taskId: "task-X" } as any);
+
+    // 31 authenticated /trigger calls — should not trip the webhook
+    // limiter because /trigger has no route-level limiter. (The general
+    // /api limiter is not wired into this test app.)
+    for (let i = 0; i < 31; i++) {
+      const res = await request(app)
+        .post("/api/paperclip/trigger")
+        .set(AUTH)
+        .send({ agentId: "a", taskType: "t", payload: {} });
+      expect(res.status).not.toBe(429);
+    }
   });
 });
