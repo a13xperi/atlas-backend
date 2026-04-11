@@ -82,6 +82,35 @@ async function processScheduledDrafts(): Promise<{ posted: number; failed: numbe
     } catch (err: any) {
       logger.error({ err: err.message, draftId: draft.id }, "Failed to post scheduled draft");
       failed++;
+
+      // Move back to APPROVED so it doesn't retry infinitely on the next 60s cycle
+      // and surface the failure via an analytics event the user can see.
+      try {
+        await prisma.tweetDraft.update({
+          where: { id: draft.id },
+          data: { status: "APPROVED" },
+        });
+        await prisma.analyticsEvent.create({
+          data: {
+            userId: draft.userId,
+            // DRAFT_SCHEDULE_FAILED isn't in the AnalyticsType enum yet —
+            // reuse DRAFT_POSTED with failed: true so the failure is queryable.
+            type: "DRAFT_POSTED",
+            metadata: {
+              draftId: draft.id,
+              failed: true,
+              error: err.message,
+              scheduledAt: draft.scheduledAt,
+            },
+          },
+        });
+        logger.warn({ draftId: draft.id }, "Scheduled draft moved back to APPROVED after failure");
+      } catch (updateErr: any) {
+        logger.error(
+          { err: updateErr.message, draftId: draft.id },
+          "Failed to reset draft status after posting failure"
+        );
+      }
     }
   }
 
