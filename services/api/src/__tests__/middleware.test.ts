@@ -22,6 +22,13 @@ jest.mock("jsonwebtoken", () => ({
   verify: jest.fn(),
 }));
 
+const isJtiRevokedMock = jest.fn();
+jest.mock("../lib/jwt-revocation", () => ({
+  isJtiRevoked: (...args: unknown[]) => isJtiRevokedMock(...args),
+  revokeJti: jest.fn(),
+  remainingTtlSeconds: jest.fn(),
+}));
+
 // Import after mocks
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { config } from "../lib/config";
@@ -49,6 +56,8 @@ describe("authenticate middleware", () => {
   beforeEach(() => {
     next = jest.fn();
     mockConfig.JWT_SECRET = "test-secret";
+    isJtiRevokedMock.mockReset();
+    isJtiRevokedMock.mockResolvedValue(false);
   });
 
   it("returns 401 when Authorization header is missing", async () => {
@@ -105,5 +114,47 @@ describe("authenticate middleware", () => {
     const res = makeRes();
     await authenticate(req, res, next as NextFunction);
     expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  // ── C-6: jti revocation ──────────────────────────────────────────
+  it("calls next when token has a jti that is NOT in the blacklist", async () => {
+    const req = makeReq("Bearer valid_token");
+    const res = makeRes();
+    (mockJwt.verify as jest.Mock).mockReturnValueOnce({
+      userId: "user-abc",
+      jti: "fresh-jti",
+    });
+    isJtiRevokedMock.mockResolvedValueOnce(false);
+    await authenticate(req, res, next as NextFunction);
+    expect(isJtiRevokedMock).toHaveBeenCalledWith("fresh-jti");
+    expect(req.userId).toBe("user-abc");
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 when token's jti has been revoked", async () => {
+    const req = makeReq("Bearer revoked_token");
+    const res = makeRes();
+    (mockJwt.verify as jest.Mock).mockReturnValueOnce({
+      userId: "user-abc",
+      jti: "revoked-jti",
+    });
+    isJtiRevokedMock.mockResolvedValueOnce(true);
+    await authenticate(req, res, next as NextFunction);
+    expect(isJtiRevokedMock).toHaveBeenCalledWith("revoked-jti");
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect((res.json as jest.Mock).mock.calls[0][0].error).toBe(
+      "Invalid or expired token",
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("does not consult the blacklist for legacy tokens with no jti", async () => {
+    const req = makeReq("Bearer legacy_token");
+    const res = makeRes();
+    (mockJwt.verify as jest.Mock).mockReturnValueOnce({ userId: "user-abc" });
+    await authenticate(req, res, next as NextFunction);
+    expect(isJtiRevokedMock).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
   });
 });
