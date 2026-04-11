@@ -66,6 +66,15 @@ const envSchema = z.object({
   // Monitoring
   SENTRY_DSN: z.string().optional(),
 
+  // GitHub — used by the AutoResearch loop PR creation flow in
+  // routes/loop.ts. Values are still read from process.env at request
+  // time (so tests that set them per-test keep working), but the
+  // fallback values live here via the exported constants below so the
+  // hardcoded defaults don't drift away from the documented .env.example.
+  GITHUB_TOKEN: z.string().optional(),
+  GITHUB_OWNER: z.string().optional(),
+  GITHUB_REPO: z.string().optional(),
+
   // Backup — R2 (Cloudflare) logical dumps
   R2_ENDPOINT: z.string().optional(),
   R2_BUCKET: z.string().optional(),
@@ -110,3 +119,24 @@ function validateEnv(): Env {
 }
 
 export const config = validateEnv();
+
+/**
+ * Default values for GitHub integration envs.
+ *
+ * These live in `config.ts` so the fallback used by `routes/loop.ts` and
+ * any future consumer comes from one place — instead of an inline
+ * `process.env.X || "string"` scattered across handlers. The values
+ * mirror the defaults documented in `.env.example`.
+ *
+ * Why defaults-as-constants and not zod `.default()`?
+ *
+ * The loop handlers read `process.env.GITHUB_*` at REQUEST time (not
+ * module-load time) so the Jest suite can swap envs between tests.
+ * Putting these into the zod schema as `.default()` would freeze them
+ * at module-load and silently break `loop.test.ts`'s per-test env
+ * mutation. Exported constants preserve the test ergonomics while still
+ * centralising the canonical value — bump them here and the next
+ * request picks them up.
+ */
+export const DEFAULT_GITHUB_OWNER = "a13xperi";
+export const DEFAULT_GITHUB_REPO = "atlas-portal";

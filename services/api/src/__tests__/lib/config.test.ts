@@ -74,4 +74,55 @@ describe("config", () => {
 
     expect(config.JWT_SECRET).toBe("dev-only-secret-do-not-use-in-production");
   });
+
+  describe("GitHub env vars (#3949)", () => {
+    it("treats GITHUB_TOKEN/OWNER/REPO as optional", () => {
+      process.env.JWT_SECRET = "test-secret";
+      process.env.DATABASE_URL = "postgresql://localhost:5432/test";
+      process.env.NODE_ENV = "test";
+      delete process.env.GITHUB_TOKEN;
+      delete process.env.GITHUB_OWNER;
+      delete process.env.GITHUB_REPO;
+
+      const { config } = require("../../lib/config");
+
+      // Config does not crash, values are undefined. Loop handlers fall
+      // back to DEFAULT_GITHUB_* constants at request time.
+      expect(config.GITHUB_TOKEN).toBeUndefined();
+      expect(config.GITHUB_OWNER).toBeUndefined();
+      expect(config.GITHUB_REPO).toBeUndefined();
+    });
+
+    it("passes through GITHUB_OWNER when the env var is set", () => {
+      process.env.JWT_SECRET = "test-secret";
+      process.env.DATABASE_URL = "postgresql://localhost:5432/test";
+      process.env.NODE_ENV = "test";
+      process.env.GITHUB_OWNER = "delphi-digital";
+      process.env.GITHUB_REPO = "atlas-backend";
+      process.env.GITHUB_TOKEN = "ghp_fake_token";
+
+      const { config } = require("../../lib/config");
+
+      expect(config.GITHUB_OWNER).toBe("delphi-digital");
+      expect(config.GITHUB_REPO).toBe("atlas-backend");
+      expect(config.GITHUB_TOKEN).toBe("ghp_fake_token");
+    });
+
+    it("exports DEFAULT_GITHUB_OWNER and DEFAULT_GITHUB_REPO constants", () => {
+      process.env.JWT_SECRET = "test-secret";
+      process.env.DATABASE_URL = "postgresql://localhost:5432/test";
+      process.env.NODE_ENV = "test";
+
+      const { DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO } = require("../../lib/config");
+
+      // These values mirror .env.example and are the single source of
+      // truth for the loop PR creation fallback. If the canonical repo
+      // moves to a different org, bump BOTH here and .env.example in
+      // the same commit — don't let them drift apart.
+      expect(DEFAULT_GITHUB_OWNER).toBe("a13xperi");
+      expect(DEFAULT_GITHUB_REPO).toBe("atlas-portal");
+      expect(typeof DEFAULT_GITHUB_OWNER).toBe("string");
+      expect(typeof DEFAULT_GITHUB_REPO).toBe("string");
+    });
+  });
 });
