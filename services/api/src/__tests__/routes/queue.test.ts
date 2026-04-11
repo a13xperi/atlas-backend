@@ -75,6 +75,8 @@ beforeEach(() => {
   (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue({
     xAccessToken: "access-token",
     xRefreshToken: "refresh-token",
+    xAccessTokenEnc: null,
+    xRefreshTokenEnc: null,
     xTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
   });
   (mockPrisma.user.update as jest.Mock).mockResolvedValue({});
@@ -294,6 +296,8 @@ describe("POST /api/queue/:id/publish", () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
       xAccessToken: null,
       xRefreshToken: null,
+      xAccessTokenEnc: null,
+      xRefreshTokenEnc: null,
       xTokenExpiresAt: null,
     });
 
