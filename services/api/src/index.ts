@@ -22,6 +22,7 @@ import { docsRouter } from "./routes/docs";
 import { xAuthRouter, twitterLoginRouter } from "./routes/x-auth";
 import { oracleRouter } from "./routes/oracle";
 import { campaignsRouter } from "./routes/campaigns";
+import { campaignsPdfRouter } from "./routes/campaigns-pdf";
 import { monitorsRouter } from "./routes/monitors";
 import { paperclipRouter } from "./routes/paperclip";
 import { telegramRouter } from "./routes/telegram";
@@ -137,6 +138,11 @@ app.use("/api/briefing", briefingRouter);
 app.use("/api/auth/twitter", twitterLoginRouter);
 app.use("/api/oracle", oracleRouter);
 app.use("/api/campaigns", campaignsRouter);
+// Second mount at /api/campaigns — adds POST /api/campaigns/generate-from-pdf.
+// Split into its own router because routes/campaigns.ts was under concurrent
+// edit from another session when this feature landed; keeping it isolated
+// avoids merge conflicts and lets the other session's work land cleanly.
+app.use("/api/campaigns", campaignsPdfRouter);
 app.use("/api/monitors", monitorsRouter);
 app.use("/api/telegram", telegramRouter);
 app.use("/api/paperclip", paperclipRouter);
