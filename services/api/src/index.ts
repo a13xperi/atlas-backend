@@ -38,6 +38,7 @@ import { rateLimit, rateLimitByUser } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
 import { logger } from "./lib/logger";
 import { formatErrorResponse } from "./lib/errors";
+import { assertCorsConfig, buildCorsOptions } from "./lib/cors";
 import { prisma } from "./lib/prisma";
 import { getRedis } from "./lib/redis";
 import { initBot } from "./lib/telegram";
@@ -57,20 +58,12 @@ const allowedOrigins = config.FRONTEND_URL.split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      const allowed = allowedOrigins.some((ao) =>
-        ao.includes("*")
-          ? new RegExp("^" + ao.replace(/\*/g, ".*") + "$").test(origin)
-          : ao === origin
-      );
-      callback(null, allowed || undefined);
-    },
-    credentials: true,
-  })
-);
+// Refuse to boot a production API with an empty CORS allowlist. Under the
+// old middleware an empty list silently rejected every browser request —
+// fail loudly instead so the bad deploy is caught before traffic hits it.
+assertCorsConfig({ allowedOrigins, nodeEnv: config.NODE_ENV });
+
+app.use(cors(buildCorsOptions(allowedOrigins)));
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 app.use(requestIdMiddleware);
