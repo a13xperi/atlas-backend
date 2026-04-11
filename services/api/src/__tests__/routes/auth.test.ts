@@ -192,6 +192,63 @@ describe("POST /api/auth/login", () => {
     expect(res.status).toBe(401);
     expectErrorResponse(res.body, "Invalid credentials");
   });
+
+  it("trips the per-route login limiter (5/window) before the router limit (10/window)", async () => {
+    // Queue up 5 invalid-credential responses so each attempt fails cleanly
+    // without touching any non-mocked dependency.
+    for (let i = 0; i < 5; i += 1) {
+      mockSupabaseAuth.signInWithPassword.mockResolvedValueOnce({
+        data: { session: null },
+        error: { message: "Invalid login credentials" },
+      });
+    }
+
+    const unique = "1.2.3.100"; // dedicated IP so no collision with other tests
+    for (let i = 0; i < 5; i += 1) {
+      const res = await request(app)
+        .post("/api/auth/login")
+        .set("X-Forwarded-For", unique)
+        .send({ email: "atlas@example.com", password: "wrong-password" });
+      expect(res.status).toBe(401);
+    }
+
+    // 6th attempt should be rate-limited by the dedicated loginRateLimiter
+    // (namespace "login", max=5). The router-level limiter (max=10) still has
+    // budget, so a 429 here proves the per-route limit is being enforced.
+    const limited = await request(app)
+      .post("/api/auth/login")
+      .set("X-Forwarded-For", unique)
+      .send({ email: "atlas@example.com", password: "wrong-password" });
+
+    expect(limited.status).toBe(429);
+    expect(limited.headers["retry-after"]).toEqual(expect.any(String));
+    expect(limited.body.error).toBe("Too many requests. Please try again later.");
+  });
+});
+
+describe("POST /api/auth/register — rate limiter", () => {
+  it("trips the per-route register limiter (5/window) before the router limit", async () => {
+    // Return 409 on each attempt — fast rejection path, still consumes the
+    // per-route counter (middleware runs before handler).
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue({ id: "dup" });
+
+    const unique = "1.2.3.200";
+    for (let i = 0; i < 5; i += 1) {
+      const res = await request(app)
+        .post("/api/auth/register")
+        .set("X-Forwarded-For", unique)
+        .send({ handle: "dup", email: "dup@example.com", password: "secret123" });
+      expect(res.status).toBe(409);
+    }
+
+    const limited = await request(app)
+      .post("/api/auth/register")
+      .set("X-Forwarded-For", unique)
+      .send({ handle: "dup", email: "dup@example.com", password: "secret123" });
+
+    expect(limited.status).toBe(429);
+    expect(limited.body.error).toBe("Too many requests. Please try again later.");
+  });
 });
 
 describe("POST /api/auth/refresh", () => {

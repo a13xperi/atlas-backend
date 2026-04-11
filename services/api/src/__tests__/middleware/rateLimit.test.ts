@@ -205,4 +205,53 @@ describe("rateLimit middleware", () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(429);
   });
+
+  it("namespaced limiters keep independent counters from un-namespaced ones", async () => {
+    // Regression guard for the stacked-limiter bug: without a namespace arg,
+    // two limiters on the same route share one counter and the tighter window
+    // is silently overridden by whichever limiter ran first.
+    const { rateLimit, clearRateLimitStore } = loadRateLimitModule();
+    clearRateLimitStore();
+
+    const wideLimiter = rateLimit(10, 60 * 1000); // router-level 10/min
+    const tightLimiter = rateLimit(2, 15 * 60 * 1000, "login"); // per-route 2/15min
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestIdMiddleware);
+    app.post("/login", wideLimiter, tightLimiter, (_req, res) => {
+      res.json({ ok: true });
+    });
+
+    const first = await request(app).post("/login").set("X-Forwarded-For", "6.6.6.6");
+    const second = await request(app).post("/login").set("X-Forwarded-For", "6.6.6.6");
+    const third = await request(app).post("/login").set("X-Forwarded-For", "6.6.6.6");
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    // tight limiter (ns=login, max=2) trips even though wide (max=10) still has budget
+    expect(third.status).toBe(429);
+  });
+
+  it("namespaced limiters do not trip the default-namespace counter for the same route", async () => {
+    const { rateLimit, clearRateLimitStore } = loadRateLimitModule();
+    clearRateLimitStore();
+
+    const defaultLimiter = rateLimit(3, 60 * 1000); // default namespace
+    const namespacedLimiter = rateLimit(3, 60 * 1000, "register");
+
+    const appDefault = createIpLimitedApp(defaultLimiter);
+    const appNamespaced = createIpLimitedApp(namespacedLimiter);
+
+    // Burn the default-namespace counter for IP 7.7.7.7
+    await request(appDefault).get("/limited").set("X-Forwarded-For", "7.7.7.7");
+    await request(appDefault).get("/limited").set("X-Forwarded-For", "7.7.7.7");
+    await request(appDefault).get("/limited").set("X-Forwarded-For", "7.7.7.7");
+    const burned = await request(appDefault).get("/limited").set("X-Forwarded-For", "7.7.7.7");
+    expect(burned.status).toBe(429);
+
+    // Namespaced limiter for the same IP and route must start fresh
+    const fresh = await request(appNamespaced).get("/limited").set("X-Forwarded-For", "7.7.7.7");
+    expect(fresh.status).toBe(200);
+  });
 });

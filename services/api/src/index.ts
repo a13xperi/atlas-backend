@@ -33,7 +33,7 @@ import { adminFlagsRouter } from "./routes/admin-flags";
 import { adminBackupRouter } from "./routes/admin-backup";
 import { twitterRouter } from "./routes/twitter";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
-import { rateLimitByUser } from "./middleware/rateLimit";
+import { rateLimit, rateLimitByUser } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
 import { logger } from "./lib/logger";
 import { formatErrorResponse } from "./lib/errors";
@@ -76,6 +76,15 @@ const generalApiLimiter = rateLimitByUser(
   config.RATE_LIMIT_GENERAL_WINDOW_MS,
 );
 
+// Protect the unauthenticated swagger UI — it parses a YAML file on every
+// request, so a burst of hits is expensive. IP-scoped, separate namespace
+// from any future auth-router limit.
+const docsRateLimiter = rateLimit(
+  config.RATE_LIMIT_DOCS_MAX_REQUESTS,
+  config.RATE_LIMIT_DOCS_WINDOW_MS,
+  "docs",
+);
+
 // Health check
 app.get("/health", async (_req, res) => {
   let database: "ok" | "error" = "ok";
@@ -111,7 +120,7 @@ app.get("/health", async (_req, res) => {
 });
 
 // Routes
-app.use("/api/docs", docsRouter);
+app.use("/api/docs", docsRateLimiter, docsRouter);
 app.use("/api/auth/x", xAuthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api", generalApiLimiter);
