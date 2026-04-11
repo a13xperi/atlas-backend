@@ -12,6 +12,11 @@ type RedisExecResult = [[null, number], [null, number]];
 
 function createIpLimitedApp(limiter: RequestHandler) {
   const app = express();
+  // Mirror production: Railway is 1 proxy hop, so we trust 1 hop and let
+  // Express derive req.ip from X-Forwarded-For. Without this, every supertest
+  // request bucket-keys on the loopback socket, and the tests that set
+  // X-Forwarded-For to differentiate IPs would all collide.
+  app.set("trust proxy", 1);
   app.use(express.json());
   app.use(requestIdMiddleware);
   app.get("/limited", limiter, (_req, res) => {
@@ -22,6 +27,7 @@ function createIpLimitedApp(limiter: RequestHandler) {
 
 function createUserLimitedApp(limiter: RequestHandler) {
   const app = express();
+  app.set("trust proxy", 1);
   app.use(express.json());
   app.use(requestIdMiddleware);
   app.use((req, _res, next) => {
@@ -31,6 +37,20 @@ function createUserLimitedApp(limiter: RequestHandler) {
     }
     next();
   });
+  app.get("/limited", limiter, (_req, res) => {
+    res.json({ ok: true });
+  });
+  return app;
+}
+
+// App without trust proxy — used by the spoof-guard test to prove that when
+// Express is NOT configured to trust XFF, a client cannot change its rate
+// limit bucket by rotating the header. This matches the default-safe posture
+// in any environment where Railway's proxy hop isn't in front of us.
+function createUntrustedApp(limiter: RequestHandler) {
+  const app = express();
+  app.use(express.json());
+  app.use(requestIdMiddleware);
   app.get("/limited", limiter, (_req, res) => {
     res.json({ ok: true });
   });
@@ -217,6 +237,7 @@ describe("rateLimit middleware", () => {
     const tightLimiter = rateLimit(2, 15 * 60 * 1000, "login"); // per-route 2/15min
 
     const app = express();
+    app.set("trust proxy", 1); // mirror production so XFF → req.ip
     app.use(express.json());
     app.use(requestIdMiddleware);
     app.post("/login", wideLimiter, tightLimiter, (_req, res) => {
@@ -231,6 +252,36 @@ describe("rateLimit middleware", () => {
     expect(second.status).toBe(200);
     // tight limiter (ns=login, max=2) trips even though wide (max=10) still has budget
     expect(third.status).toBe(429);
+  });
+
+  it("spoof-guard: rotating X-Forwarded-For from one socket cannot dodge the limiter", async () => {
+    // C-2 regression guard. Before the trust-proxy fix, the rate limiter
+    // manually parsed X-Forwarded-For via a handmade helper, so any attacker
+    // hitting Express directly could rotate the header and allocate themselves
+    // infinite buckets. The fix drops the manual parser and delegates to
+    // req.ip, which — when Express is NOT configured to trust a proxy hop —
+    // falls back to the socket peer and is stable across requests from the
+    // same source. This test locks that behavior in: 10 requests with 10
+    // different XFF values from the same loopback socket must all land in
+    // the same bucket and trip the limiter at max.
+    const { rateLimit, clearRateLimitStore } = loadRateLimitModule();
+    clearRateLimitStore();
+
+    const limiter = rateLimit(5, 60 * 1000);
+    const app = createUntrustedApp(limiter); // deliberately no trust proxy
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      const res = await request(app)
+        .get("/limited")
+        .set("X-Forwarded-For", `9.9.9.${i}`); // rotating spoofed IP
+      statuses.push(res.status);
+    }
+
+    // First 5 should pass, remaining 5 should be 429 — proving the spoofed
+    // XFF values were ignored and all 10 requests shared one bucket.
+    expect(statuses.slice(0, 5)).toEqual([200, 200, 200, 200, 200]);
+    expect(statuses.slice(5)).toEqual([429, 429, 429, 429, 429]);
   });
 
   it("namespaced limiters do not trip the default-namespace counter for the same route", async () => {

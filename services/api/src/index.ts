@@ -46,6 +46,10 @@ import { startScheduler } from "./lib/scheduler";
 dotenv.config();
 
 const app = express();
+// Railway terminates TLS and forwards one hop. With trust proxy set,
+// Express parses X-Forwarded-For safely and exposes the validated client
+// IP as req.ip — so rate limiters can key on a value the client cannot spoof.
+app.set("trust proxy", 1);
 const PORT = config.PORT;
 
 const allowedOrigins = config.FRONTEND_URL.split(",")
