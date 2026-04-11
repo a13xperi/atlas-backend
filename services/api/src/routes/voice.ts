@@ -248,6 +248,7 @@ function formatReferenceAccount(account: {
 const referenceSchema = z.object({
   name: z.string().min(1),
   handle: z.string().optional(),
+  avatarUrl: z.string().optional(),
 });
 
 const blendVoiceSchema = z.union([
@@ -415,7 +416,7 @@ voiceRouter.post("/references", async (req: AuthRequest, res) => {
     const body = referenceSchema.parse(req.body);
 
     const voice = await prisma.referenceVoice.create({
-      data: { userId: req.userId!, name: body.name, handle: body.handle },
+      data: { userId: req.userId!, name: body.name, handle: body.handle, avatarUrl: body.avatarUrl },
     });
     res.json(success({ voice }));
   } catch (err: any) {

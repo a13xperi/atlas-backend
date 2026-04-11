@@ -34,6 +34,7 @@ model User {
   referenceVoices   ReferenceVoice[]
   savedBlends       SavedBlend[]
   tweetDrafts       TweetDraft[]
+  draftQueueItems   DraftQueueItem[]
   analyticsEvents   AnalyticsEvent[]
   alertSubscriptions AlertSubscription[]
   sessions          Session[]
@@ -224,6 +225,26 @@ model TweetDraft {
   @@index([campaignId])
   @@index([userId, sortOrder])
   @@map("tweet_drafts")
+}
+
+model DraftQueueItem {
+  id          String    @id @default(cuid())
+  userId      String
+  content     String
+  scheduledAt DateTime?
+  status      String    @default("queued")
+  platform    String    @default("twitter")
+  tweetId     String?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status, scheduledAt])
+  @@index([userId, createdAt])
+  @@map("draft_queue_items")
 }
 
 enum DraftStatus {

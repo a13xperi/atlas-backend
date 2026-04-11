@@ -32,6 +32,7 @@ import { adminRouter } from "./routes/admin";
 import { adminFlagsRouter } from "./routes/admin-flags";
 import { adminBackupRouter } from "./routes/admin-backup";
 import { twitterRouter } from "./routes/twitter";
+import { queueRouter } from "./routes/queue";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit, rateLimitByUser } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
@@ -154,6 +155,7 @@ app.use("/api/admin/backup", adminBackupRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/admin/backup", adminBackupRouter);
 app.use("/api/twitter", twitterRouter);
+app.use("/api/queue", queueRouter);
 
 // 404 handler — catch unknown routes before error handlers
 app.use((req, res) => {
