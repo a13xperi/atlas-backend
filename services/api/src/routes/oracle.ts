@@ -2,6 +2,8 @@ import { Prisma } from "@prisma/client";
 import { Response, Router } from "express";
 import { z } from "zod";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { rateLimitByUser } from "../middleware/rateLimit";
+import { config } from "../lib/config";
 import { getAnthropicClient } from "../lib/anthropic";
 import {
   runOracleCompletion,
@@ -24,6 +26,16 @@ import type { ToolCall } from "../lib/providers/types";
 
 export const oracleRouter = Router();
 oracleRouter.use(authenticate);
+
+// Oracle endpoints all hit Anthropic (and sometimes burn multiple
+// turns per request via tool calling). They're the most expensive
+// surface in the API, so they get the same per-user AI cost cap as
+// drafts/research/transcribe/images/campaigns-pdf. Read endpoints
+// (`GET /session`, `DELETE /session`) stay on the general limiter.
+const aiGenerationLimiter = rateLimitByUser(
+  config.RATE_LIMIT_AI_GENERATION_MAX_REQUESTS,
+  config.RATE_LIMIT_AI_GENERATION_WINDOW_MS,
+);
 
 // ── Schema ───────────────────────────────────────────────────────
 
@@ -253,7 +265,7 @@ oracleRouter.delete("/session", async (req: AuthRequest, res) => {
   }
 });
 
-oracleRouter.post("/message", async (req: AuthRequest, res) => {
+oracleRouter.post("/message", aiGenerationLimiter, async (req: AuthRequest, res) => {
   try {
     if (
       typeof req.body === "object" &&
@@ -565,7 +577,7 @@ async function handleLegacyChat(req: AuthRequest, res: Response) {
   res.json(success({ text: response.content.trim() }));
 }
 
-oracleRouter.post("/chat", async (req: AuthRequest, res) => {
+oracleRouter.post("/chat", aiGenerationLimiter, async (req: AuthRequest, res) => {
   try {
     // Discriminate by body shape — the new OpenClaw route uses `message`
     // (singular string); the legacy widget path uses `messages` (array).
@@ -755,7 +767,7 @@ async function executeServerSide(
   }
 }
 
-oracleRouter.post("/agent", async (req: AuthRequest, res) => {
+oracleRouter.post("/agent", aiGenerationLimiter, async (req: AuthRequest, res) => {
   try {
     const body = agentSchema.parse(req.body);
 
