@@ -238,6 +238,49 @@ describe("GET /api/alerts/feed", () => {
       expect.objectContaining({ where: { userId: "user-123" } })
     );
   });
+
+  // Pin the contract that the feed serializes Alert.deliveredAt back to the
+  // client. The route relies on Prisma's default-select behavior (no `select`
+  // clause → all columns) to surface this — if a future change adds a `select`
+  // and forgets to include deliveredAt, Telegram delivery tracking goes dark
+  // in the portal feed and this test catches it.
+  it("returns deliveredAt on each alert (Telegram delivery tracking)", async () => {
+    const deliveredAt = new Date("2026-04-11T20:00:00.000Z");
+    const alerts = [
+      {
+        id: "a-delivered",
+        title: "Telegram delivered",
+        createdAt: new Date("2026-04-11T19:55:00.000Z"),
+        deliveredAt,
+      },
+      {
+        id: "a-undelivered",
+        title: "Not yet delivered",
+        createdAt: new Date("2026-04-11T19:50:00.000Z"),
+        deliveredAt: null,
+      },
+    ];
+    (mockPrisma.alert.findMany as jest.Mock).mockResolvedValueOnce(alerts);
+    // Defense-in-depth: assert the route does NOT add a `select` clause —
+    // adding one without `deliveredAt: true` would silently drop the field
+    // from the response. Tests caught the ai-rate-limit drift the same way
+    // (asserting on call shape, not just response).
+    const res = await request(app).get("/api/alerts/feed").set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.alerts).toHaveLength(2);
+    expect(res.body.data.alerts[0]).toMatchObject({
+      id: "a-delivered",
+      deliveredAt: deliveredAt.toISOString(),
+    });
+    expect(res.body.data.alerts[1]).toMatchObject({
+      id: "a-undelivered",
+      deliveredAt: null,
+    });
+    // Confirm the Prisma call did not narrow the column set.
+    const findManyCall = (mockPrisma.alert.findMany as jest.Mock).mock.calls[0][0];
+    expect(findManyCall.select).toBeUndefined();
+  });
 });
 
 describe("GET /api/alerts/:id", () => {
