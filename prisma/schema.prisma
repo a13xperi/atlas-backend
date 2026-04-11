@@ -22,6 +22,12 @@ model User {
   xAccessToken      String?
   xRefreshToken     String?
   xTokenExpiresAt   DateTime?
+  // C-3: AES-256-GCM encrypted (format "v1:iv:tag:ct") token columns.
+  // Live alongside plaintext columns during the migration window — the
+  // read path prefers `*Enc` and falls back to plaintext, so either set
+  // of columns can be populated. See services/api/src/lib/crypto.ts.
+  xAccessTokenEnc   String?
+  xRefreshTokenEnc  String?
   xBio              String?
   xAvatarUrl        String?
   xFollowerCount    Int?
