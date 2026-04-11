@@ -218,6 +218,8 @@ describe("POST /api/auth/x/callback", () => {
       data: {
         xAccessToken: "access-token",
         xRefreshToken: "refresh-token",
+        xAccessTokenEnc: null,
+        xRefreshTokenEnc: null,
         xTokenExpiresAt: expect.any(Date),
         xHandle: "atlas_handle",
         xBio: "Crypto analyst",
@@ -233,6 +235,9 @@ describe("GET /api/auth/x/status", () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
       xHandle: null,
       xAccessToken: null,
+      xRefreshToken: null,
+      xAccessTokenEnc: null,
+      xRefreshTokenEnc: null,
       xTokenExpiresAt: null,
     });
 
@@ -254,7 +259,14 @@ describe("GET /api/auth/x/status", () => {
     });
     expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
       where: { id: "user-123" },
-      select: { xHandle: true, xAccessToken: true, xTokenExpiresAt: true },
+      select: {
+        xHandle: true,
+        xTokenExpiresAt: true,
+        xAccessToken: true,
+        xRefreshToken: true,
+        xAccessTokenEnc: true,
+        xRefreshTokenEnc: true,
+      },
     });
   });
 
@@ -262,6 +274,9 @@ describe("GET /api/auth/x/status", () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
       xHandle: "atlas_handle",
       xAccessToken: "access-token",
+      xRefreshToken: "refresh-token",
+      xAccessTokenEnc: null,
+      xRefreshTokenEnc: null,
       xTokenExpiresAt: new Date(Date.now() + 60_000),
     });
 
@@ -287,6 +302,9 @@ describe("GET /api/auth/x/status", () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
       xHandle: "atlas_handle",
       xAccessToken: "access-token",
+      xRefreshToken: "refresh-token",
+      xAccessTokenEnc: null,
+      xRefreshTokenEnc: null,
       xTokenExpiresAt: new Date(Date.now() - 60_000),
     });
 
@@ -324,6 +342,8 @@ describe("POST /api/auth/x/disconnect", () => {
       data: {
         xAccessToken: null,
         xRefreshToken: null,
+        xAccessTokenEnc: null,
+        xRefreshTokenEnc: null,
         xTokenExpiresAt: null,
         xHandle: null,
       },
