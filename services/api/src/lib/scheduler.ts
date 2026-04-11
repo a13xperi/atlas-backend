@@ -6,6 +6,12 @@
 import { prisma } from "./prisma";
 import { logger } from "./logger";
 import { runScheduledBackupIfDue } from "./backup";
+import {
+  buildTokenWrite,
+  readAccessToken,
+  readRefreshToken,
+  TOKEN_READ_SELECT,
+} from "./crypto";
 
 const POLL_INTERVAL_MS = 60_000; // Check every minute
 
@@ -18,9 +24,8 @@ async function processScheduledDrafts(): Promise<{ posted: number; failed: numbe
       user: {
         select: {
           id: true,
-          xAccessToken: true,
-          xRefreshToken: true,
           xTokenExpiresAt: true,
+          ...TOKEN_READ_SELECT,
         },
       },
     },
@@ -35,7 +40,8 @@ async function processScheduledDrafts(): Promise<{ posted: number; failed: numbe
 
   for (const draft of dueDrafts) {
     try {
-      if (!draft.user.xAccessToken) {
+      let accessToken = readAccessToken(draft.user);
+      if (!accessToken) {
         // No X token — move back to APPROVED so user can post manually
         await prisma.tweetDraft.update({
           where: { id: draft.id },
@@ -47,17 +53,17 @@ async function processScheduledDrafts(): Promise<{ posted: number; failed: numbe
       }
 
       // Refresh token if expired
-      let accessToken = draft.user.xAccessToken;
-      if (draft.user.xTokenExpiresAt && draft.user.xTokenExpiresAt < now && draft.user.xRefreshToken) {
-        const refreshed = await refreshAccessToken(draft.user.xRefreshToken);
+      const draftRefreshToken = readRefreshToken(draft.user);
+      if (draft.user.xTokenExpiresAt && draft.user.xTokenExpiresAt < now && draftRefreshToken) {
+        const refreshed = await refreshAccessToken(draftRefreshToken);
         accessToken = refreshed.accessToken;
         await prisma.user.update({
           where: { id: draft.userId },
-          data: {
-            xAccessToken: refreshed.accessToken,
-            xRefreshToken: refreshed.refreshToken,
-            xTokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
-          },
+          data: buildTokenWrite({
+            accessToken: refreshed.accessToken,
+            refreshToken: refreshed.refreshToken,
+            expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+          }),
         });
       }
 
