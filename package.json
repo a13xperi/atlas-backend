@@ -16,6 +16,7 @@
     "db:backup": "./scripts/backup-db.sh",
     "db:backup:r2": "npx tsx scripts/backup-to-r2.ts",
     "smoke": "npx tsx services/api/src/scripts/smoke-test.ts",
+    "db:encrypt-xoauth": "npx tsx services/api/src/scripts/encrypt-xoauth-tokens.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"
