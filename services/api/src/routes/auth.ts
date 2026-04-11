@@ -23,6 +23,21 @@ const authRateLimiter = rateLimit(
 );
 authRouter.use(authRateLimiter);
 
+// Stricter per-route limiters layered on top of authRateLimiter. Each uses
+// a distinct namespace so its counter doesn't collide with the router-level
+// limiter (same-namespace limiters would share a key and the tighter window
+// would be silently overridden by the wider window).
+const registerRateLimiter = rateLimit(
+  config.RATE_LIMIT_REGISTER_MAX_REQUESTS,
+  config.RATE_LIMIT_REGISTER_WINDOW_MS,
+  "register",
+);
+const loginRateLimiter = rateLimit(
+  config.RATE_LIMIT_LOGIN_MAX_REQUESTS,
+  config.RATE_LIMIT_LOGIN_WINDOW_MS,
+  "login",
+);
+
 // --- Schemas ---
 
 const registerSchema = z.object({
@@ -55,7 +70,7 @@ const linkAccountSchema = z.object({
 // --- Routes ---
 
 // Register — Supabase auth with legacy bcrypt fallback
-authRouter.post("/register", async (req, res) => {
+authRouter.post("/register", registerRateLimiter, async (req, res) => {
   try {
     const body = registerSchema.parse(req.body);
 
@@ -136,7 +151,7 @@ authRouter.post("/register", async (req, res) => {
 });
 
 // Login — Supabase auth with legacy bcrypt fallback
-authRouter.post("/login", async (req, res) => {
+authRouter.post("/login", loginRateLimiter, async (req, res) => {
   try {
     const body = loginSchema.parse(req.body);
 

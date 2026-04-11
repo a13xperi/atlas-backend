@@ -19,6 +19,15 @@ const envSchema = z.object({
   // Rate limiting
   RATE_LIMIT_AUTH_MAX_REQUESTS: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_AUTH_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  // Stricter per-endpoint limits layered on top of the router-level auth limit
+  // to raise the cost of credential stuffing / mass-registration attacks.
+  RATE_LIMIT_LOGIN_MAX_REQUESTS: z.coerce.number().int().positive().default(5),
+  RATE_LIMIT_LOGIN_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60_000),
+  RATE_LIMIT_REGISTER_MAX_REQUESTS: z.coerce.number().int().positive().default(5),
+  RATE_LIMIT_REGISTER_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60_000),
+  // Docs (swagger UI) — unauthenticated and file-backed, keep it cheap per IP.
+  RATE_LIMIT_DOCS_MAX_REQUESTS: z.coerce.number().int().positive().default(30),
+  RATE_LIMIT_DOCS_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_AI_GENERATION_MAX_REQUESTS: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_AI_GENERATION_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60 * 1000),
   RATE_LIMIT_GENERAL_MAX_REQUESTS: z.coerce.number().int().positive().default(100),

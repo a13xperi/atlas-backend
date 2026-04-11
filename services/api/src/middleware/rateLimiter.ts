@@ -116,11 +116,21 @@ function createRateLimit(maxRequests: number, windowMs: number, resolveKey: KeyR
   };
 }
 
-export function rateLimit(maxRequests: number, windowMs: number) {
+/**
+ * IP-based rate limiter.
+ *
+ * @param namespace Optional key-space prefix. Use this when stacking multiple
+ *   limiters on the same route (e.g. a tight per-route login limit on top of
+ *   the general auth router limit) so each limiter keeps its own counter.
+ *   Limiters that share a namespace share a counter, which causes the two
+ *   windows to collide and the tighter one to be silently ignored.
+ */
+export function rateLimit(maxRequests: number, windowMs: number, namespace?: string) {
+  const prefix = namespace ? `rl:${namespace}` : "rl";
   return createRateLimit(
     maxRequests,
     windowMs,
-    (req) => `rl:${getClientIp(req)}:${req.baseUrl}${req.path}`,
+    (req) => `${prefix}:${getClientIp(req)}:${req.baseUrl}${req.path}`,
   );
 }
 
