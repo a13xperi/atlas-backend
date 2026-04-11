@@ -4,6 +4,12 @@ import { OnboardingTrack } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateOAuthUrl, generateLoginOAuthUrl, exchangeCodeForTokens, exchangeLoginCodeForTokens, lookupUser, fetchTwitterUserProfile } from "../lib/twitter";
+import {
+  buildTokenClear,
+  buildTokenWrite,
+  readAccessToken,
+  TOKEN_READ_SELECT,
+} from "../lib/crypto";
 import { config } from "../lib/config";
 import { logger } from "../lib/logger";
 import { error } from "../lib/response";
@@ -129,9 +135,11 @@ xAuthRouter.get("/callback", async (req, res) => {
         where: { id: user.id },
         data: {
           xHandle,
-          xAccessToken: accessToken,
-          xRefreshToken: refreshToken,
-          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          ...buildTokenWrite({
+            accessToken,
+            refreshToken,
+            expiresAt: new Date(Date.now() + expiresIn * 1000),
+          }),
           displayName: displayName || user.displayName,
           avatarUrl: avatarUrl || user.avatarUrl,
           xBio: xBio ?? user.xBio,
@@ -147,9 +155,11 @@ xAuthRouter.get("/callback", async (req, res) => {
           displayName,
           avatarUrl,
           xHandle,
-          xAccessToken: accessToken,
-          xRefreshToken: refreshToken,
-          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          ...buildTokenWrite({
+            accessToken,
+            refreshToken,
+            expiresAt: new Date(Date.now() + expiresIn * 1000),
+          }),
           xBio,
           xAvatarUrl,
           xFollowerCount,
@@ -205,9 +215,11 @@ xAuthRouter.post("/callback", authenticate, async (req: AuthRequest, res) => {
     await prisma.user.update({
       where: { id: req.userId! },
       data: {
-        xAccessToken: accessToken,
-        xRefreshToken: refreshToken,
-        xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+        ...buildTokenWrite({
+          accessToken,
+          refreshToken,
+          expiresAt: new Date(Date.now() + expiresIn * 1000),
+        }),
         xHandle,
         xBio,
         xAvatarUrl,
@@ -231,11 +243,11 @@ xAuthRouter.get("/status", authenticate, async (req: AuthRequest, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.userId! },
-      select: { xHandle: true, xAccessToken: true, xTokenExpiresAt: true },
+      select: { xHandle: true, xTokenExpiresAt: true, ...TOKEN_READ_SELECT },
     });
 
     res.json(success({
-      linked: !!user?.xAccessToken,
+      linked: !!readAccessToken(user),
       xHandle: user?.xHandle || null,
       tokenExpired: user?.xTokenExpiresAt ? user.xTokenExpiresAt < new Date() : true,
     }));
@@ -253,7 +265,7 @@ xAuthRouter.post("/disconnect", authenticate, async (req: AuthRequest, res) => {
   try {
     await prisma.user.update({
       where: { id: req.userId! },
-      data: { xAccessToken: null, xRefreshToken: null, xTokenExpiresAt: null, xHandle: null },
+      data: { ...buildTokenClear(), xHandle: null },
     });
     res.json(success({ linked: false }));
   } catch (err: any) {
@@ -375,9 +387,11 @@ twitterLoginRouter.get("/callback", async (req, res) => {
         where: { id: user.id },
         data: {
           xHandle,
-          xAccessToken: accessToken,
-          xRefreshToken: refreshToken,
-          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          ...buildTokenWrite({
+            accessToken,
+            refreshToken,
+            expiresAt: new Date(Date.now() + expiresIn * 1000),
+          }),
           displayName: displayName || user.displayName,
           avatarUrl: avatarUrl || user.avatarUrl,
           xBio: xBio ?? user.xBio,
@@ -394,9 +408,11 @@ twitterLoginRouter.get("/callback", async (req, res) => {
           displayName,
           avatarUrl,
           xHandle,
-          xAccessToken: accessToken,
-          xRefreshToken: refreshToken,
-          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          ...buildTokenWrite({
+            accessToken,
+            refreshToken,
+            expiresAt: new Date(Date.now() + expiresIn * 1000),
+          }),
           xBio,
           xAvatarUrl,
           xFollowerCount,
