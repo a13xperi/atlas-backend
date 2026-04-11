@@ -157,6 +157,7 @@ describe("GET /api/auth/me", () => {
         id: true,
         handle: true,
         role: true,
+        onboardingTrack: true,
         xBio: true,
         xAvatarUrl: true,
         xFollowerCount: true,

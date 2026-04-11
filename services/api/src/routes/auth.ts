@@ -10,6 +10,7 @@ import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { rateLimit } from "../middleware/rateLimit";
 import { setAuthCookies, clearAuthCookies, getRefreshToken } from "../lib/cookies";
+import { normalizeOnboardingTrack } from "../lib/onboardingTrack";
 
 function signLegacyToken(userId: string): string {
   return jwt.sign({ userId }, config.JWT_SECRET, { expiresIn: "7d" });
@@ -28,7 +29,10 @@ const registerSchema = z.object({
   handle: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(6),
-  onboardingTrack: z.enum(["A", "B", "TRACK_A", "TRACK_B"]).optional(),
+  // Accept any string — normalized downstream via normalizeOnboardingTrack().
+  // This keeps register lenient for legacy/alt frontends that may send
+  // "a" / "track_a" instead of the canonical "TRACK_A".
+  onboardingTrack: z.string().optional(),
 });
 
 const loginSchema = z.object({
@@ -95,18 +99,14 @@ authRouter.post("/register", async (req, res) => {
     // Hash password for legacy fallback (always store for dual-mode support)
     const passwordHash = await bcrypt.hash(body.password, 10);
 
+    const normalizedTrack = normalizeOnboardingTrack(body.onboardingTrack);
     const user = await prisma.user.create({
       data: {
         supabaseId,
         handle: body.handle,
         email: body.email,
         passwordHash,
-        ...(body.onboardingTrack && {
-          onboardingTrack:
-            body.onboardingTrack === "TRACK_A" || body.onboardingTrack === "A"
-              ? "TRACK_A"
-              : "TRACK_B",
-        }),
+        ...(normalizedTrack && { onboardingTrack: normalizedTrack }),
         voiceProfile: { create: {} },
       },
       include: { voiceProfile: true },
@@ -319,6 +319,7 @@ authRouter.get("/me", authenticate, async (req: AuthRequest, res) => {
         id: true,
         handle: true,
         role: true,
+        onboardingTrack: true,
         xBio: true,
         xAvatarUrl: true,
         xFollowerCount: true,

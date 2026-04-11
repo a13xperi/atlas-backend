@@ -1,5 +1,6 @@
 import { Router } from "express";
 import jwt from "jsonwebtoken";
+import { OnboardingTrack } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateOAuthUrl, generateLoginOAuthUrl, exchangeCodeForTokens, exchangeLoginCodeForTokens, lookupUser, fetchTwitterUserProfile } from "../lib/twitter";
@@ -152,7 +153,7 @@ xAuthRouter.get("/callback", async (req, res) => {
           xBio,
           xAvatarUrl,
           xFollowerCount,
-          onboardingTrack: "TRACK_B",
+          onboardingTrack: OnboardingTrack.TRACK_B,
           voiceProfile: { create: {} },
         },
       });
@@ -396,7 +397,7 @@ twitterLoginRouter.get("/callback", async (req, res) => {
           xBio,
           xAvatarUrl,
           xFollowerCount,
-          onboardingTrack: "TRACK_B", // Twitter-first = Track B (Anil's flow)
+          onboardingTrack: OnboardingTrack.TRACK_B, // Twitter-first = Track B (Anil's flow)
           voiceProfile: { create: {} },
         },
       });
