@@ -385,6 +385,16 @@ jest.mock("../../lib/redis", () => ({
   setCache: jest.fn(),
 }));
 
+// C-6: the e2e smoke flow re-uses a freshly minted JWT across many endpoints,
+// so the jti blacklist must answer "not revoked" for the duration of the test.
+// We stub the revocation helpers directly instead of teaching mockRedisClient
+// to speak get/set, which would require synchronizing two separate fakes.
+jest.mock("../../lib/jwt-revocation", () => ({
+  isJtiRevoked: jest.fn().mockResolvedValue(false),
+  revokeJti: jest.fn().mockResolvedValue(true),
+  remainingTtlSeconds: jest.fn().mockReturnValue(3600),
+}));
+
 jest.mock("../../lib/research", () => ({
   conductResearch: jest.fn(),
 }));
