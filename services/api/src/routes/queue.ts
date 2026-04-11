@@ -7,6 +7,12 @@ import { buildErrorResponse } from "../middleware/requestId";
 import { success } from "../lib/response";
 import { logger } from "../lib/logger";
 import { postTweet, refreshAccessToken } from "../lib/twitter";
+import {
+  buildTokenWrite,
+  readAccessToken,
+  readRefreshToken,
+  TOKEN_READ_SELECT,
+} from "../lib/crypto";
 
 export const queueRouter = Router();
 queueRouter.use(authenticate);
@@ -38,25 +44,27 @@ function getQueueStatus(scheduledAt: Date | null): "queued" | "scheduled" {
 async function getPublishAccessToken(userId: string): Promise<string> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { xAccessToken: true, xRefreshToken: true, xTokenExpiresAt: true },
+    select: { ...TOKEN_READ_SELECT, xTokenExpiresAt: true },
   });
 
-  if (!user?.xAccessToken) {
+  const accessToken = readAccessToken(user);
+  if (!accessToken) {
     throw new Error("X account not linked. Connect your X account first.");
   }
 
-  if (!user.xTokenExpiresAt || user.xTokenExpiresAt >= new Date() || !user.xRefreshToken) {
-    return user.xAccessToken;
+  const refreshToken = readRefreshToken(user);
+  if (!user?.xTokenExpiresAt || user.xTokenExpiresAt >= new Date() || !refreshToken) {
+    return accessToken;
   }
 
-  const refreshed = await refreshAccessToken(user.xRefreshToken);
+  const refreshed = await refreshAccessToken(refreshToken);
   await prisma.user.update({
     where: { id: userId },
-    data: {
-      xAccessToken: refreshed.accessToken,
-      xRefreshToken: refreshed.refreshToken,
-      xTokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
-    },
+    data: buildTokenWrite({
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
+      expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+    }),
   });
 
   return refreshed.accessToken;
