@@ -17,7 +17,7 @@ import {
   getAccessToken,
 } from "../lib/cookies";
 import { normalizeOnboardingTrack } from "../lib/onboardingTrack";
-import { revokeJti, remainingTtlSeconds } from "../lib/jwt-revocation";
+import { revokeJti, remainingTtlSeconds, isJtiRevoked } from "../lib/jwt-revocation";
 
 function signLegacyToken(userId: string): string {
   // C-6: every issued token carries a UUID `jti` so it can be individually
@@ -243,7 +243,16 @@ authRouter.post("/refresh", async (req, res) => {
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
         try {
-          const decoded = jwt.verify(authHeader.slice(7), config.JWT_SECRET) as { userId: string };
+          const decoded = jwt.verify(authHeader.slice(7), config.JWT_SECRET) as {
+            userId: string;
+            jti?: string;
+          };
+          // C-6: refresh must respect the revocation list. Without this check,
+          // a logged-out token could call /refresh and mint a fresh jti,
+          // defeating the blacklist.
+          if (decoded.jti && (await isJtiRevoked(decoded.jti))) {
+            return res.status(401).json(error("Invalid or expired token"));
+          }
           const newToken = signLegacyToken(decoded.userId);
           return res.json(success({ token: newToken, refresh_token: null }));
         } catch {
