@@ -162,7 +162,10 @@ xAuthRouter.get("/callback", async (req, res) => {
 
     const token = signLoginToken(user.id);
     setAuthCookies(res, token, refreshToken);
-    res.redirect(`${frontendUrl}/auth/callback?token=${encodeURIComponent(token)}&provider=twitter`);
+    // SECURITY (C-5): do NOT put JWT in query string. HttpOnly cookies
+    // set via setAuthCookies() already carry the session; query-string
+    // tokens leak via Referer headers, browser history, and upstream logs.
+    res.redirect(`${frontendUrl}/auth/callback?provider=twitter`);
   } catch (err: any) {
     logger.error({ err: err.message, stack: err.stack }, "Twitter login callback failed");
     res.redirect(`${frontendUrl}/?error=callback_failed`);
@@ -408,8 +411,9 @@ twitterLoginRouter.get("/callback", async (req, res) => {
     const token = signLoginToken(user.id);
     setAuthCookies(res, token, refreshToken);
 
-    // Redirect to frontend with token in query (frontend stores it)
-    res.redirect(`${frontendUrl}/auth/callback?token=${encodeURIComponent(token)}&provider=twitter`);
+    // SECURITY (C-5): HttpOnly cookies carry the session — no token in query.
+    // Query-string JWTs leak via Referer, browser history, and upstream logs.
+    res.redirect(`${frontendUrl}/auth/callback?provider=twitter`);
   } catch (err: any) {
     logger.error({ err: err.message, stack: err.stack }, "Twitter login callback failed");
     res.redirect(`${frontendUrl}/?error=callback_failed`);
