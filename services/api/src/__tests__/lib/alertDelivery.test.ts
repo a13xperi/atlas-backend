@@ -9,6 +9,14 @@ jest.mock("../../lib/prisma", () => ({
     alertSubscription: {
       findMany: jest.fn(),
     },
+    alert: {
+      // Stamping path: dispatchAlert calls prisma.alert.update with
+      // { deliveredAt } when deliverAlertToUser resolves to true. The
+      // mock has to exist on the module-level prisma reference so the
+      // .then() callback in alertDelivery.ts can call .catch() on the
+      // returned chain without throwing.
+      update: jest.fn().mockReturnValue({ catch: jest.fn() }),
+    },
   },
 }));
 
@@ -113,5 +121,56 @@ describe("dispatchAlert", () => {
     expect(errorSpy).toHaveBeenCalledWith({ err: error }, "[alertDelivery] Dispatch failed for alert alert-1");
 
     errorSpy.mockRestore();
+  });
+
+  // ── deliveredAt stamping (Alert.deliveredAt + Telegram delivery tracking) ──
+  //
+  // dispatchAlert fires deliverAlertToUser without awaiting it, then attaches
+  // a `.then((ok) => { if (ok) prisma.alert.update(...) })` callback. The two
+  // tests below pin both branches of that callback so the field gets stamped
+  // exactly when delivery actually succeeded — and never on failure.
+
+  it("stamps deliveredAt on the Alert row when Telegram delivery succeeds", async () => {
+    (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([
+      { id: "sub-1", delivery: ["TELEGRAM"] },
+    ]);
+    // Telegram delivery returns truthy → stamping branch fires.
+    mockDeliverAlertToUser.mockResolvedValueOnce(true);
+    // Reset the chained-mock so we can assert against this single call.
+    (mockPrisma.alert.update as jest.Mock).mockClear();
+    (mockPrisma.alert.update as jest.Mock).mockReturnValueOnce({ catch: jest.fn() });
+
+    await dispatchAlert(baseAlert);
+    // The .then() handler runs on the next microtask after the awaited
+    // deliverAlertToUser promise resolves; flushing twice covers both the
+    // deliver promise and the chained .then.
+    await flushPromises();
+    await flushPromises();
+
+    expect(mockPrisma.alert.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.alert.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "alert-1" },
+        data: expect.objectContaining({ deliveredAt: expect.any(Date) }),
+      }),
+    );
+  });
+
+  it("leaves deliveredAt unset when Telegram delivery fails", async () => {
+    (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([
+      { id: "sub-1", delivery: ["TELEGRAM"] },
+    ]);
+    // Telegram delivery returns falsy → stamping branch must NOT fire.
+    // (Falsy here means the bot couldn't reach the user — not an exception.
+    // Exception path is covered by the existing "logs Telegram delivery
+    // failures" test above.)
+    mockDeliverAlertToUser.mockResolvedValueOnce(false);
+    (mockPrisma.alert.update as jest.Mock).mockClear();
+
+    await dispatchAlert(baseAlert);
+    await flushPromises();
+    await flushPromises();
+
+    expect(mockPrisma.alert.update).not.toHaveBeenCalled();
   });
 });
