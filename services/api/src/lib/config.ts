@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { logger } from "./logger";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "staging", "test"]).default("development"),
@@ -85,7 +86,15 @@ function validateEnv(): Env {
     const missing = result.error.issues
       .map((i) => `  ${i.path.join(".")}: ${i.message}`)
       .join("\n");
-    console.error(`\n❌ Environment validation failed:\n${missing}\n`);
+    // logger.ts reads NODE_ENV directly so it resolves before this file
+    // runs — safe to use here even though config hasn't finished loading.
+    // We prefer structured output over a bare console.error so Railway and
+    // other log aggregators can index the failure; the CLI smoke-test
+    // scripts are the only places that still talk to the raw console.
+    logger.error(
+      { missing: result.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) },
+      `Environment validation failed:\n${missing}`,
+    );
     if (process.env.NODE_ENV === "production") {
       process.exit(1);
     }
