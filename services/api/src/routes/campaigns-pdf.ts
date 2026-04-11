@@ -2,6 +2,8 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { rateLimitByUser } from "../middleware/rateLimit";
+import { config } from "../lib/config";
 import { logger } from "../lib/logger";
 import { success, error } from "../lib/response";
 import { extractInsights } from "../lib/content-extraction";
@@ -24,6 +26,15 @@ import {
  */
 export const campaignsPdfRouter = Router();
 campaignsPdfRouter.use(authenticate);
+
+// PDF→multi-tweet generation runs `extractInsights` (Anthropic) and then
+// `batchGenerateDrafts` (one Anthropic call per angle). A single request
+// can burn 5–10 LLM completions, so this needs the same per-user cap as
+// the other AI cost paths.
+const aiGenerationLimiter = rateLimitByUser(
+  config.RATE_LIMIT_AI_GENERATION_MAX_REQUESTS,
+  config.RATE_LIMIT_AI_GENERATION_WINDOW_MS,
+);
 
 // Multipart body coerces everything to strings, so validate accordingly and
 // coerce after. The file itself is handled by multer and isn't in req.body.
@@ -68,7 +79,9 @@ const pdfUpload = multer({
 //     pipeline for stored content
 // This route is the bridge so a client doesn't need to stage intermediate
 // content to call those two separately.
-campaignsPdfRouter.post("/generate-from-pdf", pdfUpload.single("file"), async (req: AuthRequest, res) => {
+// Rate-limit BEFORE multer so a flood of requests doesn't pay the
+// multipart parse cost just to be rejected.
+campaignsPdfRouter.post("/generate-from-pdf", aiGenerationLimiter, pdfUpload.single("file"), async (req: AuthRequest, res) => {
   try {
     if (!req.file) {
       return res.status(400).json(error("No file provided", 400));

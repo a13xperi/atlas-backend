@@ -4,11 +4,20 @@ import { prisma } from "../lib/prisma";
 import { config } from "../lib/config";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { rateLimitByUser } from "../middleware/rateLimit";
 import { generateImage, generateVisualConcept, ImageStyle } from "../lib/gemini";
 import { logger } from "../lib/logger";
 
 export const imagesRouter = Router();
 imagesRouter.use(authenticate);
+
+// Image generation (Gemini) is metered per-image. The general API limiter
+// is too loose for this — apply the dedicated AI cost knob so demo users
+// can't accidentally run a 1000-image render loop.
+const aiGenerationLimiter = rateLimitByUser(
+  config.RATE_LIMIT_AI_GENERATION_MAX_REQUESTS,
+  config.RATE_LIMIT_AI_GENERATION_WINDOW_MS,
+);
 
 const generateSchema = z.object({
   prompt: z.string().min(1).max(5000),
@@ -104,7 +113,7 @@ async function createImageRecord(userId: string, prompt: string, style: ImageSty
 }
 
 // Standalone image concept generation
-imagesRouter.post("/generate", async (req: AuthRequest, res) => {
+imagesRouter.post("/generate", aiGenerationLimiter, async (req: AuthRequest, res) => {
   try {
     if (!config.GOOGLE_AI_API_KEY) {
       return res.status(503).json(error("Image generation is not configured — GOOGLE_AI_API_KEY missing", 503));
@@ -124,7 +133,7 @@ imagesRouter.post("/generate", async (req: AuthRequest, res) => {
 });
 
 // Generate companion visual for an existing draft
-imagesRouter.post("/generate-for-draft", async (req: AuthRequest, res) => {
+imagesRouter.post("/generate-for-draft", aiGenerationLimiter, async (req: AuthRequest, res) => {
   try {
     if (!config.GOOGLE_AI_API_KEY) {
       return res.status(503).json(error("Image generation is not configured — GOOGLE_AI_API_KEY missing", 503));
