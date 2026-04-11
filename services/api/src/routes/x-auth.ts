@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "crypto";
 import jwt from "jsonwebtoken";
 import { OnboardingTrack } from "@prisma/client";
 import { prisma } from "../lib/prisma";
@@ -304,7 +305,10 @@ xAuthRouter.get("/login", async (_req, res) => {
 export const twitterLoginRouter = Router();
 
 function signLoginToken(userId: string): string {
-  return jwt.sign({ userId }, config.JWT_SECRET, { expiresIn: "7d" });
+  // C-6: every issued token carries a UUID `jti` so it can be individually
+  // revoked via the Redis blacklist on logout (see lib/jwt-revocation.ts).
+  const jti = randomUUID();
+  return jwt.sign({ userId, jti }, config.JWT_SECRET, { expiresIn: "7d" });
 }
 
 /**

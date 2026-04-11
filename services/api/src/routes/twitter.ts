@@ -206,16 +206,23 @@ twitterRouter.get("/follows", authenticate, async (req: AuthRequest, res) => {
 });
 
 function mapFollows(users: TwitterFollowUser[]) {
-  return users.map((u) => ({
-    id: u.id,
-    handle: u.username,
-    display_name: u.name,
-    bio: u.description || null,
-    avatar_url: u.profile_image_url
-      ? u.profile_image_url.replace("_normal", "_400x400")
-      : null,
-    follower_count: u.public_metrics?.followers_count ?? 0,
-  }));
+  return users
+    .map((u) => ({
+      id: u.id,
+      handle: u.username,
+      display_name: u.name,
+      bio: u.description || null,
+      avatar_url: u.profile_image_url
+        ? u.profile_image_url.replace("_normal", "_400x400")
+        : null,
+      follower_count: u.public_metrics?.followers_count ?? 0,
+    }))
+    .sort((a, b) => {
+      if (b.follower_count !== a.follower_count) {
+        return b.follower_count - a.follower_count;
+      }
+      return a.handle.localeCompare(b.handle);
+    });
 }
 
 // ── GET /api/twitter/likes ───────────────────────────────────────────

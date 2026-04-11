@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -9,11 +10,20 @@ import { logger } from "../lib/logger";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { rateLimit } from "../middleware/rateLimit";
-import { setAuthCookies, clearAuthCookies, getRefreshToken } from "../lib/cookies";
+import {
+  setAuthCookies,
+  clearAuthCookies,
+  getRefreshToken,
+  getAccessToken,
+} from "../lib/cookies";
 import { normalizeOnboardingTrack } from "../lib/onboardingTrack";
+import { revokeJti, remainingTtlSeconds, isJtiRevoked } from "../lib/jwt-revocation";
 
 function signLegacyToken(userId: string): string {
-  return jwt.sign({ userId }, config.JWT_SECRET, { expiresIn: "7d" });
+  // C-6: every issued token carries a UUID `jti` so it can be individually
+  // revoked via the Redis blacklist on logout (see lib/jwt-revocation.ts).
+  const jti = randomUUID();
+  return jwt.sign({ userId, jti }, config.JWT_SECRET, { expiresIn: "7d" });
 }
 
 export const authRouter = Router();
@@ -233,7 +243,16 @@ authRouter.post("/refresh", async (req, res) => {
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
         try {
-          const decoded = jwt.verify(authHeader.slice(7), config.JWT_SECRET) as { userId: string };
+          const decoded = jwt.verify(authHeader.slice(7), config.JWT_SECRET) as {
+            userId: string;
+            jti?: string;
+          };
+          // C-6: refresh must respect the revocation list. Without this check,
+          // a logged-out token could call /refresh and mint a fresh jti,
+          // defeating the blacklist.
+          if (decoded.jti && (await isJtiRevoked(decoded.jti))) {
+            return res.status(401).json(error("Invalid or expired token"));
+          }
           const newToken = signLegacyToken(decoded.userId);
           return res.json(success({ token: newToken, refresh_token: null }));
         } catch {
@@ -310,10 +329,26 @@ authRouter.post("/link-account", async (req, res) => {
   }
 });
 
-// Logout — clear HttpOnly cookies
+// Logout — revoke jti, then clear HttpOnly cookies
 authRouter.post("/logout", authenticate, async (req: AuthRequest, res) => {
   try {
     emptyBodySchema.parse(req.body ?? {});
+
+    // C-6: insert this token's jti into the Redis blacklist with a TTL
+    // equal to the token's remaining lifetime, so any concurrent
+    // session/tab using the same JWT is rejected on its next request.
+    // We decode (not verify) here because authenticate() already proved
+    // the signature is valid by getting us into this handler.
+    const token = getAccessToken(req);
+    if (token) {
+      const decoded = jwt.decode(token) as { jti?: string; exp?: number } | null;
+      if (decoded?.jti) {
+        const ttl = remainingTtlSeconds(decoded.exp);
+        if (ttl > 0) {
+          await revokeJti(decoded.jti, ttl);
+        }
+      }
+    }
 
     clearAuthCookies(res);
     res.json(success({ success: true }));
