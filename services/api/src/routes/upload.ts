@@ -1,11 +1,17 @@
 import { Router } from "express";
 import multer from "multer";
+import { z } from "zod";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require("pdf-parse") as (buffer: Buffer, options?: object) => Promise<{ text: string }>;
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
 import { logger } from "../lib/logger";
 import { success } from "../lib/response";
+import { validationFailResponse } from "../lib/schemas";
+
+// /extract-text only reads `req.file` (the uploaded PDF / text blob).
+// Empty-strict body rejects unexpected form fields.
+const extractTextBodySchema = z.object({}).strict();
 
 export const uploadRouter = Router();
 uploadRouter.use(authenticate);
@@ -30,6 +36,10 @@ const upload = multer({
 // Accepts: multipart/form-data with field "file" (PDF, .txt, .md)
 // Returns: { text, wordCount, filename, mimeType, truncated }
 uploadRouter.post("/extract-text", upload.single("file"), async (req: AuthRequest, res) => {
+  const parsed = extractTextBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     if (!req.file) {
       return res.status(400).json(buildErrorResponse(req, "No file provided"));

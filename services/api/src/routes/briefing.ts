@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
+import { validationFailResponse } from "../lib/schemas";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { routeCompletion } from "../lib/providers/router";
 import { logger } from "../lib/logger";
@@ -94,10 +95,20 @@ const BRIEF_TYPE_PROMPTS: Record<string, { titlePrefix: string; focus: string }>
   },
 };
 
+const generateBriefingSchema = z
+  .object({
+    briefType: z.enum(["morning", "sector", "alpha", "competitor"]).optional(),
+  })
+  .strict();
+
 briefingRouter.post("/generate", async (req: AuthRequest, res) => {
+  const parsed = generateBriefingSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
-    const briefType = (req.body?.briefType as string) || "morning";
-    const typeConfig = BRIEF_TYPE_PROMPTS[briefType] ?? BRIEF_TYPE_PROMPTS.morning;
+    const briefType = parsed.data.briefType ?? "morning";
+    const typeConfig = BRIEF_TYPE_PROMPTS[briefType];
 
     const preferences = await prisma.briefingPreference.findUnique({
       where: { userId: req.userId! },
@@ -160,12 +171,12 @@ Make it specific and actionable. Include at least one contrarian take.`;
       "briefing-generate",
     );
 
-    let parsed: { title: string; summary: string; sections: any[] };
+    let briefingData: { title: string; summary: string; sections: any[] };
     try {
       const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-      parsed = JSON.parse(jsonMatch?.[0] ?? response.content);
+      briefingData = JSON.parse(jsonMatch?.[0] ?? response.content);
     } catch {
-      parsed = {
+      briefingData = {
         title: `Morning Brief — ${today}`,
         summary: response.content.slice(0, 200),
         sections: [{ heading: "Today's Intel", emoji: "📊", bullets: [response.content.slice(0, 100)] }],
@@ -175,9 +186,9 @@ Make it specific and actionable. Include at least one contrarian take.`;
     const briefing = await prisma.briefing.create({
       data: {
         userId: req.userId!,
-        title: parsed.title,
-        summary: parsed.summary,
-        sections: parsed.sections,
+        title: briefingData.title,
+        summary: briefingData.summary,
+        sections: briefingData.sections,
         topics,
         sources,
       },

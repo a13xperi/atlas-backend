@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
 import { success } from "../lib/response";
+import { emptyBodySchema, validationFailResponse } from "../lib/schemas";
 import { logger } from "../lib/logger";
 import { postTweet, refreshAccessToken } from "../lib/twitter";
 import {
@@ -232,6 +233,10 @@ queueRouter.delete("/:id", async (req: AuthRequest, res) => {
 });
 
 queueRouter.post("/:id/publish", async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const item = await prisma.draftQueueItem.findFirst({
       where: { id: req.params.id as string, userId: req.userId },

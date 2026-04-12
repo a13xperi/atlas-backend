@@ -19,6 +19,7 @@ import {
 } from "../lib/oracle-prompt";
 import { ORACLE_TOOLS, CONFIRMATION_REQUIRED, SERVER_EXECUTABLE } from "../lib/oracle-tools";
 import { error, success } from "../lib/response";
+import { validationFailResponse } from "../lib/schemas";
 import { logger } from "../lib/logger";
 import { prisma } from "../lib/prisma";
 import { withTimeout } from "../lib/timeout";
@@ -442,6 +443,13 @@ const chatOpenClawSchema = z.object({
   phase: z.string().max(64).optional(),
 });
 
+// Top-level dispatch schema for POST /chat — the handler accepts either
+// the new OpenClaw shape OR the legacy widget shape. This lets the router
+// safeParse once at the top of the handler (per Atlas BO 30 contract) and
+// still delegate to the existing shape-specific sub-handlers for the
+// actual work.
+const chatDispatchSchema = z.union([chatOpenClawSchema, chatLegacySchema]);
+
 /**
  * Build personalized context (voice profile + recent activity) for the
  * Oracle. Mirrors how other routes build context — safe to call per request.
@@ -578,9 +586,20 @@ async function handleLegacyChat(req: AuthRequest, res: Response) {
 }
 
 oracleRouter.post("/chat", aiGenerationLimiter, async (req: AuthRequest, res) => {
+  // Validate against the union schema at the top of the handler. This
+  // catches malformed bodies before dispatch and keeps the handler
+  // consistent with the Atlas BO 30 safeParse-at-top convention.
+  const parsed = chatDispatchSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
+
   try {
     // Discriminate by body shape — the new OpenClaw route uses `message`
     // (singular string); the legacy widget path uses `messages` (array).
+    // Sub-handlers re-parse with their narrow schema for type safety,
+    // which is a trivial cost (microseconds) relative to the downstream
+    // LLM call.
     if (
       typeof req.body === "object" &&
       req.body !== null &&

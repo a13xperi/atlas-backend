@@ -161,8 +161,8 @@ describe("POST /api/auth/x/callback", () => {
       .send({});
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Missing code or state");
-    expect(res.body.message).toBe("Missing code or state");
+    expect(res.body.error).toBe("Validation failed");
+    expect(res.body.details).toBeDefined();
     expect(mockExchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
