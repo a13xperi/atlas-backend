@@ -4,6 +4,7 @@ import { createServer } from "http";
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import helmet from "helmet";
 import dotenv from "dotenv";
 import { config } from "./lib/config";
 import { authRouter } from "./routes/auth";
@@ -64,6 +65,7 @@ const allowedOrigins = config.FRONTEND_URL.split(",")
 // fail loudly instead so the bad deploy is caught before traffic hits it.
 assertCorsConfig({ allowedOrigins, nodeEnv: config.NODE_ENV });
 
+app.use(helmet());
 app.use(cors(buildCorsOptions(allowedOrigins)));
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
