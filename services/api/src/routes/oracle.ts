@@ -615,8 +615,16 @@ oracleRouter.post("/chat", aiGenerationLimiter, async (req: AuthRequest, res) =>
       res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
       return;
     }
-    logger.error({ error: err }, "Oracle chat error");
-    res.status(500).json({ ok: false, error: "Oracle is thinking... try again in a moment." });
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isProviderIssue = errMsg.includes("No providers available") || errMsg.includes("All providers failed");
+    logger.error({ error: err, isProviderIssue }, "Oracle chat error");
+    res.status(isProviderIssue ? 503 : 500).json({
+      ok: false,
+      error: isProviderIssue
+        ? "Oracle is temporarily unavailable — no AI providers could be reached. Please try again shortly."
+        : "Oracle encountered an unexpected error. Please try again.",
+      code: isProviderIssue ? "PROVIDER_UNAVAILABLE" : "INTERNAL_ERROR",
+    });
   }
 });
 
@@ -881,7 +889,15 @@ oracleRouter.post("/agent", aiGenerationLimiter, async (req: AuthRequest, res) =
       res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
       return;
     }
-    logger.error({ error: err }, "Oracle agent error");
-    res.status(500).json({ ok: false, error: "Oracle is thinking... try again in a moment." });
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isProviderIssue = errMsg.includes("No providers available") || errMsg.includes("All providers failed");
+    logger.error({ error: err, isProviderIssue }, "Oracle agent error");
+    res.status(isProviderIssue ? 503 : 500).json({
+      ok: false,
+      error: isProviderIssue
+        ? "Oracle is temporarily unavailable — no AI providers could be reached. Please try again shortly."
+        : "Oracle encountered an unexpected error. Please try again.",
+      code: isProviderIssue ? "PROVIDER_UNAVAILABLE" : "INTERNAL_ERROR",
+    });
   }
 });
