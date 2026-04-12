@@ -1,5 +1,5 @@
 /**
- * Zod body-validation regression suite — all 17 POST/PATCH handlers.
+ * Zod body-validation regression suite — all 18 POST/PATCH handlers.
  *
  * Proves that every mutating handler:
  *   1. Rejects a malformed / wrongly-typed body with 400 + structured details
@@ -232,6 +232,7 @@ import { transcribeRouter } from "../../routes/transcribe";
 import { uploadRouter } from "../../routes/upload";
 import { xAuthRouter } from "../../routes/x-auth";
 import { queueRouter } from "../../routes/queue";
+import { adminFlagsRouter } from "../../routes/admin-flags";
 
 // ── Typed mock references ──────────────────────────────────────────
 
@@ -263,6 +264,7 @@ const transcribeApp = mountApp("/api/transcribe", transcribeRouter);
 const uploadApp = mountApp("/api/upload", uploadRouter);
 const xAuthApp = mountApp("/api/auth/x", xAuthRouter);
 const queueApp = mountApp("/api/queue", queueRouter);
+const adminFlagsApp = mountApp("/api/admin/feature-flags", adminFlagsRouter);
 
 // ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -1082,6 +1084,96 @@ describe("Zod validation — POST /api/auth/x/callback (xCallbackSchema)", () =>
       .post("/api/auth/x/callback")
       .set(AUTH)
       .send({}); // Missing both required fields
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+    expect(res.body.details).toBeDefined();
+  });
+});
+
+// ====================================================================
+// 18. adminFlagsRouter — PATCH /api/admin/feature-flags/:key (flagPatchSchema)
+// ====================================================================
+
+describe("Zod validation — PATCH /api/admin/feature-flags/:key (flagPatchSchema)", () => {
+  const ADMIN_USER = { id: "user-123", role: "ADMIN" };
+
+  it("rejects empty body (refine requires at least one field)", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce(ADMIN_USER);
+
+    const res = await request(adminFlagsApp)
+      .patch("/api/admin/feature-flags/crafting_station")
+      .set(AUTH)
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+    expect(res.body.details).toBeDefined();
+  });
+
+  it("rejects wrongly-typed enabled field", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce(ADMIN_USER);
+
+    const res = await request(adminFlagsApp)
+      .patch("/api/admin/feature-flags/crafting_station")
+      .set(AUTH)
+      .send({ enabled: "yes" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+  });
+
+  it("rejects invalid rolloutRole enum value", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce(ADMIN_USER);
+
+    const res = await request(adminFlagsApp)
+      .patch("/api/admin/feature-flags/crafting_station")
+      .set(AUTH)
+      .send({ rolloutRole: "superadmin" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+  });
+
+  it("accepts valid payload (enabled only)", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce(ADMIN_USER);
+    mockPrisma.featureFlag.upsert.mockResolvedValueOnce({
+      key: "crafting_station",
+      enabled: false,
+      rolloutRole: "everyone",
+    });
+
+    const res = await request(adminFlagsApp)
+      .patch("/api/admin/feature-flags/crafting_station")
+      .set(AUTH)
+      .send({ enabled: false });
+
+    expect(res.body.error).not.toBe("Validation failed");
+  });
+
+  it("accepts valid payload (rolloutRole only)", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce(ADMIN_USER);
+    mockPrisma.featureFlag.upsert.mockResolvedValueOnce({
+      key: "crafting_station",
+      enabled: true,
+      rolloutRole: "managers",
+    });
+
+    const res = await request(adminFlagsApp)
+      .patch("/api/admin/feature-flags/crafting_station")
+      .set(AUTH)
+      .send({ rolloutRole: "managers" });
+
+    expect(res.body.error).not.toBe("Validation failed");
+  });
+
+  it("rejects unknown fields (schema is strict)", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce(ADMIN_USER);
+
+    const res = await request(adminFlagsApp)
+      .patch("/api/admin/feature-flags/crafting_station")
+      .set(AUTH)
+      .send({ enabled: true, description: "sneaky extra field" });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation failed");
