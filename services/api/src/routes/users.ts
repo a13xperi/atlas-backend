@@ -171,7 +171,11 @@ usersRouter.post("/push-top-profiles", async (req: AuthRequest, res) => {
     }
 
     // Average the top performers' voice dimensions
-    const avg = { humor: 0, formality: 0, brevity: 0, contrarianTone: 0 };
+    const avg = {
+      humor: 0, formality: 0, brevity: 0, contrarianTone: 0,
+      directness: 0, warmth: 0, technicalDepth: 0, confidence: 0,
+      evidenceOrientation: 0, solutionOrientation: 0, socialPosture: 0, selfPromotionalIntensity: 0,
+    };
     let count = 0;
     for (const p of topPerformers) {
       if (!p.voiceProfile) continue;
@@ -179,6 +183,14 @@ usersRouter.post("/push-top-profiles", async (req: AuthRequest, res) => {
       avg.formality += p.voiceProfile.formality;
       avg.brevity += p.voiceProfile.brevity;
       avg.contrarianTone += p.voiceProfile.contrarianTone;
+      avg.directness += p.voiceProfile.directness;
+      avg.warmth += p.voiceProfile.warmth;
+      avg.technicalDepth += p.voiceProfile.technicalDepth;
+      avg.confidence += p.voiceProfile.confidence;
+      avg.evidenceOrientation += p.voiceProfile.evidenceOrientation;
+      avg.solutionOrientation += p.voiceProfile.solutionOrientation;
+      avg.socialPosture += p.voiceProfile.socialPosture;
+      avg.selfPromotionalIntensity += p.voiceProfile.selfPromotionalIntensity;
       count++;
     }
     if (count > 0) {
@@ -186,6 +198,14 @@ usersRouter.post("/push-top-profiles", async (req: AuthRequest, res) => {
       avg.formality = Math.round(avg.formality / count);
       avg.brevity = Math.round(avg.brevity / count);
       avg.contrarianTone = Math.round(avg.contrarianTone / count);
+      avg.directness = Math.round(avg.directness / count);
+      avg.warmth = Math.round(avg.warmth / count);
+      avg.technicalDepth = Math.round(avg.technicalDepth / count);
+      avg.confidence = Math.round(avg.confidence / count);
+      avg.evidenceOrientation = Math.round(avg.evidenceOrientation / count);
+      avg.solutionOrientation = Math.round(avg.solutionOrientation / count);
+      avg.socialPosture = Math.round(avg.socialPosture / count);
+      avg.selfPromotionalIntensity = Math.round(avg.selfPromotionalIntensity / count);
     }
 
     const inactive = await findInactiveAnalysts();
@@ -200,8 +220,8 @@ usersRouter.post("/push-top-profiles", async (req: AuthRequest, res) => {
       inactiveIds.map((userId) =>
         prisma.voiceProfile.upsert({
           where: { userId },
-          update: { humor: avg.humor, formality: avg.formality, brevity: avg.brevity, contrarianTone: avg.contrarianTone },
-          create: { userId, humor: avg.humor, formality: avg.formality, brevity: avg.brevity, contrarianTone: avg.contrarianTone },
+          update: avg,
+          create: { userId, ...avg },
         })
       )
     );
@@ -301,7 +321,17 @@ usersRouter.post("/push-style", async (req: AuthRequest, res) => {
     if (!manager) return;
     const body = pushStyleSchema.parse(req.body);
 
-    let dims = { humor: 50, formality: 50, brevity: 50, contrarianTone: 50 };
+    let dims = {
+      humor: 50, formality: 50, brevity: 50, contrarianTone: 50,
+      directness: 50, warmth: 50, technicalDepth: 50, confidence: 50,
+      evidenceOrientation: 50, solutionOrientation: 50, socialPosture: 50, selfPromotionalIntensity: 50,
+    };
+
+    const extractDims = (p: { humor: number; formality: number; brevity: number; contrarianTone: number; directness: number; warmth: number; technicalDepth: number; confidence: number; evidenceOrientation: number; solutionOrientation: number; socialPosture: number; selfPromotionalIntensity: number }) => ({
+      humor: p.humor, formality: p.formality, brevity: p.brevity, contrarianTone: p.contrarianTone,
+      directness: p.directness, warmth: p.warmth, technicalDepth: p.technicalDepth, confidence: p.confidence,
+      evidenceOrientation: p.evidenceOrientation, solutionOrientation: p.solutionOrientation, socialPosture: p.socialPosture, selfPromotionalIntensity: p.selfPromotionalIntensity,
+    });
 
     if (body.blendId) {
       // Resolve blend → weighted average voice dimensions
@@ -316,13 +346,13 @@ usersRouter.post("/push-style", async (req: AuthRequest, res) => {
       // Fall back to manager's own profile when blend voices lack dimension data.
       const managerProfile = await prisma.voiceProfile.findUnique({ where: { userId: manager.id } });
       if (managerProfile) {
-        dims = { humor: managerProfile.humor, formality: managerProfile.formality, brevity: managerProfile.brevity, contrarianTone: managerProfile.contrarianTone };
+        dims = extractDims(managerProfile);
       }
     } else {
       // No blendId — use manager's own voice profile
       const managerProfile = await prisma.voiceProfile.findUnique({ where: { userId: manager.id } });
       if (managerProfile) {
-        dims = { humor: managerProfile.humor, formality: managerProfile.formality, brevity: managerProfile.brevity, contrarianTone: managerProfile.contrarianTone };
+        dims = extractDims(managerProfile);
       }
     }
 
