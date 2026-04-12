@@ -23,7 +23,17 @@ jest.mock("../../middleware/auth", () => ({
 }));
 
 jest.mock("../../lib/supabase", () => ({ supabaseAdmin: null }));
-jest.mock("../../lib/logger", () => ({ logger: { error: jest.fn(), info: jest.fn(), warn: jest.fn() } }));
+jest.mock("../../lib/logger", () => ({ logger: { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() } }));
+
+jest.mock("../../lib/prompt-catalog", () => ({
+  getPromptCatalog: jest.fn(),
+  getPromptById: jest.fn(),
+  renderTemplate: jest.fn(),
+}));
+
+jest.mock("../../lib/anthropic", () => ({
+  getAnthropicClient: jest.fn(),
+}));
 
 /* ── Prisma mock ──────────────────────────────────────────────── */
 jest.mock("../../lib/prisma", () => ({
@@ -58,6 +68,9 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import { prisma } from "../../lib/prisma";
+import { getPromptCatalog, getPromptById, renderTemplate } from "../../lib/prompt-catalog";
+import { getAnthropicClient } from "../../lib/anthropic";
+
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 
 /* ── App setup ────────────────────────────────────────────────── */
