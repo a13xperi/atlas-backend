@@ -55,6 +55,8 @@ model User {
   voiceDimensionInsight VoiceDimensionInsight?
   blendedVoiceProfile   BlendedVoiceProfile?
 
+  @@index([supabaseId])
+  @@index([xHandle])
   @@map("users")
 }
 
@@ -78,6 +80,7 @@ model Session {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
   @@map("sessions")
 }
 
@@ -90,6 +93,7 @@ model OracleSession {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([userId, updatedAt])
   @@map("oracle_sessions")
 }
 
@@ -184,6 +188,7 @@ model SavedBlend {
   user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   voices BlendVoice[]
 
+  @@index([userId])
   @@map("saved_blends")
 }
 
@@ -230,6 +235,8 @@ model TweetDraft {
   @@index([status, scheduledAt])
   @@index([campaignId])
   @@index([userId, sortOrder])
+  @@index([userId, status])
+  @@index([userId, createdAt])
   @@map("tweet_drafts")
 }
 
