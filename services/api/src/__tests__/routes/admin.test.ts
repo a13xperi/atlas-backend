@@ -23,7 +23,17 @@ jest.mock("../../middleware/auth", () => ({
 }));
 
 jest.mock("../../lib/supabase", () => ({ supabaseAdmin: null }));
-jest.mock("../../lib/logger", () => ({ logger: { error: jest.fn(), info: jest.fn(), warn: jest.fn() } }));
+jest.mock("../../lib/logger", () => ({ logger: { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() } }));
+
+jest.mock("../../lib/prompt-catalog", () => ({
+  getPromptCatalog: jest.fn(),
+  getPromptById: jest.fn(),
+  renderTemplate: jest.fn(),
+}));
+
+jest.mock("../../lib/anthropic", () => ({
+  getAnthropicClient: jest.fn(),
+}));
 
 /* ── Prisma mock ──────────────────────────────────────────────── */
 jest.mock("../../lib/prisma", () => ({
@@ -58,6 +68,9 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import { prisma } from "../../lib/prisma";
+import { getPromptCatalog, getPromptById, renderTemplate } from "../../lib/prompt-catalog";
+import { getAnthropicClient } from "../../lib/anthropic";
+
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 
 /* ── App setup ────────────────────────────────────────────────── */
@@ -563,5 +576,278 @@ describe("GET /api/admin/activity-daily", () => {
     const res = await request(app).get("/api/admin/activity-daily").set(AUTH);
     expect(res.status).toBe(500);
     expectErrorResponse(res.body, "Failed to load admin activity daily");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// GET /api/admin/prompts
+// ═══════════════════════════════════════════════════════════════
+
+describe("GET /api/admin/prompts", () => {
+  it("returns 401 without token", async () => {
+    const res = await request(app).get("/api/admin/prompts");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 403 for non-admin user", async () => {
+    mockNonAdmin();
+    const res = await request(app).get("/api/admin/prompts").set(AUTH);
+    expect(res.status).toBe(403);
+    expectErrorResponse(res.body, "Admin access required");
+  });
+
+  it("returns the prompt catalog", async () => {
+    mockAdmin();
+    const catalog = [
+      { id: "draft-gen", name: "Draft Generation", model: "sonnet" },
+      { id: "refine", name: "Refine Draft", model: "haiku" },
+    ];
+    (getPromptCatalog as jest.Mock).mockReturnValue(catalog);
+
+    const res = await request(app).get("/api/admin/prompts").set(AUTH);
+    expect(res.status).toBe(200);
+
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.prompts).toEqual(catalog);
+    expect(data.prompts).toHaveLength(2);
+  });
+
+  it("returns empty array when no prompts configured", async () => {
+    mockAdmin();
+    (getPromptCatalog as jest.Mock).mockReturnValue([]);
+
+    const res = await request(app).get("/api/admin/prompts").set(AUTH);
+    expect(res.status).toBe(200);
+
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.prompts).toEqual([]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// POST /api/admin/prompts/test
+// ═══════════════════════════════════════════════════════════════
+
+describe("POST /api/admin/prompts/test", () => {
+  it("returns 401 without token", async () => {
+    const res = await request(app)
+      .post("/api/admin/prompts/test")
+      .send({ promptId: "draft-gen" });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 403 for non-admin user", async () => {
+    mockNonAdmin();
+    const res = await request(app)
+      .post("/api/admin/prompts/test")
+      .set(AUTH)
+      .send({ promptId: "draft-gen" });
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 400 for missing promptId", async () => {
+    mockAdmin();
+    const res = await request(app)
+      .post("/api/admin/prompts/test")
+      .set(AUTH)
+      .send({ variables: {} });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for empty promptId", async () => {
+    mockAdmin();
+    const res = await request(app)
+      .post("/api/admin/prompts/test")
+      .set(AUTH)
+      .send({ promptId: "" });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 for unknown prompt", async () => {
+    mockAdmin();
+    (getPromptById as jest.Mock).mockReturnValue(null);
+
+    const res = await request(app)
+      .post("/api/admin/prompts/test")
+      .set(AUTH)
+      .send({ promptId: "nonexistent" });
+
+    expect(res.status).toBe(404);
+    expectErrorResponse(res.body, "Unknown promptId: nonexistent");
+  });
+
+  it("renders template, calls Anthropic Haiku, returns output", async () => {
+    mockAdmin();
+
+    const prompt = {
+      id: "draft-gen",
+      systemPrompt: "You are a {{tone}} writer.",
+      userPromptTemplate: "Write about {{topic}}.",
+    };
+    (getPromptById as jest.Mock).mockReturnValue(prompt);
+    (renderTemplate as jest.Mock)
+      .mockReturnValueOnce("You are a casual writer.")
+      .mockReturnValueOnce("Write about BTC.");
+
+    const mockCreate = jest.fn().mockResolvedValue({
+      content: [{ type: "text", text: "  BTC is the future.  " }],
+      usage: { input_tokens: 40, output_tokens: 15 },
+    });
+    (getAnthropicClient as jest.Mock).mockReturnValue({
+      messages: { create: mockCreate },
+    });
+
+    const res = await request(app)
+      .post("/api/admin/prompts/test")
+      .set(AUTH)
+      .send({
+        promptId: "draft-gen",
+        variables: { tone: "casual", topic: "BTC" },
+      });
+
+    expect(res.status).toBe(200);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.output).toBe("BTC is the future."); // trimmed
+    expect(data.tokensUsed).toBe(55);
+    expect(typeof data.latencyMs).toBe("number");
+    expect(data.latencyMs).toBeGreaterThanOrEqual(0);
+
+    // Verify Haiku model is used for cost efficiency
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 512,
+        system: "You are a casual writer.",
+        messages: [{ role: "user", content: "Write about BTC." }],
+      }),
+    );
+  });
+
+  it("defaults variables to empty object", async () => {
+    mockAdmin();
+
+    const prompt = {
+      id: "simple",
+      systemPrompt: "sys",
+      userPromptTemplate: "usr",
+    };
+    (getPromptById as jest.Mock).mockReturnValue(prompt);
+    (renderTemplate as jest.Mock).mockReturnValue("rendered");
+    (getAnthropicClient as jest.Mock).mockReturnValue({
+      messages: {
+        create: jest.fn().mockResolvedValue({
+          content: [{ type: "text", text: "ok" }],
+          usage: { input_tokens: 5, output_tokens: 2 },
+        }),
+      },
+    });
+
+    const res = await request(app)
+      .post("/api/admin/prompts/test")
+      .set(AUTH)
+      .send({ promptId: "simple" }); // no variables field
+
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 502 when Anthropic call fails", async () => {
+    mockAdmin();
+
+    const prompt = { id: "p1", systemPrompt: "s", userPromptTemplate: "u" };
+    (getPromptById as jest.Mock).mockReturnValue(prompt);
+    (renderTemplate as jest.Mock).mockReturnValue("rendered");
+    (getAnthropicClient as jest.Mock).mockReturnValue({
+      messages: {
+        create: jest.fn().mockRejectedValue(new Error("rate limited")),
+      },
+    });
+
+    const res = await request(app)
+      .post("/api/admin/prompts/test")
+      .set(AUTH)
+      .send({ promptId: "p1" });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toContain("rate limited");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// GET /api/admin/feed
+// ═══════════════════════════════════════════════════════════════
+
+describe("GET /api/admin/feed", () => {
+  it("returns 401 without token", async () => {
+    const res = await request(app).get("/api/admin/feed");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 403 for non-admin user", async () => {
+    mockNonAdmin();
+    const res = await request(app).get("/api/admin/feed").set(AUTH);
+    expect(res.status).toBe(403);
+    expectErrorResponse(res.body, "Admin access required");
+  });
+
+  it("returns recent events with user info", async () => {
+    mockAdmin();
+
+    const mockEvents = [
+      {
+        id: "e1",
+        type: "DRAFT_CREATED",
+        createdAt: new Date("2026-04-10T14:00:00Z"),
+        metadata: { sourceType: "REPORT" },
+        user: { handle: "hasu", displayName: "Hasu" },
+      },
+      {
+        id: "e2",
+        type: "DRAFT_POSTED",
+        createdAt: new Date("2026-04-10T15:30:00Z"),
+        metadata: null,
+        user: { handle: "cobie", displayName: "Cobie" },
+      },
+    ];
+    (mockPrisma.analyticsEvent.findMany as jest.Mock).mockResolvedValueOnce(
+      mockEvents,
+    );
+
+    const res = await request(app).get("/api/admin/feed").set(AUTH);
+    expect(res.status).toBe(200);
+
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.events).toHaveLength(2);
+
+    expect(data.events[0].id).toBe("e1");
+    expect(data.events[0].type).toBe("DRAFT_CREATED");
+    expect(data.events[0].handle).toBe("hasu");
+    expect(data.events[0].displayName).toBe("Hasu");
+    expect(data.events[0].metadata).toEqual({ sourceType: "REPORT" });
+    expect(data.events[0].createdAt).toBe("2026-04-10T14:00:00.000Z");
+
+    expect(data.events[1].handle).toBe("cobie");
+    expect(data.events[1].metadata).toBeNull();
+  });
+
+  it("returns empty array when no events exist", async () => {
+    mockAdmin();
+    (mockPrisma.analyticsEvent.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    const res = await request(app).get("/api/admin/feed").set(AUTH);
+    expect(res.status).toBe(200);
+
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.events).toEqual([]);
+  });
+
+  it("returns 500 on prisma error", async () => {
+    mockAdmin();
+    (mockPrisma.analyticsEvent.findMany as jest.Mock).mockRejectedValueOnce(
+      new Error("DB down"),
+    );
+
+    const res = await request(app).get("/api/admin/feed").set(AUTH);
+    expect(res.status).toBe(500);
+    expectErrorResponse(res.body, "Failed to load admin feed");
   });
 });
