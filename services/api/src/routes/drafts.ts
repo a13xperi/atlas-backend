@@ -692,6 +692,60 @@ draftsRouter.post("/:id/engagement", async (req: AuthRequest, res) => {
   }
 });
 
+// Performance breakdown for a posted draft (predicted vs actual + percentile)
+draftsRouter.get("/:id/performance", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const draftId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const draft = await prisma.tweetDraft.findFirst({
+      where: { id: draftId, userId: req.userId! },
+    });
+    if (!draft) {
+      return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+    }
+
+    const predicted = draft.predictedEngagement ?? 0;
+    const actual = draft.actualEngagement ?? 0;
+    const deltaPct = predicted > 0 ? ((actual - predicted) / predicted) * 100 : 0;
+
+    // Percentile: what % of this user's posted drafts does this one beat?
+    const allPosted = await prisma.tweetDraft.findMany({
+      where: { userId: req.userId!, status: "POSTED", actualEngagement: { not: null } },
+      select: { id: true, actualEngagement: true },
+    });
+
+    let percentile = 0;
+    if (allPosted.length > 1 && actual > 0) {
+      const below = allPosted.filter(
+        (d) => (d.actualEngagement ?? 0) < actual
+      ).length;
+      percentile = Math.round((below / (allPosted.length - 1)) * 100);
+    } else if (allPosted.length === 1) {
+      percentile = 50;
+    }
+
+    const em = (draft.engagementMetrics ?? {}) as Record<string, number>;
+
+    res.json(success({
+      performance: {
+        predicted,
+        actual,
+        deltaPct: Math.round(deltaPct * 10) / 10,
+        percentile,
+        metrics: {
+          impressions: em.impressions ?? actual,
+          likes: em.likes ?? 0,
+          retweets: em.retweets ?? 0,
+          replies: em.replies ?? 0,
+          bookmarks: em.bookmarks ?? 0,
+        },
+      },
+    }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to compute draft performance");
+    res.status(500).json(buildErrorResponse(req, "Failed to compute performance"));
+  }
+});
+
 // Split a draft into a numbered thread
 draftsRouter.post("/:id/thread", authenticate, async (req: AuthRequest, res) => {
   const parsed = emptyBodySchema.safeParse(req.body ?? {});
