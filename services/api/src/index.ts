@@ -152,7 +152,6 @@ app.use("/api/qa", qaRouter);
 app.use("/api/admin/feature-flags", adminFlagsRouter);
 app.use("/api/admin/backup", adminBackupRouter);
 app.use("/api/admin", adminRouter);
-app.use("/api/admin/backup", adminBackupRouter);
 app.use("/api/twitter", twitterRouter);
 app.use("/api/queue", queueRouter);
 
