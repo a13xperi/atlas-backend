@@ -26,9 +26,17 @@ function getBearerToken(): string {
   return token;
 }
 
+export class TwitterTimeoutError extends Error {
+  constructor(message = "Twitter API request timed out") {
+    super(message);
+    this.name = "TwitterTimeoutError";
+  }
+}
+
 async function twitterGet<T>(path: string): Promise<T> {
   const res = await fetch(`${TWITTER_API_BASE}${path}`, {
     headers: { Authorization: `Bearer ${getBearerToken()}` },
+    signal: AbortSignal.timeout(8000),
   });
 
   if (!res.ok) {

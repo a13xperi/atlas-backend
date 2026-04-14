@@ -546,47 +546,61 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
     const body = calibrateSchema.parse(req.body);
     const normalizedHandle = normalizeReferenceHandle(body.handle);
 
-    // Fetch tweets from Twitter/X
-    const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle);
+    // 40s server-side race so the client never hangs indefinitely
+    const RACE_MS = 40_000;
+    const racePromise = Promise.race([
+      (async () => {
+        // Fetch tweets from Twitter/X
+        const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle);
 
-    if (tweets.length === 0) {
-      return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
-    }
+        if (tweets.length === 0) {
+          return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
+        }
 
-    // Claude calibration can take tens of seconds on larger tweet sets, so Railway deploys
-    // need RAILWAY_SERVICE_TIMEOUT=90000 for this endpoint.
-    const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
+        // Claude calibration can take tens of seconds on larger tweet sets, so Railway deploys
+        // need RAILWAY_SERVICE_TIMEOUT=90000 for this endpoint.
+        const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
 
-    // Update voice profile with all 12 calibrated dimensions
-    const dimensionData = buildVoiceProfileUpdate(calibration);
+        // Update voice profile with all 12 calibrated dimensions
+        const dimensionData = buildVoiceProfileUpdate(calibration);
 
-    const profile = await prisma.voiceProfile.upsert({
-      where: { userId: req.userId! },
-      update: dimensionData,
-      create: { userId: req.userId!, ...dimensionData },
-    });
+        const profile = await prisma.voiceProfile.upsert({
+          where: { userId: req.userId! },
+          update: dimensionData,
+          create: { userId: req.userId!, ...dimensionData },
+        });
 
-    // Log analytics
-    await prisma.analyticsEvent.create({
-      data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
-    });
+        // Log analytics
+        await prisma.analyticsEvent.create({
+          data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
+        });
 
-    res.json(success({
-      profile,
-      calibration: {
-        confidence: calibration.calibrationConfidence,
-        analysis: calibration.analysis,
-        tweetsAnalyzed: calibration.tweetsAnalyzed,
-        twitterUser: { username: twitterUser.username, name: twitterUser.name },
-      },
-    }));
+        return res.json(success({
+          profile,
+          calibration: {
+            confidence: calibration.calibrationConfidence,
+            analysis: calibration.analysis,
+            tweetsAnalyzed: calibration.tweetsAnalyzed,
+            twitterUser: { username: twitterUser.username, name: twitterUser.name },
+          },
+        }));
+      })(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("calibration_timeout")), RACE_MS)
+      ),
+    ]);
+
+    await racePromise;
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    logger.error({ err: err.message }, "Calibration failed");
-    // Surface Twitter API errors to the client so the frontend can show a useful message
     const msg = err.message ?? "";
+    if (msg === "calibration_timeout") {
+      return res.status(503).json({ error: "calibration_timeout", retryable: true });
+    }
+    logger.error({ err: msg }, "Calibration failed");
+    // Surface Twitter API errors to the client so the frontend can show a useful message
     if (msg.includes("429")) return res.status(429).json(error(`Twitter API rate limit: ${msg}`));
     if (msg.includes("404") || msg.includes("not found")) return res.status(404).json(error(msg));
     if (msg.includes("403")) return res.status(403).json(error(msg));
