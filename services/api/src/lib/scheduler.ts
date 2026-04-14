@@ -7,6 +7,7 @@ import { prisma } from "./prisma";
 import { logger } from "./logger";
 import { runScheduledBackupIfDue } from "./backup";
 import { runGlobalAlertScan } from "./alertScanner";
+import { runBriefingDispatch } from "./briefingScheduler";
 import {
   buildTokenWrite,
   readAccessToken,
@@ -197,6 +198,7 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 let metricsIntervalId: ReturnType<typeof setInterval> | null = null;
 let backupIntervalId: ReturnType<typeof setInterval> | null = null;
 let alertScanIntervalId: ReturnType<typeof setInterval> | null = null;
+let briefingIntervalId: ReturnType<typeof setInterval> | null = null;
 
 const ALERT_SCAN_INTERVAL_MS = 15 * 60_000; // Every 15 minutes
 
@@ -275,6 +277,18 @@ export function startScheduler(): void {
       logger.error({ err: err.message }, "Initial alert scan failed");
     });
   }, 60_000);
+
+  // Briefing scheduler — check every 60s against user deliveryTime (HH:MM UTC)
+  briefingIntervalId = setInterval(async () => {
+    try {
+      const result = await runBriefingDispatch();
+      if (result.sent > 0 || result.failed > 0) {
+        logger.info(result, "Briefing dispatch cycle");
+      }
+    } catch (err: any) {
+      logger.error({ err: err.message }, "Briefing dispatch cycle failed");
+    }
+  }, 60_000);
 }
 
 export function stopScheduler(): void {
@@ -282,5 +296,6 @@ export function stopScheduler(): void {
   if (metricsIntervalId) { clearInterval(metricsIntervalId); metricsIntervalId = null; }
   if (backupIntervalId) { clearInterval(backupIntervalId); backupIntervalId = null; }
   if (alertScanIntervalId) { clearInterval(alertScanIntervalId); alertScanIntervalId = null; }
+  if (briefingIntervalId) { clearInterval(briefingIntervalId); briefingIntervalId = null; }
   logger.info("Schedulers stopped");
 }
