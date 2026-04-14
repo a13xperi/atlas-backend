@@ -39,7 +39,7 @@ const qaSupabase: any = QA_SUPABASE_KEY
     })
   : null;
 
-export const qaRouter = Router();
+export const qaRouter: Router = Router();
 qaRouter.use(authenticate);
 qaRouter.use((_req, res, next) => {
   if (!qaSupabase) {

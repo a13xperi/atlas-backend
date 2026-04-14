@@ -6,7 +6,7 @@ import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
 import { DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO } from "../lib/config";
 
-export const loopRouter = Router();
+export const loopRouter: Router = Router();
 loopRouter.use(authenticate);
 
 const RALPH_STATE_PATH = process.env.RALPH_STATE_PATH || ".ralph/state.json";

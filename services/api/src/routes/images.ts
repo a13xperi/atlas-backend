@@ -8,7 +8,7 @@ import { rateLimitByUser } from "../middleware/rateLimit";
 import { generateImage, generateVisualConcept, ImageStyle } from "../lib/gemini";
 import { logger } from "../lib/logger";
 
-export const imagesRouter = Router();
+export const imagesRouter: Router = Router();
 imagesRouter.use(authenticate);
 
 // Image generation (Gemini) is metered per-image. The general API limiter

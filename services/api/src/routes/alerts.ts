@@ -9,7 +9,7 @@ import { logger } from "../lib/logger";
 import { emitToUser } from "../lib/socket";
 import { success } from "../lib/response";
 
-export const alertsRouter = Router();
+export const alertsRouter: Router = Router();
 alertsRouter.use(authenticate);
 
 const deliverySchema = z.array(z.enum(["PORTAL", "TELEGRAM"])).optional();

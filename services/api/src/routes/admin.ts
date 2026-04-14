@@ -11,7 +11,7 @@ import {
 } from "../lib/prompt-catalog";
 import { logger } from "../lib/logger";
 
-export const adminRouter = Router();
+export const adminRouter: Router = Router();
 adminRouter.use(authenticate);
 
 /** Require ADMIN role — returns the user or sends 403 */

@@ -6,7 +6,7 @@ import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildArenaLeaderboard, type ArenaPublishedDraft } from "../lib/arena";
 import { calculateStreak, calculateStreaksForUsers } from "../lib/streak";
 
-export const arenaRouter = Router();
+export const arenaRouter: Router = Router();
 arenaRouter.use(authenticate);
 
 const PERIODS = ["last_7_days", "last_30_days", "all_time"] as const;

@@ -5,7 +5,7 @@ import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { logger } from "../lib/logger";
 
-export const adminFlagsRouter = Router();
+export const adminFlagsRouter: Router = Router();
 adminFlagsRouter.use(authenticate);
 
 /** Require ADMIN role — returns true if admin, sends 403 and returns false otherwise */

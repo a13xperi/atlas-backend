@@ -8,7 +8,7 @@ import { routeCompletion } from "../lib/providers/router";
 import { logger } from "../lib/logger";
 import { withTimeout } from "../lib/timeout";
 
-const briefingRouter = Router();
+const briefingRouter: Router = Router();
 briefingRouter.use(authenticate);
 
 const briefingPreferencesSchema = z.object({

@@ -7,7 +7,7 @@ import { success, error } from "../lib/response";
 import { extractInsights } from "../lib/content-extraction";
 import { batchGenerateDrafts } from "../lib/batch-generate";
 
-export const campaignsRouter = Router({ mergeParams: true });
+export const campaignsRouter: Router = Router({ mergeParams: true });
 campaignsRouter.use(authenticate);
 
 function paramId(req: AuthRequest, name = "id"): string {

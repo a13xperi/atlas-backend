@@ -26,7 +26,7 @@ function signLegacyToken(userId: string): string {
   return jwt.sign({ userId, jti }, config.JWT_SECRET, { expiresIn: "7d" });
 }
 
-export const authRouter = Router();
+export const authRouter: Router = Router();
 const authRateLimiter = rateLimit(
   config.RATE_LIMIT_AUTH_MAX_REQUESTS,
   config.RATE_LIMIT_AUTH_WINDOW_MS,

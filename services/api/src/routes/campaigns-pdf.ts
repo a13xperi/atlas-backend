@@ -24,7 +24,7 @@ import {
  *
  * The URL is `POST /api/campaigns/generate-from-pdf`.
  */
-export const campaignsPdfRouter = Router();
+export const campaignsPdfRouter: Router = Router();
 campaignsPdfRouter.use(authenticate);
 
 // PDF→multi-tweet generation runs `extractInsights` (Anthropic) and then

@@ -15,7 +15,7 @@ import { validationFailResponse } from "../lib/schemas";
 // a typo-drift client can't silently bypass validation.
 const transcribeBodySchema = z.object({}).strict();
 
-export const transcribeRouter = Router();
+export const transcribeRouter: Router = Router();
 transcribeRouter.use(authenticate);
 
 // Whisper transcription is paid per-minute of audio and runs unbounded

@@ -31,7 +31,7 @@ const xCallbackSchema = z.object({
   state: z.string().min(1),
 });
 
-export const xAuthRouter = Router();
+export const xAuthRouter: Router = Router();
 xAuthRouter.use(rateLimit(20, 60 * 1000)); // 20 req/min for auth routes
 
 // ── PKCE state storage ─────────────────────────────────────────────
@@ -322,7 +322,7 @@ xAuthRouter.get("/login", async (_req, res) => {
 // Per DM-324: "Authorize my Twitter. Boom."
 // ═══════════════════════════════════════════════════════════════════════
 
-export const twitterLoginRouter = Router();
+export const twitterLoginRouter: Router = Router();
 
 function signLoginToken(userId: string): string {
   // C-6: every issued token carries a UUID `jti` so it can be individually

@@ -14,7 +14,7 @@ import { deliverAlertToUser } from "../lib/telegram";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { rateLimit } from "../middleware/rateLimit";
 
-export const paperclipRouter = Router();
+export const paperclipRouter: Router = Router();
 
 /**
  * IP-based rate limiter for the public Paperclip webhook endpoint.

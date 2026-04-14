@@ -11,7 +11,7 @@ import {
 } from "../lib/backup";
 import { AppError } from "../lib/errors";
 
-export const adminBackupRouter = Router();
+export const adminBackupRouter: Router = Router();
 adminBackupRouter.use(authenticate);
 
 const triggerBackupSchema = z

@@ -7,7 +7,7 @@ import { emitToUser } from "../lib/socket";
 import { dispatchAlert } from "../lib/alertDelivery";
 import { logger } from "../lib/logger";
 
-export const usersRouter = Router();
+export const usersRouter: Router = Router();
 usersRouter.use(authenticate);
 
 const profileSchema = z.object({

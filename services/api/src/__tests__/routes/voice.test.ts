@@ -42,6 +42,8 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(),
       findFirst: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
     },
     blendVoice: {
       findFirst: jest.fn(),
@@ -354,6 +356,80 @@ describe("POST /api/voice/blends", () => {
 
     expect(res.status).toBe(200);
     expect(expectSuccessResponse<any>(res.body).blend.name).toBe("My Blend");
+  });
+});
+
+describe("PATCH /api/voice/blends/:id", () => {
+  it("returns 400 for an invalid blend rename payload", async () => {
+    const res = await request(app).patch("/api/voice/blends/blend-1").set(AUTH).send({});
+
+    expect(res.status).toBe(400);
+    const body = expectErrorResponse(res.body, "Invalid request");
+    expect(Array.isArray(body.details)).toBe(true);
+  });
+
+  it("returns 404 when the blend is not owned by the user", async () => {
+    (mockPrisma.savedBlend.findFirst as jest.Mock).mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .patch("/api/voice/blends/blend-404")
+      .set(AUTH)
+      .send({ name: "Renamed Blend" });
+
+    expect(res.status).toBe(404);
+    expectErrorResponse(res.body, "Blend not found");
+  });
+
+  it("renames a saved blend", async () => {
+    const existingBlend = { id: "blend-1", userId: "user-123", name: "Old Blend" };
+    const updatedBlend = {
+      id: "blend-1",
+      userId: "user-123",
+      name: "Renamed Blend",
+      voices: [],
+    };
+
+    (mockPrisma.savedBlend.findFirst as jest.Mock).mockResolvedValueOnce(existingBlend);
+    (mockPrisma.savedBlend.update as jest.Mock).mockResolvedValueOnce(updatedBlend);
+
+    const res = await request(app)
+      .patch("/api/voice/blends/blend-1")
+      .set(AUTH)
+      .send({ name: "Renamed Blend" });
+
+    expect(res.status).toBe(200);
+    expect(expectSuccessResponse<any>(res.body).blend.name).toBe("Renamed Blend");
+    expect(mockPrisma.savedBlend.update).toHaveBeenCalledWith({
+      where: { id: "blend-1" },
+      data: { name: "Renamed Blend" },
+      include: { voices: { include: { referenceVoice: true } } },
+    });
+  });
+});
+
+describe("DELETE /api/voice/blends/:id", () => {
+  it("returns 404 when the blend is not owned by the user", async () => {
+    (mockPrisma.savedBlend.findFirst as jest.Mock).mockResolvedValueOnce(null);
+
+    const res = await request(app).delete("/api/voice/blends/blend-404").set(AUTH);
+
+    expect(res.status).toBe(404);
+    expectErrorResponse(res.body, "Blend not found");
+  });
+
+  it("deletes a saved blend", async () => {
+    const existingBlend = { id: "blend-1", userId: "user-123", name: "Delete Me" };
+
+    (mockPrisma.savedBlend.findFirst as jest.Mock).mockResolvedValueOnce(existingBlend);
+    (mockPrisma.savedBlend.delete as jest.Mock).mockResolvedValueOnce(existingBlend);
+
+    const res = await request(app).delete("/api/voice/blends/blend-1").set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(expectSuccessResponse<any>(res.body).success).toBe(true);
+    expect(mockPrisma.savedBlend.delete).toHaveBeenCalledWith({
+      where: { id: "blend-1" },
+    });
   });
 });
 
