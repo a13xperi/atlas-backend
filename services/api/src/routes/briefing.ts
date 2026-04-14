@@ -40,14 +40,14 @@ briefingRouter.put("/preferences", async (req: AuthRequest, res) => {
       create: {
         userId: req.userId!,
         deliveryTime: body.deliveryTime,
-        briefType: body.briefType,
+        ...(body.briefType !== undefined ? { briefType: body.briefType } : {}),
         topics: body.topics,
         sources: body.sources,
         channel: body.channel,
       },
       update: {
         deliveryTime: body.deliveryTime,
-        briefType: body.briefType,
+        ...(body.briefType !== undefined ? { briefType: body.briefType } : {}),
         topics: body.topics,
         sources: body.sources,
         channel: body.channel,
