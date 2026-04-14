@@ -419,3 +419,29 @@ function defaultCalibration(): CalibrationResult {
     tweetsAnalyzed: 0,
   };
 }
+
+/**
+ * Scale an array of percentage values so they sum to exactly 100.
+ * Rounds to integers; assigns any 1-off drift to the largest entry.
+ * If all percentages are 0, distributes evenly.
+ */
+export function normalizePercentages<T extends { percentage: number }>(voices: T[]): T[] {
+  if (voices.length === 0) return voices;
+  const total = voices.reduce((s, v) => s + v.percentage, 0);
+  if (total === 0) {
+    const even = Math.floor(100 / voices.length);
+    const remainder = 100 - even * voices.length;
+    return voices.map((v, i) => ({ ...v, percentage: even + (i === 0 ? remainder : 0) }));
+  }
+  const scaled = voices.map((v) => ({ ...v, percentage: (v.percentage / total) * 100 }));
+  const rounded = scaled.map((v) => ({ ...v, percentage: Math.round(v.percentage) }));
+  const diff = 100 - rounded.reduce((s, v) => s + v.percentage, 0);
+  if (diff !== 0) {
+    let maxIdx = 0;
+    for (let i = 1; i < rounded.length; i++) {
+      if (rounded[i].percentage > rounded[maxIdx].percentage) maxIdx = i;
+    }
+    rounded[maxIdx] = { ...rounded[maxIdx], percentage: rounded[maxIdx].percentage + diff };
+  }
+  return rounded;
+}

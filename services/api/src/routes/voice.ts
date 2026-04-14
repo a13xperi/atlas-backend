@@ -8,7 +8,7 @@ import { authenticate, AuthRequest } from "../middleware/auth";
 import { fetchTweetsByHandle } from "../lib/twitter";
 import { calibrateFromTweets, type CalibrationResult } from "../lib/calibrate";
 import { getVoiceInsights } from "../lib/voice-insights";
-import { blendVoices } from "../lib/voice-blend";
+import { blendVoices, normalizePercentages } from "../lib/voice-blend";
 import { logger } from "../lib/logger";
 
 // Public router — no auth required
@@ -453,12 +453,13 @@ voiceRouter.post("/blends", async (req: AuthRequest, res) => {
   try {
     const body = blendSchema.parse(req.body);
 
+    const normalizedVoices = normalizePercentages(body.voices);
     const blend = await prisma.savedBlend.create({
       data: {
         userId: req.userId!,
         name: body.name,
         voices: {
-          create: body.voices.map((voice) => ({
+          create: normalizedVoices.map((voice) => ({
             label: voice.label,
             percentage: voice.percentage,
             referenceVoiceId: voice.referenceVoiceId,
@@ -503,6 +504,22 @@ voiceRouter.patch("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, r
       },
       include: { referenceVoice: true },
     });
+
+    // Rebalance sibling voices so the blend always sums to 100
+    if (body.percentage !== undefined) {
+      const siblings = await prisma.blendVoice.findMany({
+        where: { blendId, id: { not: voiceId } },
+      });
+      const targetTotal = 100 - updated.percentage;
+      const siblingSum = siblings.reduce((s, v) => s + v.percentage, 0) || 1;
+      await Promise.all(
+        normalizePercentages(
+          siblings.map((s) => ({ ...s, percentage: Math.round((s.percentage / siblingSum) * targetTotal) }))
+        ).map((s) =>
+          prisma.blendVoice.update({ where: { id: s.id }, data: { percentage: s.percentage } })
+        )
+      );
+    }
 
     res.json(success({ voice: updated }));
   } catch (err: any) {
