@@ -624,6 +624,7 @@ voiceRouter.post("/calibrate", aiGenerationLimiter, async (req: AuthRequest, res
   const abort = new AbortController();
   try {
     const body = calibrateSchema.parse(req.body);
+    const userId = req.userId!;
     const normalizedHandle = normalizeReferenceHandle(body.handle);
 
     const RACE_MS = 40_000;
@@ -647,15 +648,21 @@ voiceRouter.post("/calibrate", aiGenerationLimiter, async (req: AuthRequest, res
       const dimensionData = buildVoiceProfileUpdate(calibration);
 
       const profile = await prisma.voiceProfile.upsert({
-        where: { userId: req.userId! },
+        where: { userId },
         update: dimensionData,
-        create: { userId: req.userId!, ...dimensionData },
+        create: { userId, ...dimensionData },
       });
       if (abort.signal.aborted) return;
 
       // Log analytics
       await prisma.analyticsEvent.create({
-        data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
+        data: { userId, type: "VOICE_REFINEMENT" },
+      });
+      if (abort.signal.aborted) return;
+
+      await prisma.user.update({
+        where: { id: userId },
+        data: { xAvatarUrl: twitterUser.profile_image_url ?? null },
       });
       if (abort.signal.aborted) return;
 

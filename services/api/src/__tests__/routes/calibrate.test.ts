@@ -18,6 +18,9 @@ jest.mock("../../middleware/auth", () => ({
 
 jest.mock("../../lib/prisma", () => ({
   prisma: {
+    user: {
+      update: jest.fn(),
+    },
     voiceProfile: {
       upsert: jest.fn(),
     },
@@ -54,6 +57,7 @@ const twitterUser = {
   id: "twitter-user-1",
   username: "atlasanalyst",
   name: "Atlas Analyst",
+  profile_image_url: "https://pbs.twimg.com/profile_images/atlas_400x400.jpg",
 };
 
 function makeTweets(count: number) {
@@ -135,6 +139,10 @@ function buildDimensionData(calibration: ReturnType<typeof makeCalibration>) {
 beforeEach(() => {
   jest.clearAllMocks();
   (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValue({ id: "event-1" });
+  (mockPrisma.user.update as jest.Mock).mockResolvedValue({
+    id: "user-123",
+    xAvatarUrl: twitterUser.profile_image_url,
+  });
 });
 
 describe("POST /api/voice/calibrate", () => {
@@ -326,6 +334,28 @@ describe("POST /api/voice/calibrate", () => {
     expect(res.status).toBe(200);
     expect(mockPrisma.analyticsEvent.create).toHaveBeenCalledWith({
       data: { userId: "user-123", type: "VOICE_REFINEMENT" },
+    });
+  });
+
+  it("persists xAvatarUrl from the X lookup result on success", async () => {
+    const tweets = makeTweets(12);
+    const calibration = makeCalibration({ tweetsAnalyzed: tweets.length });
+
+    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets });
+    mockCalibrateFromTweets.mockResolvedValueOnce(calibration);
+    (mockPrisma.voiceProfile.upsert as jest.Mock).mockResolvedValueOnce(
+      makeProfile(buildDimensionData(calibration)),
+    );
+
+    const res = await request(app)
+      .post("/api/voice/calibrate")
+      .set(AUTH)
+      .send({ handle: "atlasanalyst" });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.user.update).toHaveBeenCalledWith({
+      where: { id: "user-123" },
+      data: { xAvatarUrl: twitterUser.profile_image_url },
     });
   });
 
