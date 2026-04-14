@@ -665,12 +665,18 @@ oracleRouter.post("/chat/stream", aiGenerationLimiter, async (req: AuthRequest, 
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
+    let closed = false;
+    req.on("close", () => { closed = true; });
+
     for await (const chunk of streamCompletion({ taskType: "oracle_fast", maxTokens: 150, temperature: 0.7, messages: llmMessages })) {
+      if (closed) break;
       res.write("data: " + JSON.stringify({ delta: chunk }) + "\n\n");
     }
 
-    res.write("data: [DONE]\n\n");
-    res.end();
+    if (!closed) {
+      res.write("data: [DONE]\n\n");
+      res.end();
+    }
   } catch (err) {
     if (err instanceof z.ZodError) {
       res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
