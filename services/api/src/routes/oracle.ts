@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { Response, Router } from "express";
 import { z } from "zod";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { aiLimiter } from "../middleware/rate-limit";
 import { getAnthropicClient } from "../lib/anthropic";
 import {
   runOracleCompletion,
@@ -253,7 +254,7 @@ oracleRouter.delete("/session", async (req: AuthRequest, res) => {
   }
 });
 
-oracleRouter.post("/message", async (req: AuthRequest, res) => {
+oracleRouter.post("/message", aiLimiter, async (req: AuthRequest, res) => {
   try {
     if (
       typeof req.body === "object" &&
@@ -565,7 +566,7 @@ async function handleLegacyChat(req: AuthRequest, res: Response) {
   res.json(success({ text: response.content.trim() }));
 }
 
-oracleRouter.post("/chat", async (req: AuthRequest, res) => {
+oracleRouter.post("/chat", aiLimiter, async (req: AuthRequest, res) => {
   try {
     // Discriminate by body shape — the new OpenClaw route uses `message`
     // (singular string); the legacy widget path uses `messages` (array).
@@ -755,7 +756,7 @@ async function executeServerSide(
   }
 }
 
-oracleRouter.post("/agent", async (req: AuthRequest, res) => {
+oracleRouter.post("/agent", aiLimiter, async (req: AuthRequest, res) => {
   try {
     const body = agentSchema.parse(req.body);
 

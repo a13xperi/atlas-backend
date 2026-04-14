@@ -34,7 +34,7 @@ import { adminBackupRouter } from "./routes/admin-backup";
 import { twitterRouter } from "./routes/twitter";
 import { queueRouter } from "./routes/queue";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
-import { rateLimit, rateLimitByUser } from "./middleware/rateLimit";
+import { defaultLimiter, rateLimit } from "./middleware/rate-limit";
 import { requestLogger } from "./middleware/requestLogger";
 import { logger } from "./lib/logger";
 import { formatErrorResponse } from "./lib/errors";
@@ -75,11 +75,6 @@ app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 app.use(requestIdMiddleware);
 app.use(requestLogger);
-
-const generalApiLimiter = rateLimitByUser(
-  config.RATE_LIMIT_GENERAL_MAX_REQUESTS,
-  config.RATE_LIMIT_GENERAL_WINDOW_MS,
-);
 
 // Protect the unauthenticated swagger UI — it parses a YAML file on every
 // request, so a burst of hits is expensive. IP-scoped, separate namespace
@@ -125,10 +120,10 @@ app.get("/health", async (_req, res) => {
 });
 
 // Routes
+app.use("/api", defaultLimiter);
 app.use("/api/docs", docsRateLimiter, docsRouter);
 app.use("/api/auth/x", xAuthRouter);
 app.use("/api/auth", authRouter);
-app.use("/api", generalApiLimiter);
 app.use("/api/users", usersRouter);
 app.use("/api/voice", referenceAccountsRouter);
 app.use("/api/voice", voiceRouter);

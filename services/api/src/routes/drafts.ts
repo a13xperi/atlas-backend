@@ -10,15 +10,10 @@ import { success } from "../lib/response";
 import { generateSchedule, applySchedule } from "../lib/scheduling";
 import { extractInsights } from "../lib/content-extraction";
 import { batchGenerateDrafts } from "../lib/batch-generate";
-import { config } from "../lib/config";
-import { rateLimitByUser } from "../middleware/rateLimit";
+import { aiLimiter } from "../middleware/rate-limit";
 
 export const draftsRouter = Router();
 draftsRouter.use(authenticate);
-const aiGenerationLimiter = rateLimitByUser(
-  config.RATE_LIMIT_AI_GENERATION_MAX_REQUESTS,
-  config.RATE_LIMIT_AI_GENERATION_WINDOW_MS,
-);
 
 // --- AI Generation Endpoints (must be before /:id routes) ---
 
@@ -69,7 +64,7 @@ const updateDraftSchema = z.object({
 });
 
 // Generate a tweet from source content using AI
-draftsRouter.post("/generate", aiGenerationLimiter, async (req: AuthRequest, res) => {
+draftsRouter.post("/generate", aiLimiter, async (req: AuthRequest, res) => {
   try {
     const body = generateSchema.parse(req.body);
 
@@ -136,7 +131,7 @@ draftsRouter.post("/generate", aiGenerationLimiter, async (req: AuthRequest, res
 });
 
 // Regenerate a draft with optional feedback
-draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
+draftsRouter.post("/:id/regenerate", aiLimiter, async (req: AuthRequest, res) => {
   try {
     const body = regenerateSchema.parse(req.body);
 
@@ -218,7 +213,7 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
 });
 
 // Batch generate drafts from long-form content (PDF/article)
-draftsRouter.post("/batch-from-content", async (req: AuthRequest, res) => {
+draftsRouter.post("/batch-from-content", aiLimiter, async (req: AuthRequest, res) => {
   try {
     const body = batchFromContentSchema.parse(req.body);
 
@@ -253,7 +248,7 @@ draftsRouter.post("/batch-from-content", async (req: AuthRequest, res) => {
 });
 
 // Refine a draft with a custom instruction
-draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
+draftsRouter.post("/:id/refine", aiLimiter, async (req: AuthRequest, res) => {
   try {
     const body = refineSchema.parse(req.body);
 
