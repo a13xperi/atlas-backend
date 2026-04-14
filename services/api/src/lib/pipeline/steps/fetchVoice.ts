@@ -14,6 +14,19 @@ export const fetchVoiceStep: PipelineStep = {
       throw new Error("Voice profile not found. Complete onboarding first.");
     }
 
+    // Server-side voice gate (min 20 tweets).
+    // Bypass if user already has drafts (was calibrated before count reset).
+    if (profile.tweetsAnalyzed < 20) {
+      const draftCount = await prisma.tweetDraft.count({
+        where: { userId: ctx.userId },
+      });
+      if (draftCount === 0) {
+        throw new Error(
+          `Voice profile not fully calibrated. You need at least 20 tweets analyzed (${profile.tweetsAnalyzed} analyzed so far).`
+        );
+      }
+    }
+
     ctx.voiceProfile = {
       humor: profile.humor,
       formality: profile.formality,
