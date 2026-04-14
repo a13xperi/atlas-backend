@@ -411,6 +411,7 @@ model BriefingPreference {
   id           String   @id @default(cuid())
   userId       String   @unique
   deliveryTime String   @default("08:00")
+  timezone     String   @default("UTC")
   briefType    String   @default("morning")
   topics       String[]
   sources      String[]

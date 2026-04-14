@@ -2,7 +2,7 @@
  * Briefing Scheduler — auto-dispatch daily briefings at user-configured times.
  *
  * Called every 60 seconds by startScheduler(). Finds BriefingPreference rows
- * where deliveryTime matches current UTC HH:MM and the user hasn't received
+ * that are due based on each user's local timezone and that haven't received
  * a briefing in the last 23 hours, then generates one for each.
  */
 
@@ -135,26 +135,30 @@ Make it specific and actionable.`;
 
 export async function runBriefingDispatch(): Promise<BriefingDispatchResult> {
   const now = new Date();
-  const hhmm = `${String(now.getUTCHours()).padStart(2, "0")}:${String(
-    now.getUTCMinutes()
-  ).padStart(2, "0")}`;
-
   const twentyThreeHoursAgo = new Date(now.getTime() - 23 * 3_600_000);
 
   const due = await prisma.briefingPreference.findMany({
     where: {
-      deliveryTime: hhmm,
       OR: [
         { lastDeliveredAt: null },
         { lastDeliveredAt: { lt: twentyThreeHoursAgo } },
       ],
     },
   });
+  const dueForTime = due.filter((pref) => {
+    const tz = pref.timezone || "UTC";
+    const localNow = new Date(now.toLocaleString("en-US", { timeZone: tz }));
+    const hhmm = `${String(localNow.getHours()).padStart(2, "0")}:${String(
+      localNow.getMinutes()
+    ).padStart(2, "0")}`;
+
+    return hhmm === pref.deliveryTime;
+  });
 
   let sent = 0;
   let failed = 0;
 
-  for (const pref of due) {
+  for (const pref of dueForTime) {
     try {
       await generateBriefingForUser(pref.userId, pref.briefType);
       await prisma.briefingPreference.update({
