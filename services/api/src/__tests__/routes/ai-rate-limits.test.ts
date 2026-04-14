@@ -60,6 +60,14 @@ jest.mock("../../lib/research", () => ({
   }),
 }));
 
+jest.mock("../../lib/twitter", () => ({
+  fetchTweetsByHandle: jest.fn(),
+}));
+
+jest.mock("../../lib/calibrate", () => ({
+  calibrateFromTweets: jest.fn(),
+}));
+
 jest.mock("../../lib/prisma", () => ({
   prisma: {
     researchResult: {
@@ -70,24 +78,79 @@ jest.mock("../../lib/prisma", () => ({
     analyticsEvent: {
       create: jest.fn().mockResolvedValue({ id: "event-1" }),
     },
+    voiceProfile: {
+      upsert: jest.fn(),
+    },
   },
 }));
 
 import { researchRouter } from "../../routes/research";
+import { voiceRouter } from "../../routes/voice";
+import { prisma } from "../../lib/prisma";
+import { fetchTweetsByHandle } from "../../lib/twitter";
+import { calibrateFromTweets } from "../../lib/calibrate";
 
 const app = express();
 app.set("trust proxy", 1);
 app.use(express.json());
 app.use(requestIdMiddleware);
 app.use("/api/research", researchRouter);
+app.use("/api/voice", voiceRouter);
 
 const RESEARCH_BODY = { query: "what is the price of bitcoin" };
+const CALIBRATE_BODY = { handle: "atlasanalyst" };
+
+const mockPrisma = prisma as jest.Mocked<typeof prisma>;
+const mockFetchTweetsByHandle = fetchTweetsByHandle as jest.MockedFunction<typeof fetchTweetsByHandle>;
+const mockCalibrateFromTweets = calibrateFromTweets as jest.MockedFunction<typeof calibrateFromTweets>;
 
 beforeEach(() => {
   jest.clearAllMocks();
   // Memory store is module-level — reset between tests so a previous
   // test's burst doesn't leak into the next one.
   clearRateLimitStore();
+  mockFetchTweetsByHandle.mockResolvedValue({
+    user: { id: "twitter-user-1", username: "atlasanalyst", name: "Atlas Analyst" },
+    tweets: [{ id: "tweet-1", text: "BTC structure still matters." }],
+  });
+  mockCalibrateFromTweets.mockResolvedValue({
+    humor: 55,
+    formality: 50,
+    brevity: 70,
+    contrarianTone: 60,
+    directness: 60,
+    warmth: 45,
+    technicalDepth: 80,
+    confidence: 75,
+    evidenceOrientation: 82,
+    solutionOrientation: 63,
+    socialPosture: 52,
+    selfPromotionalIntensity: 31,
+    calibrationConfidence: 0.91,
+    analysis: "Stubbed calibration",
+    tweetsAnalyzed: 1,
+  });
+  (mockPrisma.voiceProfile.upsert as jest.Mock).mockResolvedValue({
+    id: "vp-1",
+    userId: "user-alpha",
+    humor: 55,
+    formality: 50,
+    brevity: 70,
+    contrarianTone: 60,
+    directness: 60,
+    warmth: 45,
+    technicalDepth: 80,
+    confidence: 75,
+    evidenceOrientation: 82,
+    solutionOrientation: 63,
+    socialPosture: 52,
+    selfPromotionalIntensity: 31,
+    tweetsAnalyzed: 1,
+    analysis: "Stubbed calibration",
+    maturity: "BEGINNER",
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  });
 });
 
 describe("POST /api/research — AI generation rate limit (#88075)", () => {
@@ -142,5 +205,20 @@ describe("POST /api/research — AI generation rate limit (#88075)", () => {
     // before the limiter sees the request, so we don't burn the IP bucket.
     const res = await request(app).post("/api/research").send(RESEARCH_BODY);
     expect(res.status).toBe(401);
+  });
+});
+
+describe("POST /api/voice/calibrate — AI generation rate limit (#203)", () => {
+  it("uses the shared AI limiter on calibration requests", async () => {
+    const headers = { Authorization: "Bearer user-alpha" };
+
+    const first = await request(app).post("/api/voice/calibrate").set(headers).send(CALIBRATE_BODY);
+    const second = await request(app).post("/api/voice/calibrate").set(headers).send(CALIBRATE_BODY);
+    const third = await request(app).post("/api/voice/calibrate").set(headers).send(CALIBRATE_BODY);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(third.status).toBe(429);
+    expect(third.body.error).toBe("Too many requests. Please try again later.");
   });
 });
