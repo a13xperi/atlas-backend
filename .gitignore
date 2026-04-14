@@ -9,3 +9,10 @@ coverage/
 
 # Agent worktrees — ephemeral per-session scratch space, never committed
 .claude/worktrees/
+
+# Engine/AI tool artifacts
+.agent_history/
+.grok/
+.minimax/
+.codex/
+kimi_session*
