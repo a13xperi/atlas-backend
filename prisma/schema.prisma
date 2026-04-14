@@ -358,6 +358,23 @@ model Alert {
   @@map("alerts")
 }
 
+model TrendingTopic {
+  id        String   @id @default(cuid())
+  title     String
+  content   String
+  keywords  String[]
+  score     Float
+  category  String
+  source    String
+  url       String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([isActive, createdAt])
+  @@map("trending_topics")
+}
+
 model LearningLogEntry {
   id        String   @id @default(cuid())
   userId    String
