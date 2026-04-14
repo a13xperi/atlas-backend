@@ -205,8 +205,14 @@ describe("POST /api/voice/calibrate", () => {
       .send({ handle: "atlasanalyst" });
 
     expect(res.status).toBe(200);
-    expect(mockFetchTweetsByHandle).toHaveBeenCalledWith("atlasanalyst");
-    expect(mockCalibrateFromTweets).toHaveBeenCalledWith(tweets.map((tweet) => tweet.text));
+    const [handle, maxResults, signal] = mockFetchTweetsByHandle.mock.calls[0];
+    expect(handle).toBe("atlasanalyst");
+    expect(maxResults).toBe(50);
+    expect(signal).toBeInstanceOf(AbortSignal);
+
+    const [tweetTexts, calibrationSignal] = mockCalibrateFromTweets.mock.calls[0];
+    expect(tweetTexts).toEqual(tweets.map((tweet) => tweet.text));
+    expect(calibrationSignal).toBe(signal);
     expect(mockPrisma.voiceProfile.upsert).toHaveBeenCalledWith({
       where: { userId: "user-123" },
       update: dimensionData,
@@ -353,5 +359,39 @@ describe("POST /api/voice/calibrate", () => {
     expectErrorResponse(res.body, "Voice calibration failed: model unavailable");
     expect(mockPrisma.voiceProfile.upsert).not.toHaveBeenCalled();
     expect(mockPrisma.analyticsEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 and aborts the calibration when the 40s route timeout fires", async () => {
+    const tweets = makeTweets(12);
+    let calibrationSignal: AbortSignal | undefined;
+    const realSetTimeout = global.setTimeout;
+    const setTimeoutSpy = jest.spyOn(global, "setTimeout").mockImplementation((
+      handler: Parameters<typeof setTimeout>[0],
+      timeout?: number,
+      ...args: any[]
+    ) => realSetTimeout(handler, timeout === 40_000 ? 0 : timeout, ...args));
+
+    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets });
+    mockCalibrateFromTweets.mockImplementationOnce((_tweetTexts, signal) => {
+      calibrationSignal = signal;
+      return new Promise((_, reject) => {
+        signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      }) as ReturnType<typeof calibrateFromTweets>;
+    });
+
+    try {
+      const res = await request(app)
+        .post("/api/voice/calibrate")
+        .set(AUTH)
+        .send({ handle: "atlasanalyst" });
+
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: "calibration_timeout", retryable: true });
+      expect(calibrationSignal?.aborted).toBe(true);
+      expect(mockPrisma.voiceProfile.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.analyticsEvent.create).not.toHaveBeenCalled();
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
   });
 });

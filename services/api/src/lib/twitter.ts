@@ -26,6 +26,11 @@ function getBearerToken(): string {
   return token;
 }
 
+function withTimeoutSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
 export class TwitterTimeoutError extends Error {
   constructor(message = "Twitter API request timed out") {
     super(message);
@@ -33,10 +38,10 @@ export class TwitterTimeoutError extends Error {
   }
 }
 
-async function twitterGet<T>(path: string): Promise<T> {
+async function twitterGet<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${TWITTER_API_BASE}${path}`, {
     headers: { Authorization: `Bearer ${getBearerToken()}` },
-    signal: AbortSignal.timeout(8000),
+    signal: withTimeoutSignal(8000, signal),
   });
 
   if (!res.ok) {
@@ -50,10 +55,11 @@ async function twitterGet<T>(path: string): Promise<T> {
 /**
  * Look up a Twitter user by username (handle without @).
  */
-export async function lookupUser(username: string): Promise<UserLookupResult> {
+export async function lookupUser(username: string, signal?: AbortSignal): Promise<UserLookupResult> {
   const clean = username.replace(/^@/, "");
   const data = await twitterGet<{ data: UserLookupResult }>(
-    `/users/by/username/${encodeURIComponent(clean)}?user.fields=profile_image_url`
+    `/users/by/username/${encodeURIComponent(clean)}?user.fields=profile_image_url`,
+    signal,
   );
   if (!data.data) throw new Error(`User @${clean} not found on Twitter/X`);
   // Upsize from default 48px (_normal) to 400px
@@ -68,7 +74,8 @@ export async function lookupUser(username: string): Promise<UserLookupResult> {
  */
 export async function fetchUserTweets(
   userId: string,
-  maxResults = 50
+  maxResults = 50,
+  signal?: AbortSignal,
 ): Promise<Tweet[]> {
   const params = new URLSearchParams({
     max_results: String(Math.min(maxResults, 100)),
@@ -77,7 +84,8 @@ export async function fetchUserTweets(
   });
 
   const data = await twitterGet<{ data?: Tweet[]; meta: { result_count: number } }>(
-    `/users/${userId}/tweets?${params}`
+    `/users/${userId}/tweets?${params}`,
+    signal,
   );
 
   return data.data || [];
@@ -88,10 +96,11 @@ export async function fetchUserTweets(
  */
 export async function fetchTweetsByHandle(
   handle: string,
-  maxResults = 50
+  maxResults = 50,
+  signal?: AbortSignal,
 ): Promise<{ user: UserLookupResult; tweets: Tweet[] }> {
-  const user = await lookupUser(handle);
-  const tweets = await fetchUserTweets(user.id, maxResults);
+  const user = await lookupUser(handle, signal);
+  const tweets = await fetchUserTweets(user.id, maxResults, signal);
   return { user, tweets };
 }
 

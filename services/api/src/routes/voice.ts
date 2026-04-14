@@ -10,6 +10,8 @@ import { calibrateFromTweets, type CalibrationResult } from "../lib/calibrate";
 import { getVoiceInsights } from "../lib/voice-insights";
 import { blendVoices } from "../lib/voice-blend";
 import { logger } from "../lib/logger";
+import { config } from "../lib/config";
+import { rateLimitByUser } from "../middleware/rateLimit";
 
 // Public router — no auth required
 export const referenceAccountsRouter = Router();
@@ -95,6 +97,10 @@ referenceAccountsRouter.post("/reference-accounts/seed", async (req, res) => {
 
 export const voiceRouter = Router();
 voiceRouter.use(authenticate);
+const aiGenerationLimiter = rateLimitByUser(
+  config.RATE_LIMIT_AI_GENERATION_MAX_REQUESTS,
+  config.RATE_LIMIT_AI_GENERATION_WINDOW_MS,
+);
 
 const profileSchema = z.object({
   humor: z.number().min(0).max(100).optional(),
@@ -541,63 +547,78 @@ const calibrateSchema = z.object({
   handle: z.string().min(1).max(50),
 });
 
-voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
+voiceRouter.post("/calibrate", aiGenerationLimiter, async (req: AuthRequest, res) => {
+  let timeout: NodeJS.Timeout | undefined;
+  const abort = new AbortController();
   try {
     const body = calibrateSchema.parse(req.body);
     const normalizedHandle = normalizeReferenceHandle(body.handle);
 
-    // 40s server-side race so the client never hangs indefinitely
     const RACE_MS = 40_000;
-    const racePromise = Promise.race([
-      (async () => {
-        // Fetch tweets from Twitter/X
-        const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle);
 
-        if (tweets.length === 0) {
-          return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
-        }
+    const workPromise = (async () => {
+      // Fail fast at 40s so the client gets a retryable timeout before Railway's 90s cap.
+      const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle, 50, abort.signal);
+      if (abort.signal.aborted) return;
 
-        // Claude calibration can take tens of seconds on larger tweet sets, so Railway deploys
-        // need RAILWAY_SERVICE_TIMEOUT=90000 for this endpoint.
-        const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
+      if (tweets.length === 0) {
+        return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
+      }
 
-        // Update voice profile with all 12 calibrated dimensions
-        const dimensionData = buildVoiceProfileUpdate(calibration);
+      const calibration = await calibrateFromTweets(
+        tweets.map((t) => t.text),
+        abort.signal,
+      );
+      if (abort.signal.aborted) return;
 
-        const profile = await prisma.voiceProfile.upsert({
-          where: { userId: req.userId! },
-          update: dimensionData,
-          create: { userId: req.userId!, ...dimensionData },
-        });
+      // Railway deploys still need RAILWAY_SERVICE_TIMEOUT=90000 for long Anthropic calls.
+      const dimensionData = buildVoiceProfileUpdate(calibration);
 
-        // Log analytics
-        await prisma.analyticsEvent.create({
-          data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
-        });
+      const profile = await prisma.voiceProfile.upsert({
+        where: { userId: req.userId! },
+        update: dimensionData,
+        create: { userId: req.userId!, ...dimensionData },
+      });
+      if (abort.signal.aborted) return;
 
-        return res.json(success({
-          profile,
-          calibration: {
-            confidence: calibration.calibrationConfidence,
-            analysis: calibration.analysis,
-            tweetsAnalyzed: calibration.tweetsAnalyzed,
-            twitterUser: { username: twitterUser.username, name: twitterUser.name },
-          },
-        }));
-      })(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("calibration_timeout")), RACE_MS)
-      ),
+      // Log analytics
+      await prisma.analyticsEvent.create({
+        data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
+      });
+      if (abort.signal.aborted) return;
+
+      return res.json(success({
+        profile,
+        calibration: {
+          confidence: calibration.calibrationConfidence,
+          analysis: calibration.analysis,
+          tweetsAnalyzed: calibration.tweetsAnalyzed,
+          twitterUser: { username: twitterUser.username, name: twitterUser.name },
+        },
+      }));
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        abort.abort();
+        reject(new Error("calibration_timeout"));
+      }, RACE_MS);
+    });
+
+    await Promise.race([
+      workPromise,
+      timeoutPromise,
     ]);
-
-    await racePromise;
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     const msg = err.message ?? "";
-    if (msg === "calibration_timeout") {
-      return res.status(503).json({ error: "calibration_timeout", retryable: true });
+    if (msg === "calibration_timeout" || abort.signal.aborted) {
+      if (!res.headersSent) {
+        return res.status(503).json({ error: "calibration_timeout", retryable: true });
+      }
+      return;
     }
     logger.error({ err: msg }, "Calibration failed");
     // Surface Twitter API errors to the client so the frontend can show a useful message
@@ -605,6 +626,8 @@ voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
     if (msg.includes("404") || msg.includes("not found")) return res.status(404).json(error(msg));
     if (msg.includes("403")) return res.status(403).json(error(msg));
     res.status(502).json(error(`Voice calibration failed: ${msg}`));
+  } finally {
+    clearTimeout(timeout);
   }
 });
 

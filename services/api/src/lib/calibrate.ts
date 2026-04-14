@@ -6,6 +6,7 @@
  */
 
 import { getAnthropicClient } from "./anthropic";
+import { logger } from "./logger";
 
 export interface CalibrationResult {
   // All dimensions stored as 0-100 scale
@@ -71,6 +72,7 @@ Be precise. Base your scores on patterns across ALL tweets, not individual outli
 
 export async function calibrateFromTweets(
   tweets: string[],
+  signal?: AbortSignal,
 ): Promise<CalibrationResult> {
   if (tweets.length === 0) {
     throw new Error("No tweets provided for calibration");
@@ -95,7 +97,11 @@ export async function calibrateFromTweets(
         },
       ],
     },
-    { signal: AbortSignal.timeout(25000) }
+    {
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(25_000)])
+        : AbortSignal.timeout(25_000),
+    }
   );
 
   const textBlock = response.content.find((b) => b.type === "text");
@@ -106,6 +112,10 @@ export async function calibrateFromTweets(
   try {
     result = JSON.parse(content);
   } catch {
+    logger.warn(
+      { contentPreview: content.slice(0, 200) },
+      "Calibration JSON parse failed, using neutral fallback profile",
+    );
     return {
       humor: 50,
       formality: 50,
