@@ -47,6 +47,7 @@ const mockPreference = {
   id: "pref-1",
   userId: "user-123",
   deliveryTime: "08:00",
+  briefType: "morning",
   topics: ["BTC", "ETH"],
   sources: ["REPORT", "TWEET"],
   channel: "PORTAL",
@@ -126,6 +127,7 @@ describe("PUT /api/briefing/preferences", () => {
   it("creates/upserts preference successfully", async () => {
     const payload = {
       deliveryTime: "09:30",
+      briefType: "sector",
       topics: ["Macro", "DeFi"],
       sources: ["REPORT", "ARTICLE"],
       channel: "TELEGRAM",
@@ -149,12 +151,14 @@ describe("PUT /api/briefing/preferences", () => {
       create: {
         userId: "user-123",
         deliveryTime: payload.deliveryTime,
+        briefType: payload.briefType,
         topics: payload.topics,
         sources: payload.sources,
         channel: payload.channel,
       },
       update: {
         deliveryTime: payload.deliveryTime,
+        briefType: payload.briefType,
         topics: payload.topics,
         sources: payload.sources,
         channel: payload.channel,
