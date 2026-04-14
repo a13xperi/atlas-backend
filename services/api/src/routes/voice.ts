@@ -12,7 +12,7 @@ import { blendVoices } from "../lib/voice-blend";
 import { logger } from "../lib/logger";
 
 // Public router — no auth required
-export const referenceAccountsRouter = Router();
+export const referenceAccountsRouter: Router = Router();
 
 referenceAccountsRouter.get("/reference-accounts", async (_req, res) => {
   try {
@@ -93,7 +93,7 @@ referenceAccountsRouter.post("/reference-accounts/seed", async (req, res) => {
   }
 });
 
-export const voiceRouter = Router();
+export const voiceRouter: Router = Router();
 voiceRouter.use(authenticate);
 
 const profileSchema = z.object({
@@ -293,6 +293,10 @@ const blendSchema = z.object({
   voices: z.array(blendVoiceSchema).min(1),
 });
 
+const updateBlendSchema = z.object({
+  name: z.string().min(1),
+});
+
 const updateBlendVoiceSchema = z.object({
   label: z.string().min(1).optional(),
   percentage: z.number().min(0).max(100).optional(),
@@ -474,6 +478,52 @@ voiceRouter.post("/blends", async (req: AuthRequest, res) => {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     res.status(500).json(error("Failed to create blend"));
+  }
+});
+
+// Rename a saved blend
+voiceRouter.patch("/blends/:id", async (req: AuthRequest, res) => {
+  try {
+    const blendId = req.params.id as string;
+    const body = updateBlendSchema.parse(req.body);
+
+    const existingBlend = await prisma.savedBlend.findFirst({
+      where: { id: blendId, userId: req.userId },
+    });
+    if (!existingBlend) return res.status(404).json(error("Blend not found"));
+
+    const blend = await prisma.savedBlend.update({
+      where: { id: blendId },
+      data: { name: body.name },
+      include: { voices: { include: { referenceVoice: true } } },
+    });
+
+    res.json(success({ blend }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Failed to update blend"));
+  }
+});
+
+// Delete a saved blend
+voiceRouter.delete("/blends/:id", async (req: AuthRequest, res) => {
+  try {
+    const blendId = req.params.id as string;
+
+    const existingBlend = await prisma.savedBlend.findFirst({
+      where: { id: blendId, userId: req.userId },
+    });
+    if (!existingBlend) return res.status(404).json(error("Blend not found"));
+
+    await prisma.savedBlend.delete({
+      where: { id: blendId },
+    });
+
+    res.json(success({ success: true }));
+  } catch (err: any) {
+    res.status(500).json(error("Failed to delete blend"));
   }
 });
 

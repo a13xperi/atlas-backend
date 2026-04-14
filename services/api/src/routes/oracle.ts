@@ -25,7 +25,7 @@ import { prisma } from "../lib/prisma";
 import { withTimeout } from "../lib/timeout";
 import type { ToolCall } from "../lib/providers/types";
 
-export const oracleRouter = Router();
+export const oracleRouter: Router = Router();
 oracleRouter.use(authenticate);
 
 // Oracle endpoints all hit Anthropic (and sometimes burn multiple

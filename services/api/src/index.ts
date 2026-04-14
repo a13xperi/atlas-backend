@@ -1,7 +1,7 @@
 import "./lib/sentry"; // Must be first — initializes Sentry before other imports
 import { Sentry } from "./lib/sentry";
 import { createServer } from "http";
-import express from "express";
+import express, { type Express } from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
@@ -49,7 +49,7 @@ import { startScheduler } from "./lib/scheduler";
 
 dotenv.config();
 
-const app = express();
+const app: Express = express();
 // Railway terminates TLS and forwards one hop. With trust proxy set,
 // Express parses X-Forwarded-For safely and exposes the validated client
 // IP as req.ip — so rate limiters can key on a value the client cannot spoof.

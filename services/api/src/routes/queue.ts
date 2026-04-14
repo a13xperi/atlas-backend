@@ -15,7 +15,7 @@ import {
   TOKEN_READ_SELECT,
 } from "../lib/crypto";
 
-export const queueRouter = Router();
+export const queueRouter: Router = Router();
 queueRouter.use(authenticate);
 
 const queueStatusSchema = z.enum(["queued", "scheduled", "published", "failed"]);

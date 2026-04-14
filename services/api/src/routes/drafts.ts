@@ -20,7 +20,7 @@ import {
   TOKEN_READ_SELECT,
 } from "../lib/crypto";
 
-export const draftsRouter = Router();
+export const draftsRouter: Router = Router();
 draftsRouter.use(authenticate);
 const aiGenerationLimiter = rateLimitByUser(
   config.RATE_LIMIT_AI_GENERATION_MAX_REQUESTS,

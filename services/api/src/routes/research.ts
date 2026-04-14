@@ -9,7 +9,7 @@ import { config } from "../lib/config";
 import { conductResearch } from "../lib/research";
 import { logger } from "../lib/logger";
 
-export const researchRouter = Router();
+export const researchRouter: Router = Router();
 researchRouter.use(authenticate);
 
 // Per-user rate limit for the Anthropic-backed research endpoint. Each

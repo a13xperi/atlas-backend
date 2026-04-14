@@ -13,7 +13,7 @@ import { validationFailResponse } from "../lib/schemas";
 // Empty-strict body rejects unexpected form fields.
 const extractTextBodySchema = z.object({}).strict();
 
-export const uploadRouter = Router();
+export const uploadRouter: Router = Router();
 uploadRouter.use(authenticate);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB

@@ -13,7 +13,7 @@ import {
   TOKEN_READ_SELECT,
 } from "../lib/crypto";
 
-export const twitterRouter = Router();
+export const twitterRouter: Router = Router();
 
 const TWITTER_API_BASE = "https://api.twitter.com/2";
 const CACHE_TTL_SECONDS = 3600; // 1 hour
