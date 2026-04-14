@@ -395,9 +395,10 @@ model BriefingPreference {
   deliveryTime String   @default("08:00")
   topics       String[]
   sources      String[]
-  channel      String   @default("PORTAL")
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  updatedAt    DateTime @updatedAt
+  channel         String    @default("PORTAL")
+  lastDeliveredAt DateTime?
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  updatedAt       DateTime  @updatedAt
 
   @@map("briefing_preferences")
 }
@@ -410,8 +411,9 @@ model Briefing {
   sections  Json
   topics    String[]
   sources   String[]
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@map("briefings")
