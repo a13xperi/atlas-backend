@@ -8,8 +8,9 @@ jest.mock("../../lib/prisma", () => ({
   prisma: {
     alertSubscription: { findMany: jest.fn() },
     nlpMonitor: { findMany: jest.fn(), update: jest.fn() },
-    alert: { create: jest.fn() },
+    alert: { create: jest.fn(), findMany: jest.fn(), createMany: jest.fn(), count: jest.fn() },
     analyticsEvent: { create: jest.fn() },
+    trendingTopic: { findMany: jest.fn() },
   },
 }));
 
@@ -65,6 +66,10 @@ const mockAlert = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockDispatchAlert.mockResolvedValue(undefined);
+  (mockPrisma.trendingTopic.findMany as jest.Mock).mockResolvedValue([]);
+  (mockPrisma.alert.findMany as jest.Mock).mockResolvedValue([]);
+  (mockPrisma.alert.createMany as jest.Mock).mockResolvedValue({ count: 0 });
+  (mockPrisma.alert.count as jest.Mock).mockResolvedValue(0);
 });
 
 describe("scanTrendingForUser", () => {
