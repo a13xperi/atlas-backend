@@ -6,6 +6,7 @@
 import { prisma } from "./prisma";
 import { logger } from "./logger";
 import { runScheduledBackupIfDue } from "./backup";
+import { runGlobalAlertScan } from "./alertScanner";
 import {
   buildTokenWrite,
   readAccessToken,
@@ -195,11 +196,14 @@ export { fetchPostedDraftMetrics };
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let metricsIntervalId: ReturnType<typeof setInterval> | null = null;
 let backupIntervalId: ReturnType<typeof setInterval> | null = null;
+let alertScanIntervalId: ReturnType<typeof setInterval> | null = null;
+
+const ALERT_SCAN_INTERVAL_MS = 15 * 60_000; // Every 15 minutes
 
 export function startScheduler(): void {
   if (intervalId) return; // Already running
 
-  logger.info("Starting draft scheduler (60s interval) + metrics fetcher (15m interval) + backup scheduler (60s interval)");
+  logger.info("Starting draft scheduler (60s interval) + metrics fetcher (15m interval) + backup scheduler (60s interval) + alert scanner (15m interval)");
 
   intervalId = setInterval(async () => {
     try {
@@ -241,6 +245,17 @@ export function startScheduler(): void {
     }
   }, POLL_INTERVAL_MS);
 
+  alertScanIntervalId = setInterval(async () => {
+    try {
+      const result = await runGlobalAlertScan();
+      if (result.users > 0) {
+        logger.info(result, "Alert scan cycle complete");
+      }
+    } catch (err: any) {
+      logger.error({ err: err.message }, "Alert scan cycle failed");
+    }
+  }, ALERT_SCAN_INTERVAL_MS);
+
   // Run once immediately on startup
   void processScheduledDrafts().catch((err) => {
     logger.error({ err: err.message }, "Initial scheduler run failed");
@@ -254,11 +269,18 @@ export function startScheduler(): void {
   void runScheduledBackupIfDue().catch((err) => {
     logger.error({ err: err.message }, "Initial backup scheduler check failed");
   });
+  // Delay initial alert scan by 60s to avoid startup burst
+  setTimeout(() => {
+    void runGlobalAlertScan().catch((err) => {
+      logger.error({ err: err.message }, "Initial alert scan failed");
+    });
+  }, 60_000);
 }
 
 export function stopScheduler(): void {
   if (intervalId) { clearInterval(intervalId); intervalId = null; }
   if (metricsIntervalId) { clearInterval(metricsIntervalId); metricsIntervalId = null; }
   if (backupIntervalId) { clearInterval(backupIntervalId); backupIntervalId = null; }
+  if (alertScanIntervalId) { clearInterval(alertScanIntervalId); alertScanIntervalId = null; }
   logger.info("Schedulers stopped");
 }
