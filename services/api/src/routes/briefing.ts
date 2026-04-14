@@ -13,6 +13,7 @@ briefingRouter.use(authenticate);
 
 const briefingPreferencesSchema = z.object({
   deliveryTime: z.string(),
+  briefType: z.enum(["morning", "sector", "alpha", "competitor"]).optional(),
   topics: z.array(z.string()),
   sources: z.array(z.string()),
   channel: z.string(),
@@ -39,12 +40,14 @@ briefingRouter.put("/preferences", async (req: AuthRequest, res) => {
       create: {
         userId: req.userId!,
         deliveryTime: body.deliveryTime,
+        briefType: body.briefType,
         topics: body.topics,
         sources: body.sources,
         channel: body.channel,
       },
       update: {
         deliveryTime: body.deliveryTime,
+        briefType: body.briefType,
         topics: body.topics,
         sources: body.sources,
         channel: body.channel,

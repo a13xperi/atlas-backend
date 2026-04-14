@@ -156,7 +156,7 @@ export async function runBriefingDispatch(): Promise<BriefingDispatchResult> {
 
   for (const pref of due) {
     try {
-      await generateBriefingForUser(pref.userId, "morning");
+      await generateBriefingForUser(pref.userId, pref.briefType);
       await prisma.briefingPreference.update({
         where: { userId: pref.userId },
         data: { lastDeliveredAt: now },
