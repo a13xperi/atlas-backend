@@ -20,6 +20,7 @@ jest.mock("../lib/config", () => ({
 
 jest.mock("jsonwebtoken", () => ({
   verify: jest.fn(),
+  decode: jest.fn(),
 }));
 
 const isJtiRevokedMock = jest.fn();
@@ -30,11 +31,13 @@ jest.mock("../lib/jwt-revocation", () => ({
 }));
 
 // Import after mocks
-import { authenticate, AuthRequest } from "../middleware/auth";
+import { authenticate, AuthRequest, isTokenRevoked } from "../middleware/auth";
 import { config } from "../lib/config";
+import { prisma } from "../lib/prisma";
 
 const mockJwt = jwt as jest.Mocked<typeof jwt>;
 const mockConfig = config as { JWT_SECRET: string };
+const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 
 function makeReq(authHeader?: string): AuthRequest {
   return {
@@ -58,6 +61,11 @@ describe("authenticate middleware", () => {
     mockConfig.JWT_SECRET = "test-secret";
     isJtiRevokedMock.mockReset();
     isJtiRevokedMock.mockResolvedValue(false);
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue({
+      id: "user-abc",
+      tokensInvalidatedBefore: null,
+    });
+    (mockJwt.decode as jest.Mock).mockReturnValue({ iat: 1000 });
   });
 
   it("returns 401 when Authorization header is missing", async () => {
@@ -156,5 +164,34 @@ describe("authenticate middleware", () => {
     await authenticate(req, res, next as NextFunction);
     expect(isJtiRevokedMock).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalled();
+  });
+});
+
+describe("isTokenRevoked helper", () => {
+  it("returns true when token has no iat", () => {
+    (mockJwt.decode as jest.Mock).mockReturnValueOnce({});
+    expect(isTokenRevoked("token", null)).toBe(true);
+  });
+
+  it("returns true when token has no decode result", () => {
+    (mockJwt.decode as jest.Mock).mockReturnValueOnce(null);
+    expect(isTokenRevoked("token", null)).toBe(true);
+  });
+
+  it("returns true when iat is before the cutoff", () => {
+    (mockJwt.decode as jest.Mock).mockReturnValueOnce({ iat: 1000 });
+    const cutoff = new Date(1000 * 1000 + 2000); // iatMs (1000000) < cutoff - 1000
+    expect(isTokenRevoked("token", cutoff)).toBe(true);
+  });
+
+  it("returns false when iat is after the cutoff (outside skew window)", () => {
+    (mockJwt.decode as jest.Mock).mockReturnValueOnce({ iat: 2000 });
+    const cutoff = new Date(1000 * 1000); // iatMs (2000000) >= cutoff - 1000
+    expect(isTokenRevoked("token", cutoff)).toBe(false);
+  });
+
+  it("returns false when cutoff is null", () => {
+    (mockJwt.decode as jest.Mock).mockReturnValueOnce({ iat: 1000 });
+    expect(isTokenRevoked("token", null)).toBe(false);
   });
 });
