@@ -52,6 +52,10 @@ app.use(express.json());
 app.use(requestIdMiddleware);
 app.use("/api/auth", authRouter);
 
+function authHeader(userId = "user-123"): string {
+  return `Bearer ${jwt.sign({ userId }, process.env.JWT_SECRET as string)}`;
+}
+
 const mockUser = {
   id: "user-123",
   handle: "testuser",
@@ -117,8 +121,6 @@ describe("POST /api/auth/login", () => {
 });
 
 describe("GET /api/auth/me", () => {
-  const validToken = "Bearer mock_token";
-
   it("returns 401 when no token provided", async () => {
     const res = await request(app).get("/api/auth/me");
     expect(res.status).toBe(401);
@@ -129,7 +131,7 @@ describe("GET /api/auth/me", () => {
 
     const res = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", validToken);
+      .set("Authorization", authHeader());
 
     expect(res.status).toBe(404);
   });
@@ -142,7 +144,7 @@ describe("GET /api/auth/me", () => {
 
     const res = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", validToken);
+      .set("Authorization", authHeader());
 
     expect(res.status).toBe(200);
     const data = expectSuccessResponse<any>(res.body);

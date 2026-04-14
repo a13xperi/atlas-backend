@@ -74,7 +74,9 @@ app.use(express.json());
 app.use(requestIdMiddleware);
 app.use("/api/auth", authRouter);
 
-const AUTH = "Bearer mock_token";
+function authHeader(userId = "user-123"): string {
+  return `Bearer ${jwt.sign({ userId }, process.env.JWT_SECRET as string)}`;
+}
 
 const mockVoiceProfile = {
   id: "voice-1",
@@ -289,7 +291,7 @@ describe("GET /api/auth/me", () => {
 
     const res = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", AUTH);
+      .set("Authorization", authHeader());
 
     expect(res.status).toBe(200);
     const data = expectSuccessResponse<any>(res.body);
@@ -309,7 +311,7 @@ describe("GET /api/auth/sessions", () => {
 
     const res = await request(app)
       .get("/api/auth/sessions")
-      .set("Authorization", AUTH);
+      .set("Authorization", authHeader());
 
     expect(res.status).toBe(200);
     const data = expectSuccessResponse<any>(res.body);
@@ -325,7 +327,7 @@ describe("DELETE /api/auth/sessions/:id", () => {
 
     const res = await request(app)
       .delete("/api/auth/sessions/session-1")
-      .set("Authorization", AUTH);
+      .set("Authorization", authHeader());
 
     expect(res.status).toBe(200);
     expect(expectSuccessResponse<any>(res.body)).toEqual({ success: true });
@@ -336,7 +338,7 @@ describe("DELETE /api/auth/sessions/:id", () => {
 
     const res = await request(app)
       .delete("/api/auth/sessions/missing-session")
-      .set("Authorization", AUTH);
+      .set("Authorization", authHeader());
 
     expect(res.status).toBe(404);
   });
