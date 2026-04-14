@@ -168,6 +168,7 @@ describe("POST /api/auth/login", () => {
       error: null,
     });
     (mockPrisma.user.findFirst as jest.Mock).mockResolvedValueOnce(mockUser);
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(mockUser);
 
     const res = await request(app)
       .post("/api/auth/login")
