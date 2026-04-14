@@ -64,4 +64,32 @@ export const anthropicProvider: Provider = {
       ...(toolCalls.length > 0 && { toolCalls }),
     };
   },
+
+  async *stream(request: CompletionRequest): AsyncGenerator<string, void, unknown> {
+    const ai = getClient();
+
+    // Anthropic requires system message separate from messages array
+    const systemMessage = request.messages.find((m) => m.role === "system");
+    const nonSystemMessages = request.messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+    const modelToUse = request.model ?? config.defaultModel;
+
+    const stream = ai.messages.stream({
+      model: modelToUse,
+      max_tokens: request.maxTokens ?? 1024,
+      ...(request.temperature !== undefined && { temperature: request.temperature }),
+      ...(systemMessage && { system: systemMessage.content }),
+      messages: nonSystemMessages,
+      ...(request.tools && { tools: request.tools }),
+      ...(request.tool_choice && { tool_choice: request.tool_choice }),
+    });
+
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        yield event.delta.text;
+      }
+    }
+  },
 };

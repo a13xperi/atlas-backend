@@ -82,4 +82,5 @@ export interface ProviderConfig {
 export interface Provider {
   readonly config: ProviderConfig;
   complete(request: CompletionRequest): Promise<CompletionResponse>;
+  stream?(request: CompletionRequest): AsyncGenerator<string, void, unknown>;
 }
