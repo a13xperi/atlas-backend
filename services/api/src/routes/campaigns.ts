@@ -243,10 +243,13 @@ campaignsRouter.post("/:campaignId/post-all", async (req: AuthRequest, res) => {
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     });
 
+<<<<<<< HEAD
     if (drafts.length > 25) {
       return res.status(400).json(error("Cannot post more than 25 drafts at once", 400));
     }
 
+=======
+>>>>>>> 5e1740e (feat(campaigns): add batch post-all endpoint)
     if (drafts.length === 0) {
       return res.json(success({ posted: 0, failed: 0, results: [] }));
     }
