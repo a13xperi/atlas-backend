@@ -34,6 +34,7 @@ import { getRedis } from "./lib/redis";
 import { initBot } from "./lib/telegram";
 import { initSocket } from "./lib/socket";
 import { startScheduler } from "./lib/scheduler";
+import { startCronServices } from "../../cron";
 
 dotenv.config();
 
@@ -151,6 +152,7 @@ initBot();
 server.listen(PORT, () => {
   logger.info({ port: PORT }, `Atlas API running on port ${PORT}`);
   startScheduler();
+  startCronServices();
 });
 
 export default app;
