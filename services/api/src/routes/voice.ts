@@ -3,6 +3,7 @@ import { z } from "zod";
 import { VoiceMaturity } from "@prisma/client";
 import { parsePagination } from "../lib/pagination";
 import { prisma } from "../lib/prisma";
+import { withSafeReferenceVoice } from "../lib/reference-accounts";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { fetchTweetsByHandle } from "../lib/twitter";
@@ -435,13 +436,34 @@ voiceRouter.get("/blends", async (req: AuthRequest, res) => {
   try {
     const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
 
-    const blends = await prisma.savedBlend.findMany({
-      where: { userId: req.userId },
-      take,
-      skip,
-      include: { voices: { include: { referenceVoice: true } } },
-    });
-    res.json(success({ blends }));
+    const [user, blends] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { id: true, displayName: true, handle: true, avatarUrl: true },
+      }),
+      prisma.savedBlend.findMany({
+        where: { userId: req.userId },
+        take,
+        skip,
+        include: { voices: { include: { referenceVoice: true } } },
+      }),
+    ]);
+
+    const fallbackUser = user ?? {
+      id: req.userId!,
+      displayName: null,
+      handle: null,
+      avatarUrl: null,
+    };
+
+    res.json(
+      success({
+        blends: blends.map((blend) => ({
+          ...blend,
+          voices: blend.voices.map((voice) => withSafeReferenceVoice(voice, fallbackUser)),
+        })),
+      }),
+    );
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to load blends");
     res.status(500).json(error("Failed to load blends", 500, { message: err.message }));
