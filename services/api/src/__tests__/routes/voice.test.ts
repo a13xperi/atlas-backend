@@ -24,6 +24,9 @@ jest.mock("../../lib/supabase", () => ({ supabaseAdmin: null }));
 
 jest.mock("../../lib/prisma", () => ({
   prisma: {
+    user: {
+      findUnique: jest.fn(),
+    },
     voiceProfile: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -235,6 +238,12 @@ describe("POST /api/voice/references", () => {
 describe("GET /api/voice/blends", () => {
   it("returns list of saved blends", async () => {
     const blends = [{ id: "b-1", name: "Tech Blend", voices: [] }];
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-123",
+      displayName: "Test User",
+      handle: "testuser",
+      avatarUrl: null,
+    });
     (mockPrisma.savedBlend.findMany as jest.Mock).mockResolvedValueOnce(blends);
 
     const res = await request(app).get("/api/voice/blends").set(AUTH);
@@ -250,6 +259,12 @@ describe("GET /api/voice/blends", () => {
   });
 
   it("applies pagination to saved blends", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-123",
+      displayName: "Test User",
+      handle: "testuser",
+      avatarUrl: null,
+    });
     (mockPrisma.savedBlend.findMany as jest.Mock).mockResolvedValueOnce([]);
 
     await request(app).get("/api/voice/blends?limit=5&offset=2").set(AUTH);
@@ -264,12 +279,55 @@ describe("GET /api/voice/blends", () => {
   });
 
   it("returns 500 when loading blends fails", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-123",
+      displayName: "Test User",
+      handle: "testuser",
+      avatarUrl: null,
+    });
     (mockPrisma.savedBlend.findMany as jest.Mock).mockRejectedValueOnce(new Error("db down"));
 
     const res = await request(app).get("/api/voice/blends").set(AUTH);
 
     expect(res.status).toBe(500);
     expect(expectErrorResponse(res.body, "Failed to load blends").details.message).toBe("db down");
+  });
+
+  it("fills in the current user handle and avatar when a blend voice has no referenceVoice", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-123",
+      displayName: "Atlas Analyst",
+      handle: "atlasanalyst",
+      avatarUrl: "https://example.com/me.png",
+    });
+    (mockPrisma.savedBlend.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: "blend-1",
+        name: "My Blend",
+        voices: [
+          {
+            id: "voice-1",
+            blendId: "blend-1",
+            referenceVoiceId: null,
+            label: "My voice",
+            percentage: 60,
+            referenceVoice: null,
+          },
+        ],
+      },
+    ]);
+
+    const res = await request(app).get("/api/voice/blends").set(AUTH);
+
+    expect(res.status).toBe(200);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.blends[0].voices[0].referenceVoice).toEqual(
+      expect.objectContaining({
+        name: "My voice",
+        handle: "atlasanalyst",
+        avatarUrl: "https://example.com/me.png",
+      }),
+    );
   });
 });
 
