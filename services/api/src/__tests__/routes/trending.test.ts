@@ -1,7 +1,7 @@
 /**
  * Trending routes test suite
  * Tests POST /scan, GET /topics
- * Mocks: Prisma, searchTrending (grok), jsonwebtoken
+ * Mocks: alertScanner, Prisma, jsonwebtoken
  */
 
 import request from "supertest";
@@ -24,33 +24,20 @@ jest.mock("../../lib/supabase", () => ({ supabaseAdmin: null }));
 
 jest.mock("../../lib/prisma", () => ({
   prisma: {
-    alertSubscription: {
-      findMany: jest.fn(),
-    },
     alert: {
-      create: jest.fn(),
       findMany: jest.fn(),
-    },
-    analyticsEvent: {
-      create: jest.fn(),
     },
   },
 }));
 
-jest.mock("../../lib/grok", () => ({
-  searchTrending: jest.fn(),
-}));
-
-jest.mock("../../lib/alertDelivery", () => ({
-  dispatchAlert: jest.fn(),
+jest.mock("../../lib/alertScanner", () => ({
+  scanTrendingForUser: jest.fn(),
 }));
 
 import { prisma } from "../../lib/prisma";
-import { searchTrending } from "../../lib/grok";
-import { dispatchAlert } from "../../lib/alertDelivery";
+import { scanTrendingForUser } from "../../lib/alertScanner";
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
-const mockSearchTrending = searchTrending as jest.Mock;
-const mockDispatchAlert = dispatchAlert as jest.Mock;
+const mockScanTrendingForUser = scanTrendingForUser as jest.Mock;
 
 const app = express();
 app.use(express.json());
@@ -58,15 +45,6 @@ app.use(requestIdMiddleware);
 app.use("/api/trending", trendingRouter);
 
 const AUTH = { Authorization: "Bearer mock_token" };
-
-const mockTrendingItem = {
-  topic: "DeFi",
-  headline: "DeFi TVL hits record high",
-  context: "Total Value Locked...",
-  tweetUrl: "https://x.com/example",
-  sentiment: "bullish",
-  relevanceScore: 0.9,
-};
 
 const mockAlert = {
   id: "alert-1",
@@ -88,52 +66,27 @@ afterAll(() => {
 });
 
 describe("POST /api/trending/scan", () => {
-  beforeEach(() => {
-    mockDispatchAlert.mockResolvedValue(undefined);
-  });
-
   it("returns 401 without token", async () => {
     const res = await request(app).post("/api/trending/scan");
     expect(res.status).toBe(401);
   });
 
   it("scans using subscriptions and returns alerts", async () => {
-    (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([
-      { value: "DeFi" },
-    ]);
-    mockSearchTrending.mockResolvedValueOnce([mockTrendingItem]);
-    (mockPrisma.alert.create as jest.Mock).mockResolvedValueOnce(mockAlert);
-    (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValueOnce({});
+    mockScanTrendingForUser.mockResolvedValueOnce({
+      alerts: 1,
+      monitorAlerts: 0,
+      alertObjects: [mockAlert],
+      monitorAlertObjects: [],
+    });
 
     const res = await request(app).post("/api/trending/scan").set(AUTH);
     expect(res.status).toBe(200);
     expect(expectSuccessResponse<any>(res.body).alerts).toHaveLength(1);
-    expect(mockDispatchAlert).toHaveBeenCalledWith({
-      id: "alert-1",
-      title: "DeFi TVL hits record high",
-      type: "DeFi",
-      context: "Total Value Locked...",
-      sourceUrl: "https://x.com/example",
-      sentiment: "bullish",
-      userId: "user-123",
-    });
+    expect(mockScanTrendingForUser).toHaveBeenCalledWith("user-123");
   });
 
-  it("uses default topics when user has no subscriptions", async () => {
-    (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([]);
-    mockSearchTrending.mockResolvedValueOnce([]);
-    (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValueOnce({});
-
-    await request(app).post("/api/trending/scan").set(AUTH);
-
-    expect(mockSearchTrending).toHaveBeenCalledWith(
-      expect.objectContaining({ topics: ["DeFi", "ETH", "Bitcoin", "AI", "Crypto"] })
-    );
-  });
-
-  it("returns 502 when Grok scan fails", async () => {
-    (mockPrisma.alertSubscription.findMany as jest.Mock).mockResolvedValueOnce([]);
-    mockSearchTrending.mockRejectedValueOnce(new Error("Grok error"));
+  it("returns 502 when scan fails", async () => {
+    mockScanTrendingForUser.mockRejectedValueOnce(new Error("Grok error"));
 
     const res = await request(app).post("/api/trending/scan").set(AUTH);
     expect(res.status).toBe(502);
