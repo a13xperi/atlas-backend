@@ -31,7 +31,16 @@ jest.mock("../../lib/prisma", () => ({
     },
     tweetDraft: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
       updateMany: jest.fn(),
+    },
+    user: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
+    analyticsEvent: {
+      create: jest.fn(),
     },
   },
 }));
@@ -44,13 +53,21 @@ jest.mock("../../lib/batch-generate", () => ({
   batchGenerateDrafts: jest.fn(),
 }));
 
+jest.mock("../../lib/twitter", () => ({
+  postTweet: jest.fn(),
+  refreshAccessToken: jest.fn(),
+}));
+
 import { prisma } from "../../lib/prisma";
 import { extractInsights } from "../../lib/content-extraction";
 import { batchGenerateDrafts } from "../../lib/batch-generate";
+import { postTweet, refreshAccessToken } from "../../lib/twitter";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 const mockExtractInsights = extractInsights as jest.Mock;
 const mockBatchGenerateDrafts = batchGenerateDrafts as jest.Mock;
+const mockPostTweet = postTweet as jest.Mock;
+const mockRefreshAccessToken = refreshAccessToken as jest.Mock;
 
 const app = express();
 app.use(express.json());
@@ -220,6 +237,147 @@ describe("GET /api/campaigns/:id/drafts", () => {
     const res = await request(app)
       .get("/api/campaigns/missing/drafts")
       .set(AUTH);
+
+    expect(res.status).toBe(404);
+    expectErrorResponse(res.body, "Campaign not found");
+  });
+});
+
+describe("POST /api/campaigns/:campaignId/post-all", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("posts all approved campaign drafts and refreshes an expired X token", async () => {
+    (mockPrisma.campaign.findFirst as jest.Mock).mockResolvedValueOnce({
+      id: "campaign-1",
+      userId: "user-123",
+    } as any);
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: "draft-1",
+        userId: "user-123",
+        content: "First approved draft",
+        status: "APPROVED",
+        sortOrder: 1,
+        createdAt: new Date("2026-04-14T10:00:00.000Z"),
+      },
+      {
+        id: "draft-2",
+        userId: "user-123",
+        content: "Second approved draft",
+        status: "APPROVED",
+        sortOrder: 2,
+        createdAt: new Date("2026-04-14T10:01:00.000Z"),
+      },
+    ] as any);
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-123",
+      xAccessToken: "expired-access-token",
+      xRefreshToken: "refresh-token",
+      xAccessTokenEnc: null,
+      xRefreshTokenEnc: null,
+      xTokenExpiresAt: new Date(Date.now() - 60_000),
+    } as any);
+    mockRefreshAccessToken.mockResolvedValueOnce({
+      accessToken: "fresh-access-token",
+      refreshToken: "fresh-refresh-token",
+      expiresIn: 7200,
+    });
+    mockPostTweet
+      .mockResolvedValueOnce({ id: "tweet-1", text: "First approved draft" })
+      .mockResolvedValueOnce({ id: "tweet-2", text: "Second approved draft" });
+    (mockPrisma.tweetDraft.update as jest.Mock)
+      .mockResolvedValueOnce({ id: "draft-1", status: "POSTED", xTweetId: "tweet-1" } as any)
+      .mockResolvedValueOnce({ id: "draft-2", status: "POSTED", xTweetId: "tweet-2" } as any);
+    (mockPrisma.user.update as jest.Mock).mockResolvedValueOnce({ id: "user-123" } as any);
+    (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValue({ id: "event-1" } as any);
+
+    const res = await request(app)
+      .post("/api/campaigns/campaign-1/post-all")
+      .set(AUTH)
+      .send({});
+
+    expect(res.status).toBe(200);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.posted).toBe(2);
+    expect(data.failed).toBe(0);
+    expect(data.results).toEqual([
+      { draftId: "draft-1", status: "posted", tweetId: "tweet-1" },
+      { draftId: "draft-2", status: "posted", tweetId: "tweet-2" },
+    ]);
+    expect(mockRefreshAccessToken).toHaveBeenCalledWith("refresh-token");
+    expect(mockPrisma.user.update).toHaveBeenCalledTimes(1);
+    expect(mockPostTweet).toHaveBeenNthCalledWith(1, "fresh-access-token", "First approved draft");
+    expect(mockPostTweet).toHaveBeenNthCalledWith(2, "fresh-access-token", "Second approved draft");
+    expect(mockPrisma.analyticsEvent.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns campaign-level partial failures when one draft fails to post", async () => {
+    (mockPrisma.campaign.findFirst as jest.Mock).mockResolvedValueOnce({
+      id: "campaign-1",
+      userId: "user-123",
+    } as any);
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: "draft-1",
+        userId: "user-123",
+        content: "First approved draft",
+        status: "APPROVED",
+        sortOrder: 1,
+        createdAt: new Date("2026-04-14T10:00:00.000Z"),
+      },
+      {
+        id: "draft-2",
+        userId: "user-123",
+        content: "Second approved draft",
+        status: "APPROVED",
+        sortOrder: 2,
+        createdAt: new Date("2026-04-14T10:01:00.000Z"),
+      },
+    ] as any);
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-123",
+      xAccessToken: "valid-access-token",
+      xRefreshToken: "refresh-token",
+      xAccessTokenEnc: null,
+      xRefreshTokenEnc: null,
+      xTokenExpiresAt: new Date(Date.now() + 60_000),
+    } as any);
+    mockPostTweet
+      .mockResolvedValueOnce({ id: "tweet-1", text: "First approved draft" })
+      .mockRejectedValueOnce(new Error("X API 500"));
+    (mockPrisma.tweetDraft.update as jest.Mock).mockResolvedValueOnce({
+      id: "draft-1",
+      status: "POSTED",
+      xTweetId: "tweet-1",
+    } as any);
+    (mockPrisma.analyticsEvent.create as jest.Mock).mockResolvedValueOnce({ id: "event-1" } as any);
+
+    const res = await request(app)
+      .post("/api/campaigns/campaign-1/post-all")
+      .set(AUTH)
+      .send({});
+
+    expect(res.status).toBe(200);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.posted).toBe(1);
+    expect(data.failed).toBe(1);
+    expect(data.results).toEqual([
+      { draftId: "draft-1", status: "posted", tweetId: "tweet-1" },
+      { draftId: "draft-2", status: "failed", error: "X API 500" },
+    ]);
+    expect(mockPrisma.tweetDraft.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.analyticsEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 404 when the campaign does not exist", async () => {
+    (mockPrisma.campaign.findFirst as jest.Mock).mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .post("/api/campaigns/missing/post-all")
+      .set(AUTH)
+      .send({});
 
     expect(res.status).toBe(404);
     expectErrorResponse(res.body, "Campaign not found");

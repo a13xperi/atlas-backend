@@ -6,6 +6,13 @@ import { logger } from "../lib/logger";
 import { success, error } from "../lib/response";
 import { extractInsights } from "../lib/content-extraction";
 import { batchGenerateDrafts } from "../lib/batch-generate";
+import {
+  buildTokenWrite,
+  readAccessToken,
+  readRefreshToken,
+  TOKEN_READ_SELECT,
+} from "../lib/crypto";
+import { postTweet, refreshAccessToken } from "../lib/twitter";
 
 export const campaignsRouter: Router = Router({ mergeParams: true });
 campaignsRouter.use(authenticate);
@@ -212,6 +219,135 @@ campaignsRouter.get("/:id/drafts", async (req: AuthRequest, res) => {
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to list campaign drafts");
     res.status(500).json(error("Failed to list campaign drafts"));
+  }
+});
+
+// Post all approved drafts in a campaign to X
+campaignsRouter.post("/:campaignId/post-all", async (req: AuthRequest, res) => {
+  try {
+    const campaignId = paramId(req, "campaignId");
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: campaignId, userId: req.userId },
+    });
+
+    if (!campaign) {
+      return res.status(404).json(error("Campaign not found", 404));
+    }
+
+    const drafts = await prisma.tweetDraft.findMany({
+      where: {
+        campaignId,
+        userId: req.userId,
+        status: "APPROVED",
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    });
+
+    if (drafts.length === 0) {
+      return res.json(success({ posted: 0, failed: 0, results: [] }));
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      select: { id: true, xTokenExpiresAt: true, ...TOKEN_READ_SELECT },
+    });
+
+    let accessToken = readAccessToken(user);
+    let tokenError: string | null = null;
+    const now = new Date();
+
+    if (!accessToken) {
+      tokenError = "X account not linked. Connect your X account first.";
+    } else {
+      const refreshToken = readRefreshToken(user);
+      if (user?.xTokenExpiresAt && user.xTokenExpiresAt < now && refreshToken) {
+        try {
+          const refreshed = await refreshAccessToken(refreshToken);
+          accessToken = refreshed.accessToken;
+          await prisma.user.update({
+            where: { id: req.userId! },
+            data: buildTokenWrite({
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken,
+              expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+            }),
+          });
+        } catch (err: any) {
+          tokenError = `Failed to refresh X access token: ${err.message}`;
+          accessToken = null;
+        }
+      }
+    }
+
+    if (!accessToken) {
+      const results = drafts.map((draft) => ({
+        draftId: draft.id,
+        status: "failed" as const,
+        error: tokenError || "X account not linked. Connect your X account first.",
+      }));
+
+      logger.warn(
+        { campaignId, userId: req.userId, failed: drafts.length },
+        "Campaign batch post skipped — missing or invalid X token",
+      );
+
+      return res.json(success({ posted: 0, failed: drafts.length, results }));
+    }
+
+    const results: Array<
+      | { draftId: string; status: "posted"; tweetId: string }
+      | { draftId: string; status: "failed"; error: string }
+    > = [];
+    let posted = 0;
+    let failed = 0;
+
+    for (const draft of drafts) {
+      try {
+        const tweet = await postTweet(accessToken, draft.content);
+
+        await prisma.tweetDraft.update({
+          where: { id: draft.id },
+          data: { status: "POSTED", xTweetId: tweet.id },
+        });
+
+        await prisma.analyticsEvent.create({
+          data: {
+            userId: draft.userId,
+            type: "DRAFT_POSTED",
+            metadata: {
+              draftId: draft.id,
+              tweetId: tweet.id,
+              campaignId,
+              batch: true,
+            },
+          },
+        });
+
+        results.push({
+          draftId: draft.id,
+          status: "posted",
+          tweetId: tweet.id,
+        });
+        posted++;
+      } catch (err: any) {
+        logger.error(
+          { err: err.message, campaignId, draftId: draft.id },
+          "Failed to post campaign draft to X",
+        );
+        results.push({
+          draftId: draft.id,
+          status: "failed",
+          error: err.message,
+        });
+        failed++;
+      }
+    }
+
+    logger.info({ campaignId, userId: req.userId, posted, failed }, "Campaign batch post complete");
+    res.json(success({ posted, failed, results }));
+  } catch (err: any) {
+    logger.error({ err: err.message, campaignId: req.params.campaignId }, "Failed to post campaign drafts");
+    res.status(500).json(error("Failed to post campaign drafts"));
   }
 });
 
