@@ -8,33 +8,34 @@ datasource db {
 }
 
 model User {
-  id               String           @id @default(cuid())
-  supabaseId       String?
-  handle           String           @unique
-  email            String?          @unique
-  passwordHash     String?
-  displayName      String?
-  avatarUrl        String?
-  role             Role             @default(ANALYST)
-  onboardingTrack  OnboardingTrack?
-  telegramChatId   String?
-  xHandle          String?
-  xAccessToken     String?
-  xRefreshToken    String?
-  xTokenExpiresAt  DateTime?
+  id                      String           @id @default(cuid())
+  supabaseId              String?
+  handle                  String           @unique
+  email                   String?          @unique
+  passwordHash            String?
+  displayName             String?
+  avatarUrl               String?
+  role                    Role             @default(ANALYST)
+  onboardingTrack         OnboardingTrack?
+  telegramChatId          String?
+  xHandle                 String?
+  xAccessToken            String?
+  xRefreshToken           String?
+  xTokenExpiresAt         DateTime?
   // C-3: AES-256-GCM encrypted (format "v1:iv:tag:ct") token columns.
   // Live alongside plaintext columns during the migration window — the
   // read path prefers `*Enc` and falls back to plaintext, so either set
   // of columns can be populated. See services/api/src/lib/crypto.ts.
-  xAccessTokenEnc  String?
-  xRefreshTokenEnc String?
-  xBio             String?
-  xAvatarUrl       String?
-  xFollowerCount   Int?
-  tourCompleted    Boolean          @default(false)
-  tourStep         Int              @default(0)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  xAccessTokenEnc         String?
+  xRefreshTokenEnc        String?
+  xBio                    String?
+  xAvatarUrl              String?
+  xFollowerCount          Int?
+  tourCompleted           Boolean          @default(false)
+  tourStep                Int              @default(0)
+  tokensInvalidatedBefore DateTime?
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
 
   voiceProfile          VoiceProfile?
   referenceVoices       ReferenceVoice[]
@@ -55,6 +56,8 @@ model User {
   voiceDimensionInsight VoiceDimensionInsight?
   blendedVoiceProfile   BlendedVoiceProfile?
   voiceSwipeSignals     VoiceSwipeSignal[]
+  tweetExemplars        TweetExemplar[]
+  voiceArchetype        VoiceArchetype?
 
   @@index([supabaseId])
   @@index([xHandle])
@@ -116,6 +119,8 @@ model VoiceProfile {
   maturity                 VoiceMaturity @default(BEGINNER)
   tweetsAnalyzed           Int           @default(0)
   analysis                 String?
+  derivedFromExemplars     Boolean       @default(false)
+  lastCalibratedAt         DateTime?
   createdAt                DateTime      @default(now())
   updatedAt                DateTime      @updatedAt
 
@@ -131,15 +136,19 @@ enum VoiceMaturity {
 }
 
 model ReferenceVoice {
-  id        String   @id @default(cuid())
-  userId    String?
-  name      String
-  handle    String?
-  avatarUrl String?
-  category  String?
-  isActive  Boolean  @default(true)
-  isGlobal  Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id            String               @id @default(cuid())
+  userId        String?
+  name          String
+  handle        String?
+  avatarUrl     String?
+  category      String?
+  isActive      Boolean              @default(true)
+  isGlobal      Boolean              @default(false)
+  status        ReferenceVoiceStatus @default(SCANNING)
+  validatedAt   DateTime?
+  exemplarCount Int                  @default(0)
+  archetype     Json?
+  createdAt     DateTime             @default(now())
 
   user         User?                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   blendVoices  BlendVoice[]
@@ -408,13 +417,13 @@ model ResearchResult {
 }
 
 model BriefingPreference {
-  id           String   @id @default(cuid())
-  userId       String   @unique
-  deliveryTime String   @default("08:00")
-  timezone     String   @default("UTC")
-  briefType    String   @default("morning")
-  topics       String[]
-  sources      String[]
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  deliveryTime    String    @default("08:00")
+  timezone        String    @default("UTC")
+  briefType       String    @default("morning")
+  topics          String[]
+  sources         String[]
   channel         String    @default("PORTAL")
   lastDeliveredAt DateTime?
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -424,13 +433,13 @@ model BriefingPreference {
 }
 
 model Briefing {
-  id        String   @id @default(cuid())
-  userId    String
-  title     String
-  summary   String
-  sections  Json
-  topics    String[]
-  sources   String[]
+  id          String    @id @default(cuid())
+  userId      String
+  title       String
+  summary     String
+  sections    Json
+  topics      String[]
+  sources     String[]
   createdAt   DateTime  @default(now())
   deliveredAt DateTime?
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -482,6 +491,24 @@ enum CampaignStatus {
   PAUSED
 }
 
+enum ExemplarSource {
+  OWN
+  REFERENCE
+}
+
+enum SwipeDecision {
+  PENDING
+  KEEP
+  SKIP
+}
+
+enum ReferenceVoiceStatus {
+  SCANNING
+  READY_TO_VALIDATE
+  VALIDATED
+  REJECTED
+}
+
 model Campaign {
   id          String         @id @default(cuid())
   userId      String
@@ -496,6 +523,48 @@ model Campaign {
 
   @@index([userId, status])
   @@map("campaigns")
+}
+
+model TweetExemplar {
+  id              String         @id @default(cuid())
+  userId          String
+  source          ExemplarSource
+  referenceHandle String?
+  tweetId         String
+  text            String         @db.Text
+  authorHandle    String
+  metrics         Json?
+  postedAt        DateTime?
+  decision        SwipeDecision  @default(PENDING)
+  swipedAt        DateTime?
+  durationMs      Int?
+  rank            Int?
+  createdAt       DateTime       @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tweetId, source])
+  @@index([userId, source, decision])
+  @@index([userId, referenceHandle, decision])
+  @@map("tweet_exemplars")
+}
+
+model VoiceArchetype {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  label       String
+  oneLiner    String
+  description String   @db.Text
+  themes      String[]
+  signatures  String[]
+  avoids      String[]
+  derivedFrom Int      @default(0)
+  derivedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("voice_archetypes")
 }
 
 model VoiceDimensionInsight {
@@ -613,27 +682,27 @@ model BackupLog {
 }
 
 model Bug {
-  id               String    @id @default(cuid())
-  bugNumber        Int       @unique @default(autoincrement())
-  title            String
-  description      String    @default("")
-  pageRoute        String?
-  pageUrl          String?
-  severity         String    @default("medium")
-  status           String    @default("open")
-  source           String?
-  project          String?
-  foundBy          String?
-  fixedBy          String?
-  tags             String[]
-  notes            String?
-  fingerprint      String?
-  occurrenceCount  Int       @default(1)
-  userAgent        String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-  lastSeenAt       DateTime?
-  fixedAt          DateTime?
+  id              String    @id @default(cuid())
+  bugNumber       Int       @unique @default(autoincrement())
+  title           String
+  description     String    @default("")
+  pageRoute       String?
+  pageUrl         String?
+  severity        String    @default("medium")
+  status          String    @default("open")
+  source          String?
+  project         String?
+  foundBy         String?
+  fixedBy         String?
+  tags            String[]
+  notes           String?
+  fingerprint     String?
+  occurrenceCount Int       @default(1)
+  userAgent       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lastSeenAt      DateTime?
+  fixedAt         DateTime?
 
   @@map("bugs")
 }
