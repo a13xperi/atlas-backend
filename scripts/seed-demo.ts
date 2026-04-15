@@ -19,10 +19,6 @@ import { prisma } from "../services/api/src/lib/prisma";
  * this seed creates one primary VoiceProfile plus multiple reference voices and saved blends.
  */
 
-const DEMO_PASSWORD = process.env.DEMO_SEED_PASSWORD;
-if (!DEMO_PASSWORD || DEMO_PASSWORD.length < 12) {
-  throw new Error("DEMO_SEED_PASSWORD env var required (min 12 chars). Set it before running this seed.");
-}
 const SEED_TAG = "atlas-demo-seed-v1";
 
 type VoiceProfileSeed = {
@@ -1272,9 +1268,14 @@ async function seedUser(userSeed: DemoUserSeed, passwordHash: string) {
 }
 
 async function main() {
+  const demoPassword = process.env.DEMO_SEED_PASSWORD;
+  if (!demoPassword || demoPassword.length < 12) {
+    throw new Error("DEMO_SEED_PASSWORD env var required (min 12 chars). Set it before running this seed.");
+  }
+
   console.log("Seeding Atlas demo data for development and UAT...");
 
-  const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
+  const passwordHash = await bcrypt.hash(demoPassword, 10);
 
   const users = await Promise.all(
     demoUsers.map((user) =>
@@ -1316,7 +1317,7 @@ async function main() {
 
   console.log(`Seeded ${analystCount} analysts and ${managerCount} manager.`);
   console.log(`Seeded ${totalDrafts} drafts and ${totalSubscriptions} alert subscriptions.`);
-  console.log(`Demo password for all seeded users: ${DEMO_PASSWORD}`);
+  console.log(`Demo password for all seeded users: ${demoPassword}`);
   console.log("Seed complete.");
 }
 

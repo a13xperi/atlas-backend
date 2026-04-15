@@ -26,13 +26,14 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 const ANIL_EMAIL = "anil@delphidigital.io";
-const ANIL_PASSWORD = process.env.ANIL_SEED_PASSWORD;
-if (!ANIL_PASSWORD || ANIL_PASSWORD.length < 12) {
-  throw new Error("ANIL_SEED_PASSWORD env var required (min 12 chars). Set it before running this seed.");
-}
 const ANIL_HANDLE = "anil";
 
 async function main() {
+  const anilPassword = process.env.ANIL_SEED_PASSWORD;
+  if (!anilPassword || anilPassword.length < 12) {
+    throw new Error("ANIL_SEED_PASSWORD env var required (min 12 chars). Set it before running this seed.");
+  }
+
   console.log("🌱 Seeding demo user: Anil\n");
 
   // Check if already exists
@@ -62,7 +63,7 @@ async function main() {
     } else {
       const { data, error } = await supabase.auth.admin.createUser({
         email: ANIL_EMAIL,
-        password: ANIL_PASSWORD,
+        password: anilPassword,
         email_confirm: true,
       });
       if (error) {
@@ -78,7 +79,7 @@ async function main() {
   }
 
   // --- Prisma User + Voice Profile ---
-  const passwordHash = await bcrypt.hash(ANIL_PASSWORD, 10);
+  const passwordHash = await bcrypt.hash(anilPassword, 10);
   const user = await prisma.user.create({
     data: {
       handle: ANIL_HANDLE,
@@ -297,7 +298,7 @@ async function main() {
   console.log("\n🎉 Demo user seeded successfully!\n");
   console.log("  Login credentials:");
   console.log(`    Email:    ${ANIL_EMAIL}`);
-  console.log(`    Password: ${ANIL_PASSWORD}`);
+  console.log(`    Password: ${anilPassword}`);
   console.log(`    Handle:   @${ANIL_HANDLE}`);
   console.log(`    Role:     MANAGER`);
   console.log(`\n  Data seeded:`);
