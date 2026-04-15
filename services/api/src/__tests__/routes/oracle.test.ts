@@ -38,6 +38,7 @@ jest.mock("../../lib/anthropic", () => ({
 
 jest.mock("../../lib/providers/router", () => ({
   routeCompletion: jest.fn(),
+  streamCompletion: jest.fn(),
 }));
 
 jest.mock("../../lib/openclaw-router", () => ({
@@ -80,6 +81,7 @@ jest.mock("../../lib/logger", () => ({
 import { prisma } from "../../lib/prisma";
 import { getAnthropicClient } from "../../lib/anthropic";
 import { runOracleCompletion } from "../../lib/openclaw-router";
+import { routeCompletion, streamCompletion } from "../../lib/providers/router";
 import { oracleRouter } from "../../routes/oracle";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
@@ -88,6 +90,8 @@ const mockAnthropicCreate = jest.fn();
 const mockRunOracleCompletion = runOracleCompletion as jest.MockedFunction<
   typeof runOracleCompletion
 >;
+const mockRouteCompletion = routeCompletion as jest.MockedFunction<typeof routeCompletion>;
+const mockStreamCompletion = streamCompletion as jest.MockedFunction<typeof streamCompletion>;
 
 const app = express();
 app.use(express.json());
@@ -330,8 +334,7 @@ describe("POST /api/oracle/chat (OpenClaw shape)", () => {
   });
 
   it("still supports the legacy { messages, page } shape", async () => {
-    const { routeCompletion } = jest.requireMock("../../lib/providers/router");
-    (routeCompletion as jest.Mock).mockResolvedValueOnce({
+    mockRouteCompletion.mockResolvedValueOnce({
       content: "Legacy reply",
       provider: "anthropic",
       model: "claude-haiku-4-5-20251001",
@@ -350,6 +353,52 @@ describe("POST /api/oracle/chat (OpenClaw shape)", () => {
     const data = expectSuccessResponse<any>(res.body);
     expect(data.text).toBe("Legacy reply");
     expect(mockRunOracleCompletion).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/oracle/chat/stream", () => {
+  it("returns 400 for an invalid legacy chat payload", async () => {
+    const res = await request(app)
+      .post("/api/oracle/chat/stream")
+      .set(AUTH)
+      .send({ message: "not-supported-on-stream-route" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+  });
+
+  it("streams legacy chat responses over SSE", async () => {
+    mockStreamCompletion.mockImplementationOnce(async function* () {
+      yield "Legacy";
+      yield " reply";
+    });
+
+    const res = await request(app)
+      .post("/api/oracle/chat/stream")
+      .set(AUTH)
+      .send({
+        messages: [{ role: "user", content: "hi" }],
+        page: "dashboard",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
+    expect(res.headers["cache-control"]).toBe("no-cache");
+    expect(res.headers.connection).toBe("keep-alive");
+    expect(res.text).toContain('data: {"delta":"Legacy"}');
+    expect(res.text).toContain('data: {"delta":" reply"}');
+    expect(res.text).toContain("data: [DONE]");
+    expect(mockStreamCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskType: "oracle_fast",
+        maxTokens: 150,
+        temperature: 0.7,
+        messages: expect.arrayContaining([
+          expect.objectContaining({ role: "system" }),
+          { role: "user", content: "hi" },
+        ]),
+      }),
+    );
   });
 });
 

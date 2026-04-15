@@ -9,7 +9,7 @@ import {
   runOracleCompletion,
   resolveProfileForPhase,
 } from "../lib/openclaw-router";
-import { routeCompletion } from "../lib/providers/router";
+import { routeCompletion, streamCompletion } from "../lib/providers/router";
 import {
   buildCalibrationCommentary,
   buildBlendPreview,
@@ -618,6 +618,73 @@ oracleRouter.post("/chat", aiGenerationLimiter, async (req: AuthRequest, res) =>
     const errMsg = err instanceof Error ? err.message : String(err);
     const isProviderIssue = errMsg.includes("No providers available") || errMsg.includes("All providers failed");
     logger.error({ error: err, isProviderIssue }, "Oracle chat error");
+    res.status(isProviderIssue ? 503 : 500).json({
+      ok: false,
+      error: isProviderIssue
+        ? "Oracle is temporarily unavailable — no AI providers could be reached. Please try again shortly."
+        : "Oracle encountered an unexpected error. Please try again.",
+      code: isProviderIssue ? "PROVIDER_UNAVAILABLE" : "INTERNAL_ERROR",
+    });
+  }
+});
+
+oracleRouter.post("/chat/stream", aiGenerationLimiter, async (req: AuthRequest, res) => {
+  const parsed = chatLegacySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
+
+  try {
+    const body = chatLegacySchema.parse(req.body);
+
+    const pageHint = body.page ? `\nThe user is on the ${body.page} page.` : "";
+
+    let voiceHint = "";
+    try {
+      const profile = await prisma.voiceProfile.findUnique({ where: { userId: req.userId! } });
+      if (profile) {
+        voiceHint = `\nVoice: Humor ${profile.humor}/100, Formality ${profile.formality}/100, Brevity ${profile.brevity}/100, Contrarian ${profile.contrarianTone}/100.`;
+      }
+    } catch {}
+
+    const systemPrompt =
+      buildOracleSystemPrompt() +
+      `\n\nYou are in the floating chat widget inside Atlas.` +
+      pageHint + voiceHint +
+      `\n\nKeep responses under 50 words. Be helpful and personalized.`;
+
+    const llmMessages = [
+      { role: "system" as const, content: systemPrompt },
+      ...body.messages.map((m) => ({
+        role: (m.role === "oracle" ? "assistant" : "user") as "system" | "user" | "assistant",
+        content: m.content,
+      })),
+    ];
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    let closed = false;
+    req.on("close", () => { closed = true; });
+
+    for await (const chunk of streamCompletion({ taskType: "oracle_fast", maxTokens: 150, temperature: 0.7, messages: llmMessages })) {
+      if (closed) break;
+      res.write("data: " + JSON.stringify({ delta: chunk }) + "\n\n");
+    }
+
+    if (!closed) {
+      res.write("data: [DONE]\n\n");
+      res.end();
+    }
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
+      return;
+    }
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isProviderIssue = errMsg.includes("No providers available") || errMsg.includes("All providers failed");
+    logger.error({ error: err, isProviderIssue }, "Oracle chat stream error");
     res.status(isProviderIssue ? 503 : 500).json({
       ok: false,
       error: isProviderIssue

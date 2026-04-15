@@ -131,8 +131,8 @@ draftsRouter.post("/generate", aiGenerationLimiter, async (req: AuthRequest, res
         .status(504)
         .json(buildErrorResponse(req, "Generation timed out — please try again"));
     }
-    // fetchVoice step throws with this message when profile missing
-    if (err.message?.includes("Voice profile not found")) {
+    // fetchVoice step throws with this message when profile missing or uncalibrated
+    if (err.message?.includes("Voice profile not found") || err.message?.includes("Voice profile not fully calibrated")) {
       return res
         .status(400)
         .json(buildErrorResponse(req, err.message));
@@ -214,7 +214,7 @@ draftsRouter.post("/:id/regenerate", async (req: AuthRequest, res) => {
         .status(504)
         .json(buildErrorResponse(req, "Generation timed out — please try again"));
     }
-    if (err.message?.includes("Voice profile not found")) {
+    if (err.message?.includes("Voice profile not found") || err.message?.includes("Voice profile not fully calibrated")) {
       return res
         .status(400)
         .json(buildErrorResponse(req, err.message));
@@ -251,7 +251,7 @@ draftsRouter.post("/batch-from-content", async (req: AuthRequest, res) => {
     if (err.message?.includes("too short") || err.message?.includes("minimum 50")) {
       return res.status(400).json(buildErrorResponse(req, err.message));
     }
-    if (err.message?.includes("Voice profile not found")) {
+    if (err.message?.includes("Voice profile not found") || err.message?.includes("Voice profile not fully calibrated")) {
       return res.status(400).json(buildErrorResponse(req, err.message));
     }
     logger.error({ err: err.message }, "Batch generation failed");
@@ -318,7 +318,7 @@ draftsRouter.post("/:id/refine", async (req: AuthRequest, res) => {
     if (err instanceof TimeoutError) {
       return res.status(504).json(buildErrorResponse(req, "Refinement timed out — please try again"));
     }
-    if (err.message?.includes("Voice profile not found")) {
+    if (err.message?.includes("Voice profile not found") || err.message?.includes("Voice profile not fully calibrated")) {
       return res.status(400).json(buildErrorResponse(req, err.message));
     }
     logger.error({ err: err.message }, "Refine failed");

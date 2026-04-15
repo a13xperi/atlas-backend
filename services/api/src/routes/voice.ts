@@ -9,7 +9,12 @@ import { authenticate, AuthRequest } from "../middleware/auth";
 import { fetchTweetsByHandle } from "../lib/twitter";
 import { calibrateFromTweets, type CalibrationResult } from "../lib/calibrate";
 import { getVoiceInsights } from "../lib/voice-insights";
-import { blendVoices, applySwipeHeuristics, type SwipeSignal } from "../lib/voice-blend";
+import {
+  blendVoices,
+  applySwipeHeuristics,
+  type SwipeSignal,
+  normalizePercentages,
+} from "../lib/voice-blend";
 import { logger } from "../lib/logger";
 import { config } from "../lib/config";
 import { rateLimitByUser } from "../middleware/rateLimit";
@@ -485,6 +490,7 @@ voiceRouter.post("/blends", async (req: AuthRequest, res) => {
   try {
     const body = blendSchema.parse(req.body);
 
+    const normalizedVoices = normalizePercentages(body.voices);
     const [user, blend] = await Promise.all([
       prisma.user.findUnique({
         where: { id: req.userId },
@@ -495,7 +501,7 @@ voiceRouter.post("/blends", async (req: AuthRequest, res) => {
           userId: req.userId!,
           name: body.name,
           voices: {
-            create: body.voices.map((voice) => ({
+            create: normalizedVoices.map((voice) => ({
               label: voice.label,
               percentage: voice.percentage,
               referenceVoiceId: voice.referenceVoiceId,
@@ -625,6 +631,22 @@ voiceRouter.patch("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, r
       include: { referenceVoice: true },
     });
 
+    // Rebalance sibling voices so the blend always sums to 100
+    if (body.percentage !== undefined) {
+      const siblings = await prisma.blendVoice.findMany({
+        where: { blendId, id: { not: voiceId } },
+      });
+      const targetTotal = 100 - updated.percentage;
+      const siblingSum = siblings.reduce((s, v) => s + v.percentage, 0) || 1;
+      await Promise.all(
+        normalizePercentages(
+          siblings.map((s) => ({ ...s, percentage: Math.round((s.percentage / siblingSum) * targetTotal) }))
+        ).map((s) =>
+          prisma.blendVoice.update({ where: { id: s.id }, data: { percentage: s.percentage } })
+        )
+      );
+    }
+
     const fallbackUser = user ?? {
       id: req.userId!,
       displayName: null,
@@ -632,7 +654,13 @@ voiceRouter.patch("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, r
       avatarUrl: null,
     };
 
-    res.json(success({ voice: withSafeReferenceVoice(updated, fallbackUser) }));
+    // Refresh updated voice after potential sibling rebalancing
+    const refreshed = await prisma.blendVoice.findFirst({
+      where: { id: voiceId },
+      include: { referenceVoice: true },
+    });
+
+    res.json(success({ voice: withSafeReferenceVoice(refreshed ?? updated, fallbackUser) }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));

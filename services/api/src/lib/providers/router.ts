@@ -119,6 +119,32 @@ export async function completeWith(
 }
 
 /**
+ * Stream a completion from the best available provider that supports streaming.
+ * Selects the first provider in the chain with a `.stream` method.
+ */
+export async function* streamCompletion(request: CompletionRequest): AsyncGenerator<string> {
+  const taskType = request.taskType ?? "general";
+  const chain = getAvailableChain(taskType);
+
+  if (chain.length === 0) {
+    throw new Error(`No providers available for task type: ${taskType}`);
+  }
+
+  for (const provider of chain) {
+    if (typeof provider.stream === "function") {
+      const tieredRequest =
+        !request.model && provider.config.id === "anthropic" && MODEL_OVERRIDES[taskType]
+          ? { ...request, model: MODEL_OVERRIDES[taskType] }
+          : request;
+      yield* provider.stream(tieredRequest);
+      return;
+    }
+  }
+
+  throw new Error(`No streaming providers available for task type: ${taskType}`);
+}
+
+/**
  * Get the preferred provider for a task type without making a request.
  * Useful for checking availability before building requests.
  */

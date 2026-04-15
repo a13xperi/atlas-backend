@@ -273,7 +273,7 @@ usersRouter.post("/send-nudge", async (req: AuthRequest, res) => {
         category: "NOTIFICATION",
         userId: analyst.id,
       };
-      emitToUser(analyst.id, "new-alert", payload);
+      emitToUser(analyst.id, "alert:new", payload);
 
       // Look up the matching alert row to dispatch (createMany doesn't return IDs)
       prisma.alert

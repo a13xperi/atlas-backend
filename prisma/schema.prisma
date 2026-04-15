@@ -359,6 +359,23 @@ model Alert {
   @@map("alerts")
 }
 
+model TrendingTopic {
+  id        String   @id @default(cuid())
+  title     String
+  content   String
+  keywords  String[]
+  score     Float
+  category  String
+  source    String
+  url       String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([isActive, createdAt])
+  @@map("trending_topics")
+}
+
 model LearningLogEntry {
   id        String   @id @default(cuid())
   userId    String
@@ -394,11 +411,14 @@ model BriefingPreference {
   id           String   @id @default(cuid())
   userId       String   @unique
   deliveryTime String   @default("08:00")
+  timezone     String   @default("UTC")
+  briefType    String   @default("morning")
   topics       String[]
   sources      String[]
-  channel      String   @default("PORTAL")
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  updatedAt    DateTime @updatedAt
+  channel         String    @default("PORTAL")
+  lastDeliveredAt DateTime?
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  updatedAt       DateTime  @updatedAt
 
   @@map("briefing_preferences")
 }
@@ -411,8 +431,9 @@ model Briefing {
   sections  Json
   topics    String[]
   sources   String[]
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@map("briefings")
