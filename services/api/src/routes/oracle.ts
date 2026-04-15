@@ -25,7 +25,7 @@ import { prisma } from "../lib/prisma";
 import { withTimeout } from "../lib/timeout";
 import type { ToolCall } from "../lib/providers/types";
 
-export const oracleRouter: Router = Router();
+export const oracleRouter = Router();
 oracleRouter.use(authenticate);
 
 // Oracle endpoints all hit Anthropic (and sometimes burn multiple
@@ -176,7 +176,7 @@ async function handleSessionMessage(req: AuthRequest, res: Response) {
   try {
     const client = getAnthropicClient();
     const response = await client.messages.create({
-      model: "claude-sonnet-4-5-20251001",
+      model: "claude-sonnet-4-6",
       max_tokens: 800,
       system: buildOracleSessionSystemPrompt(nextContext),
       messages: messagesWithUser.slice(-20).map((message) => ({
@@ -665,19 +665,14 @@ oracleRouter.post("/chat/stream", aiGenerationLimiter, async (req: AuthRequest, 
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
-
-    let closed = false;
-    req.on("close", () => { closed = true; });
+    res.flushHeaders();
 
     for await (const chunk of streamCompletion({ taskType: "oracle_fast", maxTokens: 150, temperature: 0.7, messages: llmMessages })) {
-      if (closed) break;
       res.write("data: " + JSON.stringify({ delta: chunk }) + "\n\n");
     }
 
-    if (!closed) {
-      res.write("data: [DONE]\n\n");
-      res.end();
-    }
+    res.write("data: [DONE]\n\n");
+    res.end();
   } catch (err) {
     if (err instanceof z.ZodError) {
       res.status(400).json({ ok: false, error: "Invalid request", details: err.errors });
