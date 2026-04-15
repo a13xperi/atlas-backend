@@ -664,6 +664,8 @@ oracleRouter.post("/chat/stream", aiGenerationLimiter, async (req: AuthRequest, 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
 
     for await (const chunk of streamCompletion({ taskType: "oracle_fast", maxTokens: 150, temperature: 0.7, messages: llmMessages })) {
       res.write("data: " + JSON.stringify({ delta: chunk }) + "\n\n");
