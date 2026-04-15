@@ -345,3 +345,71 @@ describe("GET /api/analytics/days-to-peak", () => {
     expect(expectSuccessResponse<any>(res.body).peaks[0].name).toBe("fallback_handle");
   });
 });
+
+
+describe("GET /api/analytics/engagement-daily", () => {
+  const fixedNow = new Date("2026-04-15T12:00:00.000Z");
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(fixedNow);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("returns 401 without auth token", async () => {
+    const res = await request(app).get("/api/analytics/engagement-daily");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 7 days with zeroed engagement when no drafts exist", async () => {
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+    const res = await request(app).get("/api/analytics/engagement-daily").set(AUTH);
+    expect(res.status).toBe(200);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.days).toHaveLength(7);
+    expect(data.days.every((d: any) => d.predicted === 0 && d.actual === 0)).toBe(true);
+  });
+
+  it("aggregates predicted and actual engagement per day", async () => {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+    const targetDate = new Date(sevenDaysAgo);
+    targetDate.setDate(targetDate.getDate() + 3);
+    const dateStr = targetDate.toISOString().slice(0, 10);
+
+    (mockPrisma.tweetDraft.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        createdAt: targetDate,
+        predictedEngagement: 100,
+        actualEngagement: 50,
+      },
+      {
+        createdAt: targetDate,
+        predictedEngagement: 200,
+        actualEngagement: 75,
+      },
+    ]);
+
+    const res = await request(app).get("/api/analytics/engagement-daily").set(AUTH);
+    expect(res.status).toBe(200);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.days).toHaveLength(7);
+    const bucket = data.days.find((d: any) => d.date === dateStr);
+    expect(bucket).toBeDefined();
+    expect(bucket.predicted).toBe(300);
+    expect(bucket.actual).toBe(125);
+  });
+
+  it("returns 400 for unknown query params", async () => {
+    const res = await request(app).get("/api/analytics/engagement-daily?unexpected=1").set(AUTH);
+    expect(res.status).toBe(400);
+    const body = expectErrorResponse(res.body, "Invalid request");
+    expect(Array.isArray(body.details)).toBe(true);
+  });
+});
