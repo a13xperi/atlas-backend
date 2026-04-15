@@ -2,12 +2,12 @@
  * Auth routes test suite (legacy — tests /me endpoint behavior)
  * The comprehensive Supabase auth tests are in routes/auth.test.ts
  * This file tests: GET /me, auth middleware behavior
- * Mocks: Prisma, Supabase (null — JWT fallback), jsonwebtoken
+ * Mocks: Prisma, Supabase (null — JWT fallback)
  */
 
 import request from "supertest";
-import jwt from "jsonwebtoken";
 import express from "express";
+import jwt from "jsonwebtoken";
 import { requestIdMiddleware } from "../middleware/requestId";
 import { expectSuccessResponse } from "./helpers/response";
 
@@ -29,11 +29,6 @@ jest.mock("../lib/prisma", () => ({
   },
 }));
 
-jest.mock("jsonwebtoken", () => ({
-  sign: jest.fn().mockReturnValue("mock_token"),
-  verify: jest.fn().mockReturnValue({ userId: "user-123" }),
-}));
-
 jest.mock("bcryptjs", () => ({
   hash: jest.fn().mockResolvedValue("hashed_password"),
   compare: jest.fn().mockResolvedValue(true),
@@ -53,8 +48,8 @@ app.use(express.json());
 app.use(requestIdMiddleware);
 app.use("/api/auth", authRouter);
 
-function authHeader(userId = "user-123"): string {
-  return `Bearer ${jwt.sign({ userId }, process.env.JWT_SECRET as string)}`;
+function signTestToken(userId = "user-123"): string {
+  return jwt.sign({ userId }, process.env.JWT_SECRET || "test-secret", { expiresIn: "7d" });
 }
 
 const mockUser = {
@@ -122,37 +117,43 @@ describe("POST /api/auth/login", () => {
 });
 
 describe("GET /api/auth/me", () => {
+  const validToken = () => `Bearer ${signTestToken()}`;
+
   it("returns 401 when no token provided", async () => {
     const res = await request(app).get("/api/auth/me");
     expect(res.status).toBe(401);
   });
 
   it("returns 404 when user not found", async () => {
-    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    (mockPrisma.user.findUnique as jest.Mock)
+      .mockResolvedValueOnce({ id: "user-123", tokensInvalidatedBefore: null })
+      .mockResolvedValueOnce(null);
 
     const res = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", authHeader());
+      .set("Authorization", validToken());
 
     expect(res.status).toBe(404);
   });
 
   it("returns user with voiceProfile when authenticated", async () => {
-    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
-      ...mockUser,
-      voiceProfile: { humor: 5, formality: 5 },
-    });
+    (mockPrisma.user.findUnique as jest.Mock)
+      .mockResolvedValueOnce({ id: "user-123", tokensInvalidatedBefore: null })
+      .mockResolvedValueOnce({
+        ...mockUser,
+        voiceProfile: { humor: 5, formality: 5 },
+      });
 
     const res = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", authHeader());
+      .set("Authorization", validToken());
 
     expect(res.status).toBe(200);
     const data = expectSuccessResponse<any>(res.body);
     expect(data.user.id).toBe("user-123");
     expect(data.user.voiceProfile).toBeDefined();
     expect(data.user.xBio).toBe("Crypto analyst");
-    expect(data.user.avatarUrl).toBe("https://example.com/avatar.jpg");
+    expect(data.user.xAvatarUrl).toBe("https://example.com/avatar.jpg");
     expect(data.user.xFollowerCount).toBe(12345);
     expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
       where: { id: "user-123" },

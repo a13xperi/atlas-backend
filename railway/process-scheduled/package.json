@@ -1,0 +1,8 @@
+{
+  "name": "atlas-process-scheduled-cron",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node run-process-scheduled.mjs"
+  }
+}

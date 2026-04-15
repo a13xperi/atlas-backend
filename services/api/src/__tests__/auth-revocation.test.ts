@@ -1,11 +1,10 @@
 /**
- * JWT revocation on logout integration tests (C-6)
- * Tests Redis jti blacklist behavior via mocked jwt-revocation.
+ * JWT revocation on logout integration tests
+ * Tests that /logout sets tokensInvalidatedBefore and middleware rejects old tokens
  */
 
 import request from "supertest";
 import express from "express";
-import jwt from "jsonwebtoken";
 import { requestIdMiddleware } from "../middleware/requestId";
 import { expectSuccessResponse } from "./helpers/response";
 
@@ -41,6 +40,12 @@ jest.mock("../lib/prisma", () => ({
   },
 }));
 
+jest.mock("jsonwebtoken", () => ({
+  sign: jest.fn().mockReturnValue("mock_token"),
+  verify: jest.fn().mockReturnValue({ userId: "user-123", iat: 1000 }),
+  decode: jest.fn().mockReturnValue({ iat: 1000 }),
+}));
+
 jest.mock("bcryptjs", () => ({
   __esModule: true,
   default: {
@@ -59,24 +64,12 @@ jest.mock("../middleware/rateLimit", () => ({
   clearRateLimitStore: jest.fn(),
 }));
 
-// In-memory jti blacklist for tests
-const revokedJtis = new Set<string>();
-
-jest.mock("../lib/jwt-revocation", () => ({
-  revokeJti: jest.fn((jti: string, _ttl: number) => {
-    revokedJtis.add(jti);
-    return Promise.resolve(true);
-  }),
-  isJtiRevoked: jest.fn((jti?: string) =>
-    Promise.resolve(jti ? revokedJtis.has(jti) : false),
-  ),
-  remainingTtlSeconds: jest.fn().mockReturnValue(3600),
-}));
-
 import { authRouter } from "../routes/auth";
 import { prisma } from "../lib/prisma";
+import jwt from "jsonwebtoken";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
+const mockJwt = jwt as jest.Mocked<typeof jwt>;
 
 const app = express();
 app.use(express.json());
@@ -92,92 +85,120 @@ const mockUser = {
   voiceProfile: null,
 };
 
-function signToken(userId = "user-123", jti?: string): string {
-  return jwt.sign({ userId, jti }, process.env.JWT_SECRET!, { expiresIn: "7d" });
-}
-
-function authHeader(userId = "user-123", jti?: string): string {
-  return `Bearer ${signToken(userId, jti)}`;
-}
-
 beforeEach(() => {
   jest.clearAllMocks();
-  revokedJtis.clear();
   (mockPrisma.user.findUnique as jest.Mock).mockReset();
   (mockPrisma.user.findFirst as jest.Mock).mockReset();
   (mockPrisma.user.update as jest.Mock).mockReset();
   (mockPrisma.user.create as jest.Mock).mockReset();
 
   // Default: getUser fails so authenticate falls through to JWT path
-  mockSupabaseAuth.getUser.mockResolvedValue({
-    data: { user: null },
-    error: { message: "invalid" },
-  });
+  mockSupabaseAuth.getUser.mockResolvedValue({ data: { user: null }, error: { message: "invalid" } });
   // Default: Supabase sign-in fails so login falls through to legacy path
-  mockSupabaseAuth.signInWithPassword.mockResolvedValue({
-    data: { session: null },
-    error: { message: "invalid" },
-  });
+  mockSupabaseAuth.signInWithPassword.mockResolvedValue({ data: { session: null }, error: { message: "invalid" } });
+
+  // Default jwt mocks
+  (mockJwt.sign as jest.Mock).mockReturnValue("mock_token");
+  (mockJwt.verify as jest.Mock).mockReturnValue({ userId: "user-123", iat: 1000 });
+  (mockJwt.decode as jest.Mock).mockReturnValue({ iat: 1000 });
 });
 
 describe("JWT revocation on logout", () => {
-  it("valid token with jti works before logout", async () => {
-    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
+  it("valid legacy token works before logout", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue({
+      ...mockUser,
+      tokensInvalidatedBefore: null,
+    });
 
     const res = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", authHeader("user-123", "jti-1"));
+      .set("Authorization", "Bearer mock_token");
 
     expect(res.status).toBe(200);
   });
 
   it("same token returns 401 after /logout", async () => {
-    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
+    (mockPrisma.user.findUnique as jest.Mock)
+      .mockResolvedValueOnce({ ...mockUser, tokensInvalidatedBefore: null })
+      .mockResolvedValueOnce({ ...mockUser, supabaseId: "sb-uuid-123" })
+      .mockResolvedValueOnce({ ...mockUser, tokensInvalidatedBefore: new Date(2000 * 1000) });
 
-    const token = signToken("user-123", "jti-2");
+    (mockPrisma.user.update as jest.Mock).mockResolvedValue({
+      ...mockUser,
+      tokensInvalidatedBefore: new Date(2000 * 1000),
+    });
 
     const logoutRes = await request(app)
       .post("/api/auth/logout")
-      .set("Authorization", `Bearer ${token}`);
+      .set("Authorization", "Bearer mock_token");
     expect(logoutRes.status).toBe(200);
 
     const meRes = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", `Bearer ${token}`);
+      .set("Authorization", "Bearer mock_token");
+
     expect(meRes.status).toBe(401);
-    expect(meRes.body.error).toMatch(/Invalid or expired token/i);
+    expect(meRes.body.error).toMatch(/revoked/i);
   });
 
-  it("a different token for the same user still works after logout", async () => {
-    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
+  it("new token issued after logout works", async () => {
+    (mockPrisma.user.findUnique as jest.Mock)
+      .mockResolvedValueOnce({ ...mockUser, passwordHash: "hashed-password", tokensInvalidatedBefore: null })
+      .mockResolvedValueOnce({ ...mockUser, tokensInvalidatedBefore: null })
+      .mockResolvedValueOnce({ ...mockUser, supabaseId: "sb-uuid-123" })
+      .mockResolvedValueOnce({ ...mockUser, tokensInvalidatedBefore: new Date(1000 * 1000) })
+      .mockResolvedValueOnce({ ...mockUser, voiceProfile: null });
 
-    const tokenA = signToken("user-123", "jti-a");
-    const tokenB = signToken("user-123", "jti-b");
+    (mockPrisma.user.update as jest.Mock).mockResolvedValue({
+      ...mockUser,
+      tokensInvalidatedBefore: new Date(1000 * 1000),
+    });
 
+    // login with old credentials to get token t1
+    const loginRes = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "test@example.com", password: "secret123" });
+    expect(loginRes.status).toBe(200);
+    const t1 = expectSuccessResponse<any>(loginRes.body).token;
+
+    // logout with t1
     const logoutRes = await request(app)
       .post("/api/auth/logout")
-      .set("Authorization", `Bearer ${tokenA}`);
+      .set("Authorization", `Bearer ${t1}`);
     expect(logoutRes.status).toBe(200);
+
+    // simulate new token t2 with later iat
+    (mockJwt.verify as jest.Mock).mockReturnValue({ userId: "user-123", iat: 2000 });
+    (mockJwt.decode as jest.Mock).mockReturnValue({ iat: 2000 });
 
     const meRes = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", `Bearer ${tokenB}`);
+      .set("Authorization", "Bearer mock_token_new");
     expect(meRes.status).toBe(200);
   });
 
-  it("legacy token without jti still works after logout", async () => {
-    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
+  it("logout invalidates tokens on all devices (same user, different tokens)", async () => {
+    (mockPrisma.user.findUnique as jest.Mock)
+      .mockResolvedValueOnce({ ...mockUser, tokensInvalidatedBefore: null })
+      .mockResolvedValueOnce({ ...mockUser, supabaseId: "sb-uuid-123" })
+      .mockResolvedValueOnce({ ...mockUser, tokensInvalidatedBefore: new Date(2000 * 1000) });
 
-    const token = signToken("user-123");
+    (mockPrisma.user.update as jest.Mock).mockResolvedValue({
+      ...mockUser,
+      tokensInvalidatedBefore: new Date(2000 * 1000),
+    });
 
+    // token A calls logout
     const logoutRes = await request(app)
       .post("/api/auth/logout")
-      .set("Authorization", `Bearer ${token}`);
+      .set("Authorization", "Bearer token_a");
     expect(logoutRes.status).toBe(200);
 
+    // token B (same user, earlier iat) is now rejected
     const meRes = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", `Bearer ${token}`);
-    expect(meRes.status).toBe(200);
+      .set("Authorization", "Bearer token_b");
+    expect(meRes.status).toBe(401);
+    expect(meRes.body.error).toMatch(/revoked/i);
   });
 });

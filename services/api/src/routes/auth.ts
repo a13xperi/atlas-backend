@@ -404,12 +404,35 @@ authRouter.post("/logout", authenticate, async (req: AuthRequest, res) => {
       }
     }
 
+    // 1. Mark all tokens issued before now as invalid
+    await prisma.user.update({
+      where: { id: req.userId! },
+      data: { tokensInvalidatedBefore: new Date(Date.now() + 1000) },
+    });
+
+    // 2. Kill Supabase refresh token server-side (best-effort)
+    if (supabaseAdmin) {
+      const user = await prisma.user.findUnique({
+        where: { id: req.userId! },
+        select: { supabaseId: true },
+      });
+      if (user?.supabaseId) {
+        try {
+          await supabaseAdmin.auth.admin.signOut(user.supabaseId, "global");
+        } catch (err: any) {
+          logger.warn({ err: err.message }, "Supabase signOut failed (non-fatal)");
+        }
+      }
+    }
+
+    // 3. Clear cookies
     clearAuthCookies(res);
     res.json(success({ success: true }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
+    logger.error({ err: err.message }, "Logout error");
     res.status(500).json(error("Logout failed"));
   }
 });

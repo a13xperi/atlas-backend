@@ -1,12 +1,12 @@
 /**
  * Auth routes test suite
  * Tests POST /register, POST /login, GET /me, GET /sessions, DELETE /sessions/:id
- * Mocks: Prisma, Supabase admin client, jsonwebtoken
+ * Mocks: Prisma, Supabase admin client
  */
 
 import request from "supertest";
-import jwt from "jsonwebtoken";
 import express from "express";
+import jwt from "jsonwebtoken";
 import { requestIdMiddleware } from "../../middleware/requestId";
 import { expectErrorResponse, expectSuccessResponse } from "../helpers/response";
 
@@ -50,11 +50,6 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("jsonwebtoken", () => ({
-  sign: jest.fn().mockReturnValue("mock_token"),
-  verify: jest.fn().mockReturnValue({ userId: "user-123" }),
-}));
-
 jest.mock("bcryptjs", () => ({
   __esModule: true,
   default: {
@@ -75,9 +70,11 @@ app.use(express.json());
 app.use(requestIdMiddleware);
 app.use("/api/auth", authRouter);
 
-function authHeader(userId = "user-123"): string {
-  return `Bearer ${jwt.sign({ userId }, process.env.JWT_SECRET as string)}`;
+function signTestToken(userId = "user-123"): string {
+  return jwt.sign({ userId }, process.env.JWT_SECRET || "test-secret", { expiresIn: "7d" });
 }
+
+const AUTH = () => `Bearer ${signTestToken()}`;
 
 const mockVoiceProfile = {
   id: "voice-1",
@@ -95,6 +92,7 @@ const mockUser = {
   email: "atlas@example.com",
   role: "ANALYST",
   supabaseId: "sb-uuid-123",
+  tokensInvalidatedBefore: null,
   voiceProfile: mockVoiceProfile,
 };
 
@@ -171,7 +169,6 @@ describe("POST /api/auth/login", () => {
       error: null,
     });
     (mockPrisma.user.findFirst as jest.Mock).mockResolvedValueOnce(mockUser);
-    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(mockUser);
 
     const res = await request(app)
       .post("/api/auth/login")
@@ -289,11 +286,13 @@ describe("POST /api/auth/refresh", () => {
 
 describe("GET /api/auth/me", () => {
   it("returns user with voice profile when authenticated", async () => {
-    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(mockUser);
+    (mockPrisma.user.findUnique as jest.Mock)
+      .mockResolvedValueOnce({ id: "user-123", tokensInvalidatedBefore: null })
+      .mockResolvedValueOnce(mockUser);
 
     const res = await request(app)
       .get("/api/auth/me")
-      .set("Authorization", authHeader());
+      .set("Authorization", AUTH());
 
     expect(res.status).toBe(200);
     const data = expectSuccessResponse<any>(res.body);
@@ -309,11 +308,15 @@ describe("GET /api/auth/me", () => {
 
 describe("GET /api/auth/sessions", () => {
   it("lists active sessions for authenticated user", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-123",
+      tokensInvalidatedBefore: null,
+    });
     (mockPrisma.session.findMany as jest.Mock).mockResolvedValueOnce([mockSession]);
 
     const res = await request(app)
       .get("/api/auth/sessions")
-      .set("Authorization", authHeader());
+      .set("Authorization", AUTH());
 
     expect(res.status).toBe(200);
     const data = expectSuccessResponse<any>(res.body);
@@ -324,23 +327,31 @@ describe("GET /api/auth/sessions", () => {
 
 describe("DELETE /api/auth/sessions/:id", () => {
   it("revokes a session for the authenticated user", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-123",
+      tokensInvalidatedBefore: null,
+    });
     (mockPrisma.session.findFirst as jest.Mock).mockResolvedValueOnce(mockSession);
     (mockPrisma.session.delete as jest.Mock).mockResolvedValueOnce(mockSession);
 
     const res = await request(app)
       .delete("/api/auth/sessions/session-1")
-      .set("Authorization", authHeader());
+      .set("Authorization", AUTH());
 
     expect(res.status).toBe(200);
     expect(expectSuccessResponse<any>(res.body)).toEqual({ success: true });
   });
 
   it("returns 404 when session is not found", async () => {
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-123",
+      tokensInvalidatedBefore: null,
+    });
     (mockPrisma.session.findFirst as jest.Mock).mockResolvedValueOnce(null);
 
     const res = await request(app)
       .delete("/api/auth/sessions/missing-session")
-      .set("Authorization", authHeader());
+      .set("Authorization", AUTH());
 
     expect(res.status).toBe(404);
   });
