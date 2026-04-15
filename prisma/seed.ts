@@ -1,9 +1,6 @@
 import { PrismaClient } from "@prisma/client";
-import * as bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
-
-const SEED_PASSWORD = "atlas-demo-2026";
 
 function daysAgo(n: number): Date {
   const d = new Date();
@@ -16,8 +13,6 @@ function randomBetween(min: number, max: number): number {
 }
 
 async function main() {
-  const passwordHash = await bcrypt.hash(SEED_PASSWORD, 10);
-
   // --- 1. Users ---
   const users = await Promise.all([
     prisma.user.upsert({
@@ -26,7 +21,6 @@ async function main() {
       create: {
         handle: "piers",
         email: "piers@delphidigital.io",
-        passwordHash,
         displayName: "Piers Kicks",
         role: "ADMIN",
         onboardingTrack: "TRACK_A",
@@ -38,7 +32,6 @@ async function main() {
       create: {
         handle: "alex",
         email: "alex@delphidigital.io",
-        passwordHash,
         displayName: "Alex Chen",
         role: "MANAGER",
         onboardingTrack: "TRACK_A",
@@ -50,7 +43,6 @@ async function main() {
       create: {
         handle: "demo-analyst",
         email: "demo@delphidigital.io",
-        passwordHash,
         displayName: "Demo Analyst",
         role: "ANALYST",
         onboardingTrack: "TRACK_B",
