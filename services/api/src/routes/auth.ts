@@ -238,8 +238,30 @@ authRouter.post("/refresh", async (req, res) => {
     const bodyRefresh = body.refresh_token;
     const refreshToken = cookieRefresh || bodyRefresh;
 
+    // Step 1: if the access token is a legacy JWT we issued, re-sign it.
+    // Twitter-OAuth sessions store a Twitter OAuth refresh token in
+    // atlas_refresh_token which is NOT a Supabase refresh token. Never pass
+    // it to supabaseAdmin.auth.refreshSession.
+    const accessToken = getAccessToken(req);
+    if (accessToken) {
+      try {
+        const decoded = jwt.verify(accessToken, config.JWT_SECRET) as {
+          userId: string;
+          jti?: string;
+        };
+        if (decoded.jti && (await isJtiRevoked(decoded.jti))) {
+          return res.status(401).json(error("Invalid or expired token"));
+        }
+        const newToken = signLegacyToken(decoded.userId);
+        setAuthCookies(res, newToken, refreshToken ?? "");
+        return res.json(success({ token: newToken, refresh_token: refreshToken ?? null }));
+      } catch {
+        // Not a legacy JWT — fall through to Supabase refresh.
+      }
+    }
+
+    // Step 2: no refresh token — try legacy header re-sign.
     if (!refreshToken) {
-      // For legacy JWT users: check Authorization header and re-sign
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
         try {
@@ -247,17 +269,8 @@ authRouter.post("/refresh", async (req, res) => {
             userId: string;
             jti?: string;
           };
-          // C-6: refresh must respect the revocation list. Without this check,
-          // a logged-out token could call /refresh and mint a fresh jti,
-          // defeating the blacklist.
-          if (decoded.jti) {
-            try {
-              if (await isJtiRevoked(decoded.jti)) {
-                return res.status(401).json(error("Invalid or expired token"));
-              }
-            } catch {
-              // Best-effort: allow on Redis error in non-prod
-            }
+          if (decoded.jti && (await isJtiRevoked(decoded.jti))) {
+            return res.status(401).json(error("Invalid or expired token"));
           }
           const newToken = signLegacyToken(decoded.userId);
           return res.json(success({ token: newToken, refresh_token: null }));
@@ -268,6 +281,7 @@ authRouter.post("/refresh", async (req, res) => {
       return res.status(400).json(error("Missing refresh token"));
     }
 
+    // Step 3: Supabase refresh — only if access token is NOT a legacy JWT.
     if (!supabaseAdmin) {
       return res.status(503).json(error("Auth service unavailable"));
     }
@@ -277,7 +291,7 @@ authRouter.post("/refresh", async (req, res) => {
     });
 
     if (refreshError || !data.session) {
-      clearAuthCookies(res);
+      // Do NOT clearAuthCookies — the cookie may still be a valid Twitter OAuth token.
       return res.status(401).json(error("Invalid refresh token"));
     }
 
@@ -340,6 +354,11 @@ authRouter.post("/logout", authenticate, async (req: AuthRequest, res) => {
   try {
     emptyBodySchema.parse(req.body ?? {});
 
+    // C-6 NOTE: Do NOT call supabaseAdmin.auth.admin.signOut(supabaseId, "global") here.
+    // PR #204 tried this and broke login in prod (reverted in #214): admin.signOut invalidates
+    // the Supabase session; on Twitter-OAuth re-login the freshly issued token's iat can land
+    // within the same second as tokensInvalidatedBefore, rejecting valid logins.
+    // Per-jti revocation via Redis is sufficient and race-free.
     // C-6: insert this token's jti into the Redis blacklist with a TTL
     // equal to the token's remaining lifetime, so any concurrent
     // session/tab using the same JWT is rejected on its next request.
