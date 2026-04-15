@@ -12,6 +12,46 @@ import {
 import { logger } from "../lib/logger";
 
 export const adminRouter: Router = Router();
+
+const promoteSchema = z.object({
+  handle: z.string().min(1),
+  secret: z.string().min(1),
+  role: z.enum(["ANALYST", "MANAGER", "ADMIN"]).default("MANAGER"),
+});
+
+// POST /api/admin/promote — secret-gated role promotion (demo utility, no JWT required)
+adminRouter.post("/promote", async (req, res) => {
+  try {
+    const demoSecret = process.env.DEMO_ADMIN_SECRET;
+    if (!demoSecret) {
+      return res.status(404).json(error("Not found", 404));
+    }
+
+    const body = promoteSchema.parse(req.body);
+    if (body.secret !== demoSecret) {
+      return res.status(401).json(error("Unauthorized", 401));
+    }
+
+    const user = await prisma.user.findUnique({ where: { handle: body.handle } });
+    if (!user) {
+      return res.status(404).json(error("User not found", 404));
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: { role: body.role },
+    });
+
+    return res.json(success({ handle: updated.handle, role: updated.role, id: updated.id }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    logger.error({ err: err.message }, "Promote user failed");
+    return res.status(500).json(error("Failed to promote user", 500));
+  }
+});
+
 adminRouter.use(authenticate);
 
 /** Require ADMIN role — returns the user or sends 403 */
