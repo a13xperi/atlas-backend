@@ -4,6 +4,8 @@
  * These tests use the seeded demo account (maya-demo).
  */
 
+const SMOKE_ENABLED = process.env.SMOKE_API_URL || process.env.ENABLE_PROD_SMOKE === "true";
+
 const API = process.env.SMOKE_API_URL || "https://api-production-9bef.up.railway.app";
 const DEMO_EMAIL = "maya.demo@delphidigital.io";
 const DEMO_PASSWORD = "AtlasDemo2026!";
@@ -21,7 +23,8 @@ async function api(path: string, opts: RequestInit = {}): Promise<{ status: numb
   return { status: res.status, json };
 }
 
-describe("E2E Smoke Tests", () => {
+const d = SMOKE_ENABLED ? describe : describe.skip;
+d("E2E Smoke Tests", () => {
   // Auth flow
   describe("Auth", () => {
     it("POST /api/auth/login — logs in demo user", async () => {
