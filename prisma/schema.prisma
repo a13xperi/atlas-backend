@@ -611,3 +611,29 @@ model BackupLog {
   @@index([triggerSource, triggeredAt])
   @@map("backup_logs")
 }
+
+model Bug {
+  id               String    @id @default(cuid())
+  bugNumber        Int       @unique @default(autoincrement())
+  title            String
+  description      String    @default("")
+  pageRoute        String?
+  pageUrl          String?
+  severity         String    @default("medium")
+  status           String    @default("open")
+  source           String?
+  project          String?
+  foundBy          String?
+  fixedBy          String?
+  tags             String[]
+  notes            String?
+  fingerprint      String?
+  occurrenceCount  Int       @default(1)
+  userAgent        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastSeenAt       DateTime?
+  fixedAt          DateTime?
+
+  @@map("bugs")
+}
