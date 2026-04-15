@@ -65,7 +65,12 @@ const allowedOrigins = config.FRONTEND_URL.split(",")
 // fail loudly instead so the bad deploy is caught before traffic hits it.
 assertCorsConfig({ allowedOrigins, nodeEnv: config.NODE_ENV });
 
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+  }),
+);
 app.use(cors(buildCorsOptions(allowedOrigins)));
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
