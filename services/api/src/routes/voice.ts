@@ -485,22 +485,40 @@ voiceRouter.post("/blends", async (req: AuthRequest, res) => {
   try {
     const body = blendSchema.parse(req.body);
 
-    const blend = await prisma.savedBlend.create({
-      data: {
-        userId: req.userId!,
-        name: body.name,
-        voices: {
-          create: body.voices.map((voice) => ({
-            label: voice.label,
-            percentage: voice.percentage,
-            referenceVoiceId: voice.referenceVoiceId,
-          })),
+    const [user, blend] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { id: true, displayName: true, handle: true, avatarUrl: true },
+      }),
+      prisma.savedBlend.create({
+        data: {
+          userId: req.userId!,
+          name: body.name,
+          voices: {
+            create: body.voices.map((voice) => ({
+              label: voice.label,
+              percentage: voice.percentage,
+              referenceVoiceId: voice.referenceVoiceId,
+            })),
+          },
         },
-      },
-      include: { voices: true },
-    });
+        include: { voices: { include: { referenceVoice: true } } },
+      }),
+    ]);
 
-    res.json(success({ blend }));
+    const fallbackUser = user ?? {
+      id: req.userId!,
+      displayName: null,
+      handle: null,
+      avatarUrl: null,
+    };
+
+    const safeBlend = {
+      ...blend,
+      voices: blend.voices.map((voice) => withSafeReferenceVoice(voice, fallbackUser)),
+    };
+
+    res.json(success({ blend: safeBlend }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
@@ -520,13 +538,31 @@ voiceRouter.patch("/blends/:id", async (req: AuthRequest, res) => {
     });
     if (!existingBlend) return res.status(404).json(error("Blend not found"));
 
-    const blend = await prisma.savedBlend.update({
-      where: { id: blendId },
-      data: { name: body.name },
-      include: { voices: { include: { referenceVoice: true } } },
-    });
+    const [user, blend] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { id: true, displayName: true, handle: true, avatarUrl: true },
+      }),
+      prisma.savedBlend.update({
+        where: { id: blendId },
+        data: { name: body.name },
+        include: { voices: { include: { referenceVoice: true } } },
+      }),
+    ]);
 
-    res.json(success({ blend }));
+    const fallbackUser = user ?? {
+      id: req.userId!,
+      displayName: null,
+      handle: null,
+      avatarUrl: null,
+    };
+
+    const safeBlend = {
+      ...blend,
+      voices: blend.voices.map((voice) => withSafeReferenceVoice(voice, fallbackUser)),
+    };
+
+    res.json(success({ blend: safeBlend }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
@@ -562,9 +598,16 @@ voiceRouter.patch("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, r
     const voiceId = req.params.voiceId as string;
     const body = updateBlendVoiceSchema.parse(req.body);
 
-    const blend = await prisma.savedBlend.findFirst({
-      where: { id: blendId, userId: req.userId },
-    });
+    const [user, blend] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { id: true, displayName: true, handle: true, avatarUrl: true },
+      }),
+      prisma.savedBlend.findFirst({
+        where: { id: blendId, userId: req.userId },
+      }),
+    ]);
+
     if (!blend) return res.status(404).json(error("Blend not found"));
 
     const voice = await prisma.blendVoice.findFirst({
@@ -582,7 +625,14 @@ voiceRouter.patch("/blends/:blendId/voices/:voiceId", async (req: AuthRequest, r
       include: { referenceVoice: true },
     });
 
-    res.json(success({ voice: updated }));
+    const fallbackUser = user ?? {
+      id: req.userId!,
+      displayName: null,
+      handle: null,
+      avatarUrl: null,
+    };
+
+    res.json(success({ voice: withSafeReferenceVoice(updated, fallbackUser) }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
