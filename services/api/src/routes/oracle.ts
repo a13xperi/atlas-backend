@@ -176,7 +176,7 @@ async function handleSessionMessage(req: AuthRequest, res: Response) {
   try {
     const client = getAnthropicClient();
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-4-5-20251001",
       max_tokens: 800,
       system: buildOracleSessionSystemPrompt(nextContext),
       messages: messagesWithUser.slice(-20).map((message) => ({
@@ -664,6 +664,7 @@ oracleRouter.post("/chat/stream", aiGenerationLimiter, async (req: AuthRequest, 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
 
     let closed = false;
     req.on("close", () => { closed = true; });
