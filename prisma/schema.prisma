@@ -8,52 +8,53 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  supabaseId    String?
-  handle        String   @unique
-  email         String?  @unique
-  passwordHash  String?
-  displayName   String?
-  avatarUrl     String?
-  role          Role     @default(ANALYST)
-  onboardingTrack OnboardingTrack?
-  telegramChatId    String?
-  xHandle           String?
-  xAccessToken      String?
-  xRefreshToken     String?
-  xTokenExpiresAt   DateTime?
+  id               String           @id @default(cuid())
+  supabaseId       String?
+  handle           String           @unique
+  email            String?          @unique
+  passwordHash     String?
+  displayName      String?
+  avatarUrl        String?
+  role             Role             @default(ANALYST)
+  onboardingTrack  OnboardingTrack?
+  telegramChatId   String?
+  xHandle          String?
+  xAccessToken     String?
+  xRefreshToken    String?
+  xTokenExpiresAt  DateTime?
   // C-3: AES-256-GCM encrypted (format "v1:iv:tag:ct") token columns.
   // Live alongside plaintext columns during the migration window — the
   // read path prefers `*Enc` and falls back to plaintext, so either set
   // of columns can be populated. See services/api/src/lib/crypto.ts.
-  xAccessTokenEnc   String?
-  xRefreshTokenEnc  String?
-  xBio              String?
-  xAvatarUrl        String?
-  xFollowerCount    Int?
-  tourCompleted     Boolean  @default(false)
-  tourStep          Int      @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  xAccessTokenEnc  String?
+  xRefreshTokenEnc String?
+  xBio             String?
+  xAvatarUrl       String?
+  xFollowerCount   Int?
+  tourCompleted    Boolean          @default(false)
+  tourStep         Int              @default(0)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
-  voiceProfile      VoiceProfile?
-  referenceVoices   ReferenceVoice[]
-  savedBlends       SavedBlend[]
-  tweetDrafts       TweetDraft[]
-  draftQueueItems   DraftQueueItem[]
-  analyticsEvents   AnalyticsEvent[]
-  alertSubscriptions AlertSubscription[]
-  sessions          Session[]
-  oracleSessions    OracleSession[]
-  researchResults   ResearchResult[]
-  generatedImages   GeneratedImage[]
-  alerts            Alert[]
-  briefingPreference BriefingPreference?
-  briefings          Briefing[]
-  nlpMonitors       NlpMonitor[]
-  campaigns         Campaign[]
+  voiceProfile          VoiceProfile?
+  referenceVoices       ReferenceVoice[]
+  savedBlends           SavedBlend[]
+  tweetDrafts           TweetDraft[]
+  draftQueueItems       DraftQueueItem[]
+  analyticsEvents       AnalyticsEvent[]
+  alertSubscriptions    AlertSubscription[]
+  sessions              Session[]
+  oracleSessions        OracleSession[]
+  researchResults       ResearchResult[]
+  generatedImages       GeneratedImage[]
+  alerts                Alert[]
+  briefingPreference    BriefingPreference?
+  briefings             Briefing[]
+  nlpMonitors           NlpMonitor[]
+  campaigns             Campaign[]
   voiceDimensionInsight VoiceDimensionInsight?
   blendedVoiceProfile   BlendedVoiceProfile?
+  voiceSwipeSignals     VoiceSwipeSignal[]
 
   @@index([supabaseId])
   @@index([xHandle])
@@ -98,25 +99,25 @@ model OracleSession {
 }
 
 model VoiceProfile {
-  id              String   @id @default(cuid())
-  userId          String   @unique
-  humor           Int      @default(50)
-  formality       Int      @default(50)
-  brevity         Int      @default(50)
-  contrarianTone  Int      @default(50)
-  directness               Int     @default(50)
-  warmth                   Int     @default(50)
-  technicalDepth           Int     @default(50)
-  confidence               Int     @default(50)
-  evidenceOrientation      Int     @default(50)
-  solutionOrientation      Int     @default(50)
-  socialPosture            Int     @default(50)
-  selfPromotionalIntensity Int     @default(50)
-  maturity        VoiceMaturity @default(BEGINNER)
-  tweetsAnalyzed  Int      @default(0)
-  analysis        String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                       String        @id @default(cuid())
+  userId                   String        @unique
+  humor                    Int           @default(50)
+  formality                Int           @default(50)
+  brevity                  Int           @default(50)
+  contrarianTone           Int           @default(50)
+  directness               Int           @default(50)
+  warmth                   Int           @default(50)
+  technicalDepth           Int           @default(50)
+  confidence               Int           @default(50)
+  evidenceOrientation      Int           @default(50)
+  solutionOrientation      Int           @default(50)
+  socialPosture            Int           @default(50)
+  selfPromotionalIntensity Int           @default(50)
+  maturity                 VoiceMaturity @default(BEGINNER)
+  tweetsAnalyzed           Int           @default(0)
+  analysis                 String?
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -130,15 +131,15 @@ enum VoiceMaturity {
 }
 
 model ReferenceVoice {
-  id          String   @id @default(cuid())
-  userId      String?
-  name        String
-  handle      String?
-  avatarUrl   String?
-  category    String?
-  isActive    Boolean  @default(true)
-  isGlobal    Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  userId    String?
+  name      String
+  handle    String?
+  avatarUrl String?
+  category  String?
+  isActive  Boolean  @default(true)
+  isGlobal  Boolean  @default(false)
+  createdAt DateTime @default(now())
 
   user         User?                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   blendVoices  BlendVoice[]
@@ -148,30 +149,30 @@ model ReferenceVoice {
 }
 
 model ReferenceVoiceProfile {
-  id                       String   @id @default(cuid())
-  referenceVoiceId         String   @unique
+  id               String @id @default(cuid())
+  referenceVoiceId String @unique
 
   // Voice dimensions (0-100)
-  humor                    Int      @default(50)
-  formality                Int      @default(50)
-  brevity                  Int      @default(50)
-  contrarianTone           Int      @default(50)
-  directness               Int      @default(50)
-  warmth                   Int      @default(50)
-  technicalDepth           Int      @default(50)
-  confidence               Int      @default(50)
-  evidenceOrientation      Int      @default(50)
-  solutionOrientation      Int      @default(50)
-  socialPosture            Int      @default(50)
-  selfPromotionalIntensity Int      @default(50)
+  humor                    Int @default(50)
+  formality                Int @default(50)
+  brevity                  Int @default(50)
+  contrarianTone           Int @default(50)
+  directness               Int @default(50)
+  warmth                   Int @default(50)
+  technicalDepth           Int @default(50)
+  confidence               Int @default(50)
+  evidenceOrientation      Int @default(50)
+  solutionOrientation      Int @default(50)
+  socialPosture            Int @default(50)
+  selfPromotionalIntensity Int @default(50)
 
   // Calibration metadata
-  calibrationConfidence    Float?
-  analysis                 String?
-  tweetsAnalyzed           Int      @default(0)
-  sampleTweets             String[]
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  calibrationConfidence Float?
+  analysis              String?
+  tweetsAnalyzed        Int      @default(0)
+  sampleTweets          String[]
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   referenceVoice ReferenceVoice @relation(fields: [referenceVoiceId], references: [id], onDelete: Cascade)
 
@@ -193,11 +194,11 @@ model SavedBlend {
 }
 
 model BlendVoice {
-  id              String @id @default(cuid())
-  blendId         String
+  id               String  @id @default(cuid())
+  blendId          String
   referenceVoiceId String?
-  label           String
-  percentage      Int
+  label            String
+  percentage       Int
 
   blend          SavedBlend      @relation(fields: [blendId], references: [id], onDelete: Cascade)
   referenceVoice ReferenceVoice? @relation(fields: [referenceVoiceId], references: [id], onDelete: SetNull)
@@ -206,27 +207,27 @@ model BlendVoice {
 }
 
 model TweetDraft {
-  id            String      @id @default(cuid())
-  userId        String
-  content       String
-  version       Int         @default(1)
-  status        DraftStatus @default(DRAFT)
-  confidence    Float?
-  predictedEngagement Int?
-  actualEngagement    Int?
-  engagementMetrics   Json?
-  xTweetId      String?
-  metricsLastFetchedAt DateTime?
-  sourceType    SourceType?
-  sourceContent String?
-  blendId       String?
-  feedback      String?
-  scheduledAt   DateTime?
-  campaignId    String?
-  sortOrder     Int?
+  id                      String      @id @default(cuid())
+  userId                  String
+  content                 String
+  version                 Int         @default(1)
+  status                  DraftStatus @default(DRAFT)
+  confidence              Float?
+  predictedEngagement     Int?
+  actualEngagement        Int?
+  engagementMetrics       Json?
+  xTweetId                String?
+  metricsLastFetchedAt    DateTime?
+  sourceType              SourceType?
+  sourceContent           String?
+  blendId                 String?
+  feedback                String?
+  scheduledAt             DateTime?
+  campaignId              String?
+  sortOrder               Int?
   voiceDimensionsSnapshot Json?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
 
   user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   images   GeneratedImage[]
@@ -306,13 +307,13 @@ enum AnalyticsType {
 }
 
 model AlertSubscription {
-  id        String    @id @default(cuid())
+  id        String          @id @default(cuid())
   userId    String
   type      AlertType
   value     String
-  isActive  Boolean   @default(true)
+  isActive  Boolean         @default(true)
   delivery  AlertDelivery[] @default([PORTAL])
-  createdAt DateTime  @default(now())
+  createdAt DateTime        @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -337,7 +338,7 @@ enum AlertCategory {
 }
 
 model Alert {
-  id          String      @id @default(cuid())
+  id          String        @id @default(cuid())
   type        String
   title       String
   context     String?
@@ -349,7 +350,7 @@ model Alert {
   userId      String?
   expiresAt   DateTime?
   deliveredAt DateTime?
-  createdAt   DateTime    @default(now())
+  createdAt   DateTime      @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
@@ -371,17 +372,17 @@ model LearningLogEntry {
 }
 
 model ResearchResult {
-  id              String   @id @default(cuid())
-  userId          String
-  query           String
-  summary         String
-  keyFacts        Json
-  sentiment       String
-  relatedTopics   Json
-  sources         Json
-  confidence      Float
-  draftId         String?
-  createdAt       DateTime @default(now())
+  id            String   @id @default(cuid())
+  userId        String
+  query         String
+  summary       String
+  keyFacts      Json
+  sentiment     String
+  relatedTopics Json
+  sources       Json
+  confidence    Float
+  draftId       String?
+  createdAt     DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -418,14 +419,14 @@ model Briefing {
 }
 
 model GeneratedImage {
-  id          String   @id @default(cuid())
-  userId      String
-  draftId     String?
-  prompt      String
-  style       String
-  imageUrl    String
-  mimeType    String   @default("image/png")
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  userId    String
+  draftId   String?
+  prompt    String
+  style     String
+  imageUrl  String
+  mimeType  String   @default("image/png")
+  createdAt DateTime @default(now())
 
   user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   draft TweetDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
@@ -493,40 +494,57 @@ model VoiceDimensionInsight {
 }
 
 model BlendedVoiceProfile {
-  id                       String   @id @default(cuid())
-  userId                   String   @unique
-  primaryTwitterId         String
-  primaryHandle            String?
-  additionalTwitterIds     String[]
-  additionalHandles        String[]
-  weights                  Json     // { "twitter_id": weight_value }
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  primaryTwitterId     String
+  primaryHandle        String?
+  additionalTwitterIds String[]
+  additionalHandles    String[]
+  weights              Json // { "twitter_id": weight_value }
 
   // Blended style dimensions (0-100)
-  humor                    Int      @default(50)
-  formality                Int      @default(50)
-  brevity                  Int      @default(50)
-  contrarianTone           Int      @default(50)
-  directness               Int      @default(50)
-  warmth                   Int      @default(50)
-  technicalDepth           Int      @default(50)
-  confidence               Int      @default(50)
-  evidenceOrientation      Int      @default(50)
-  solutionOrientation      Int      @default(50)
-  socialPosture            Int      @default(50)
-  selfPromotionalIntensity Int      @default(50)
+  humor                    Int @default(50)
+  formality                Int @default(50)
+  brevity                  Int @default(50)
+  contrarianTone           Int @default(50)
+  directness               Int @default(50)
+  warmth                   Int @default(50)
+  technicalDepth           Int @default(50)
+  confidence               Int @default(50)
+  evidenceOrientation      Int @default(50)
+  solutionOrientation      Int @default(50)
+  socialPosture            Int @default(50)
+  selfPromotionalIntensity Int @default(50)
 
   // Raw style signals per inspiration (for transparency / debugging)
-  styleSignals             Json?    // { "twitter_id": { avgLength, emojiRate, ... } }
+  styleSignals Json? // { "twitter_id": { avgLength, emojiRate, ... } }
 
   // Meta
-  tweetsAnalyzed           Int      @default(0)
-  blendSummary             String?
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  tweetsAnalyzed Int      @default(0)
+  blendSummary   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("blended_voice_profiles")
+}
+
+model VoiceSwipeSignal {
+  id        String   @id @default(cuid())
+  userId    String
+  tweetId   String
+  text      String
+  direction String // "like" | "dislike"
+  source    String // "OWN" | "REF"
+  handle    String?
+  reasons   String[]
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, source])
+  @@map("voice_swipe_signals")
 }
 
 model FeatureFlag {

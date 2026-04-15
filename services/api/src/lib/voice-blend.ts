@@ -397,6 +397,76 @@ async function lookupUserById(
   return data.data;
 }
 
+// --- Swipe onboarding heuristic mapper ---
+
+export interface SwipeSignal {
+  tweetId: string;
+  text: string;
+  direction: "like" | "dislike";
+  source: "OWN" | "REF";
+  handle?: string | null;
+  reasons: string[];
+}
+
+export interface VoiceDimensions {
+  humor: number;
+  formality: number;
+  brevity: number;
+  contrarianTone: number;
+  directness: number;
+  warmth: number;
+  technicalDepth: number;
+  confidence: number;
+  evidenceOrientation: number;
+  solutionOrientation: number;
+  socialPosture: number;
+  selfPromotionalIntensity: number;
+}
+
+/**
+ * Pure function: SwipeSignal[] → Partial<VoiceDimensions>.
+ * Aggregates reason chips into dimension deltas clamped to [-20, +20].
+ */
+export function applySwipeHeuristics(signals: SwipeSignal[]): Partial<VoiceDimensions> {
+  const deltas: Record<string, number> = {};
+
+  for (const signal of signals) {
+    if (signal.direction !== "like") continue;
+    for (const reason of signal.reasons) {
+      const r = reason.toLowerCase();
+      switch (r) {
+        case "punchy":
+          deltas.brevity = (deltas.brevity || 0) + 10;
+          break;
+        case "contrarian":
+          deltas.contrarianTone = (deltas.contrarianTone || 0) + 15;
+          break;
+        case "funny":
+          deltas.humor = (deltas.humor || 0) + 10;
+          break;
+        case "data-driven":
+          deltas.evidenceOrientation = (deltas.evidenceOrientation || 0) + 15;
+          break;
+        case "plain-spoken":
+          deltas.technicalDepth = (deltas.technicalDepth || 0) - 10;
+          deltas.formality = (deltas.formality || 0) - 5;
+          break;
+        case "snarky":
+          deltas.directness = (deltas.directness || 0) + 10;
+          deltas.humor = (deltas.humor || 0) + 5;
+          break;
+      }
+    }
+  }
+
+  const result: Partial<VoiceDimensions> = {};
+  for (const [key, value] of Object.entries(deltas)) {
+    result[key as keyof VoiceDimensions] = Math.max(-20, Math.min(20, value));
+  }
+
+  return result;
+}
+
 /**
  * Return a default calibration result for users with no tweets.
  */
