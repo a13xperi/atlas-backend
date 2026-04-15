@@ -191,7 +191,7 @@ authRouter.post("/login", loginRateLimiter, async (req, res) => {
           // slip through with a stale user object missing onboardingTrack
           const freshUser = await prisma.user.findUnique({
             where: { id: user.id },
-            select: { id: true, handle: true, role: true, onboardingTrack: true },
+            include: { voiceProfile: true },
           });
           if (!freshUser) return res.status(500).json(error("User not found after login"));
           setAuthCookies(res, session.session.access_token, session.session.refresh_token);
