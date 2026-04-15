@@ -19,7 +19,10 @@ import { prisma } from "../services/api/src/lib/prisma";
  * this seed creates one primary VoiceProfile plus multiple reference voices and saved blends.
  */
 
-const DEMO_PASSWORD = "AtlasDemo2026!";
+const DEMO_PASSWORD = process.env.DEMO_SEED_PASSWORD;
+if (!DEMO_PASSWORD || DEMO_PASSWORD.length < 12) {
+  throw new Error("DEMO_SEED_PASSWORD env var required (min 12 chars). Set it before running this seed.");
+}
 const SEED_TAG = "atlas-demo-seed-v1";
 
 type VoiceProfileSeed = {
