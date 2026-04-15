@@ -454,3 +454,78 @@ adminRouter.get("/feed", async (req: AuthRequest, res) => {
     res.status(500).json(error("Failed to load admin feed", 500));
   }
 });
+
+const resetUserSchema = z.object({
+  userId: z.string().min(1).optional(),
+});
+
+// POST /api/admin/reset-user — reset a user back to "new user" state
+// If userId is omitted, resets the calling admin's own account (self-reset for QA).
+adminRouter.post("/reset-user", async (req: AuthRequest, res) => {
+  try {
+    if (!(await requireAdmin(req, res))) return;
+
+    const body = resetUserSchema.parse(req.body);
+    const userId = body.userId ?? req.userId!;
+
+    await prisma.$transaction(async (tx) => {
+      // 1. Reset VoiceProfile to defaults
+      await tx.voiceProfile.upsert({
+        where: { userId },
+        update: {
+          humor: 50,
+          formality: 50,
+          brevity: 50,
+          contrarianTone: 50,
+          directness: 50,
+          warmth: 50,
+          technicalDepth: 50,
+          confidence: 50,
+          evidenceOrientation: 50,
+          solutionOrientation: 50,
+          socialPosture: 50,
+          selfPromotionalIntensity: 50,
+          maturity: "BEGINNER",
+          tweetsAnalyzed: 0,
+          analysis: null,
+        },
+        create: {
+          userId,
+          maturity: "BEGINNER",
+        },
+      });
+
+      // 2. Delete all ReferenceVoice records (cascades to ReferenceVoiceProfile)
+      await tx.referenceVoice.deleteMany({ where: { userId } });
+
+      // 3. Delete all SavedBlend records (cascades to BlendVoice)
+      await tx.savedBlend.deleteMany({ where: { userId } });
+
+      // 4. Delete all TweetDraft records
+      await tx.tweetDraft.deleteMany({ where: { userId } });
+
+      // 5. Delete all AnalyticsEvent records
+      await tx.analyticsEvent.deleteMany({ where: { userId } });
+
+      // 6. Delete all Session records (force re-login)
+      await tx.session.deleteMany({ where: { userId } });
+
+      // 7. Reset User onboarding fields and clear xHandle link
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          xHandle: null,
+          onboardingTrack: null,
+        },
+      });
+    });
+
+    res.json(success({ success: true, userId, resetAt: new Date() }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    logger.error({ err: err.message }, "Reset user failed");
+    res.status(500).json(error("Failed to reset user", 500));
+  }
+});
