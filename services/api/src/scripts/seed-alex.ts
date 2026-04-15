@@ -17,7 +17,10 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 const ALEX_EMAIL = "alex.e.peri@gmail.com";
-const ALEX_PASSWORD = "Adinkra13!!";
+const ALEX_PASSWORD = process.env.ALEX_SEED_PASSWORD;
+if (!ALEX_PASSWORD || ALEX_PASSWORD.length < 12) {
+  throw new Error("ALEX_SEED_PASSWORD env var required (min 12 chars). Set it before running this seed.");
+}
 const ALEX_HANDLE = "a13xperi";
 
 async function main() {
