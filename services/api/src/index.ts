@@ -50,6 +50,10 @@ import { startCronServices } from "../../cron";
 
 dotenv.config();
 
+if (process.env.NODE_ENV === "production" && !process.env.REDIS_URL) {
+  throw new Error("REDIS_URL required in production — JWT revocation depends on Redis");
+}
+
 const app: Express = express();
 // Railway terminates TLS and forwards one hop. With trust proxy set,
 // Express parses X-Forwarded-For safely and exposes the validated client
