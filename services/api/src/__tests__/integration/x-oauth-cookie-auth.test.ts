@@ -128,7 +128,6 @@ const DB_USER = {
   handle: TEST_X_HANDLE,
   email: null,
   role: "ANALYST",
-  tokensInvalidatedBefore: null,
   onboardingTrack: "TRACK_B",
   xHandle: TEST_X_HANDLE,
   xBio: TWITTER_PROFILE.description,

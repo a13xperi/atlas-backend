@@ -14,7 +14,6 @@ type UserRecord = {
   passwordHash: string | null;
   role: "ANALYST" | "MANAGER" | "ADMIN";
   supabaseId: string | null;
-  tokensInvalidatedBefore: Date | null;
   displayName: string | null;
   avatarUrl: string | null;
   createdAt: Date;
@@ -183,7 +182,6 @@ const mockPrisma = {
         passwordHash: args.data.passwordHash ?? null,
         role: "ANALYST",
         supabaseId: args.data.supabaseId ?? null,
-        tokensInvalidatedBefore: args.data.tokensInvalidatedBefore ?? null,
         displayName: args.data.displayName ?? null,
         avatarUrl: args.data.avatarUrl ?? null,
         createdAt: now,

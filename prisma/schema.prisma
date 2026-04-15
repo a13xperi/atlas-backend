@@ -33,7 +33,6 @@ model User {
   xFollowerCount    Int?
   tourCompleted     Boolean  @default(false)
   tourStep          Int      @default(0)
-  tokensInvalidatedBefore DateTime?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

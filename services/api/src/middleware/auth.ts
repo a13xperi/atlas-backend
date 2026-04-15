@@ -10,18 +10,6 @@ export interface AuthRequest extends Request {
   userId?: string;
 }
 
-export function isTokenRevoked(token: string, invalidatedBefore: Date | null): boolean {
-  const decoded = jwt.decode(token) as { iat?: number } | null;
-  if (!decoded || typeof decoded.iat !== "number") {
-    return true; // missing iat → treat as revoked (safe default)
-  }
-  const iatMs = decoded.iat * 1000;
-  if (invalidatedBefore !== null && iatMs < invalidatedBefore.getTime() - 1000) {
-    return true;
-  }
-  return false;
-}
-
 /**
  * Dual-mode auth middleware.
  * Token sources (priority): HttpOnly cookie > Authorization header
@@ -57,9 +45,6 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
         }
 
         if (user) {
-          if (isTokenRevoked(token, user.tokensInvalidatedBefore)) {
-            return res.status(401).json({ error: "Token revoked" });
-          }
           req.userId = user.id;
           return next();
         }
@@ -87,18 +72,7 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
       return res.status(401).json({ error: "Invalid or expired token" });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
-      select: { id: true, tokensInvalidatedBefore: true },
-    });
-    if (!user) {
-      return res.status(401).json({ error: "Invalid or expired token" });
-    }
-    if (isTokenRevoked(token, user.tokensInvalidatedBefore)) {
-      return res.status(401).json({ error: "Token revoked" });
-    }
-
-    req.userId = user.id;
+    req.userId = payload.userId;
     return next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired token" });
