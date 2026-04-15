@@ -243,6 +243,10 @@ campaignsRouter.post("/:campaignId/post-all", async (req: AuthRequest, res) => {
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     });
 
+    if (drafts.length > 25) {
+      return res.status(400).json(error("Cannot post more than 25 drafts at once", 400));
+    }
+
     if (drafts.length === 0) {
       return res.json(success({ posted: 0, failed: 0, results: [] }));
     }
