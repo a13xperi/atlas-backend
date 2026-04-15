@@ -183,6 +183,7 @@ describe("POST /api/voice/calibrate", () => {
     mockFetchTweetsByHandle.mockResolvedValueOnce({
       user: twitterUser,
       tweets: [],
+      stats: { pool: 100, topN: 25, recentN: 25 },
     });
 
     const res = await request(app)
@@ -191,7 +192,7 @@ describe("POST /api/voice/calibrate", () => {
       .send({ handle: "atlasanalyst" });
 
     expect(res.status).toBe(400);
-    expectErrorResponse(res.body, "No tweets found for @atlasanalyst");
+    expectErrorResponse(res.body, "No public tweets found for @atlasanalyst — make sure your account is public");
     expect(mockCalibrateFromTweets).not.toHaveBeenCalled();
     expect(mockPrisma.voiceProfile.upsert).not.toHaveBeenCalled();
     expect(mockPrisma.analyticsEvent.create).not.toHaveBeenCalled();
@@ -203,7 +204,7 @@ describe("POST /api/voice/calibrate", () => {
     const dimensionData = buildDimensionData(calibration);
     const profile = makeProfile(dimensionData);
 
-    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets });
+    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets, stats: { pool: 100, topN: 25, recentN: 25 } });
     mockCalibrateFromTweets.mockResolvedValueOnce(calibration);
     (mockPrisma.voiceProfile.upsert as jest.Mock).mockResolvedValueOnce(profile);
 
@@ -213,9 +214,10 @@ describe("POST /api/voice/calibrate", () => {
       .send({ handle: "atlasanalyst" });
 
     expect(res.status).toBe(200);
-    const [handle, maxResults, signal] = mockFetchTweetsByHandle.mock.calls[0];
+    const [handle, opts] = mockFetchTweetsByHandle.mock.calls[0];
     expect(handle).toBe("atlasanalyst");
-    expect(maxResults).toBe(50);
+    expect(opts).toEqual({ mode: "blended", signal: expect.any(AbortSignal) });
+    const signal = (opts as { signal: AbortSignal }).signal;
     expect(signal).toBeInstanceOf(AbortSignal);
 
     const [tweetTexts, calibrationSignal] = mockCalibrateFromTweets.mock.calls[0];
@@ -233,6 +235,7 @@ describe("POST /api/voice/calibrate", () => {
         confidence: number;
         analysis: string;
         tweetsAnalyzed: number;
+        source: { mode: string; pool: number; topN: number; recentN: number };
         twitterUser: { username: string; name: string };
       };
     }>(res.body);
@@ -246,6 +249,7 @@ describe("POST /api/voice/calibrate", () => {
       confidence: calibration.calibrationConfidence,
       analysis: calibration.analysis,
       tweetsAnalyzed: calibration.tweetsAnalyzed,
+      source: { mode: "top-and-recent", pool: 100, topN: 25, recentN: 25 },
       twitterUser: {
         username: twitterUser.username,
         name: twitterUser.name,
@@ -258,7 +262,7 @@ describe("POST /api/voice/calibrate", () => {
     const calibration = makeCalibration({ tweetsAnalyzed: tweets.length });
     const dimensionData = buildDimensionData(calibration);
 
-    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets });
+    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets, stats: { pool: 100, topN: 25, recentN: 25 } });
     mockCalibrateFromTweets.mockResolvedValueOnce(calibration);
     (mockPrisma.voiceProfile.upsert as jest.Mock).mockResolvedValueOnce(
       makeProfile(dimensionData),
@@ -279,7 +283,7 @@ describe("POST /api/voice/calibrate", () => {
     const calibration = makeCalibration({ tweetsAnalyzed: tweets.length });
     const dimensionData = buildDimensionData(calibration);
 
-    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets });
+    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets, stats: { pool: 100, topN: 25, recentN: 25 } });
     mockCalibrateFromTweets.mockResolvedValueOnce(calibration);
     (mockPrisma.voiceProfile.upsert as jest.Mock).mockResolvedValueOnce(
       makeProfile(dimensionData),
@@ -300,7 +304,7 @@ describe("POST /api/voice/calibrate", () => {
     const calibration = makeCalibration({ tweetsAnalyzed: tweets.length });
     const dimensionData = buildDimensionData(calibration);
 
-    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets });
+    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets, stats: { pool: 100, topN: 25, recentN: 25 } });
     mockCalibrateFromTweets.mockResolvedValueOnce(calibration);
     (mockPrisma.voiceProfile.upsert as jest.Mock).mockResolvedValueOnce(
       makeProfile(dimensionData),
@@ -320,7 +324,7 @@ describe("POST /api/voice/calibrate", () => {
     const tweets = makeTweets(12);
     const calibration = makeCalibration({ tweetsAnalyzed: tweets.length });
 
-    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets });
+    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets, stats: { pool: 100, topN: 25, recentN: 25 } });
     mockCalibrateFromTweets.mockResolvedValueOnce(calibration);
     (mockPrisma.voiceProfile.upsert as jest.Mock).mockResolvedValueOnce(
       makeProfile(buildDimensionData(calibration)),
@@ -341,7 +345,7 @@ describe("POST /api/voice/calibrate", () => {
     const tweets = makeTweets(12);
     const calibration = makeCalibration({ tweetsAnalyzed: tweets.length });
 
-    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets });
+    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets, stats: { pool: 100, topN: 25, recentN: 25 } });
     mockCalibrateFromTweets.mockResolvedValueOnce(calibration);
     (mockPrisma.voiceProfile.upsert as jest.Mock).mockResolvedValueOnce(
       makeProfile(buildDimensionData(calibration)),
@@ -360,7 +364,7 @@ describe("POST /api/voice/calibrate", () => {
   });
 
   it("returns 502 when Twitter fetch fails", async () => {
-    mockFetchTweetsByHandle.mockRejectedValueOnce(new Error("twitter unavailable"));
+    mockFetchTweetsByHandle.mockRejectedValueOnce(new Error("Twitter API 503: upstream unavailable"));
 
     const res = await request(app)
       .post("/api/voice/calibrate")
@@ -368,7 +372,7 @@ describe("POST /api/voice/calibrate", () => {
       .send({ handle: "atlasanalyst" });
 
     expect(res.status).toBe(502);
-    expectErrorResponse(res.body, "Voice calibration failed: twitter unavailable");
+    expectErrorResponse(res.body, "Twitter API 503: upstream unavailable");
     expect(mockCalibrateFromTweets).not.toHaveBeenCalled();
     expect(mockPrisma.voiceProfile.upsert).not.toHaveBeenCalled();
     expect(mockPrisma.analyticsEvent.create).not.toHaveBeenCalled();
@@ -377,7 +381,7 @@ describe("POST /api/voice/calibrate", () => {
   it("returns 502 when calibration fails", async () => {
     const tweets = makeTweets(12);
 
-    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets });
+    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets, stats: { pool: 100, topN: 25, recentN: 25 } });
     mockCalibrateFromTweets.mockRejectedValueOnce(new Error("model unavailable"));
 
     const res = await request(app)
@@ -401,7 +405,7 @@ describe("POST /api/voice/calibrate", () => {
       ...args: any[]
     ) => realSetTimeout(handler, timeout === 40_000 ? 0 : timeout, ...args));
 
-    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets });
+    mockFetchTweetsByHandle.mockResolvedValueOnce({ user: twitterUser, tweets, stats: { pool: 100, topN: 25, recentN: 25 } });
     mockCalibrateFromTweets.mockImplementationOnce((_tweetTexts, signal) => {
       calibrationSignal = signal;
       return new Promise((_, reject) => {

@@ -631,11 +631,14 @@ voiceRouter.post("/calibrate", aiGenerationLimiter, async (req: AuthRequest, res
 
     const workPromise = (async () => {
       // Fail fast at 40s so the client gets a retryable timeout before Railway's 90s cap.
-      const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle, 50, abort.signal);
+      const { user: twitterUser, tweets, stats } = await fetchTweetsByHandle(
+        normalizedHandle,
+        { mode: "blended", signal: abort.signal },
+      );
       if (abort.signal.aborted) return;
 
       if (tweets.length === 0) {
-        return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
+        return res.status(400).json(error(`No public tweets found for @${normalizedHandle} — make sure your account is public`));
       }
 
       const calibration = await calibrateFromTweets(
@@ -672,6 +675,7 @@ voiceRouter.post("/calibrate", aiGenerationLimiter, async (req: AuthRequest, res
           confidence: calibration.calibrationConfidence,
           analysis: calibration.analysis,
           tweetsAnalyzed: calibration.tweetsAnalyzed,
+          source: { mode: "top-and-recent", ...stats },
           twitterUser: { username: twitterUser.username, name: twitterUser.name },
         },
       }));
@@ -704,6 +708,7 @@ voiceRouter.post("/calibrate", aiGenerationLimiter, async (req: AuthRequest, res
     if (msg.includes("429")) return res.status(429).json(error(`Twitter API rate limit: ${msg}`));
     if (msg.includes("404") || msg.includes("not found")) return res.status(404).json(error(msg));
     if (msg.includes("403")) return res.status(403).json(error(msg));
+    if (msg.includes("Twitter API")) return res.status(502).json(error(msg));
     res.status(502).json(error(`Voice calibration failed: ${msg}`));
   } finally {
     clearTimeout(timeout);
