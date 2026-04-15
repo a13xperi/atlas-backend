@@ -243,7 +243,7 @@ describe("POST /api/oracle/message", () => {
 
     expect(mockAnthropicCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: "claude-sonnet-4-5-20251001",
+        model: "claude-sonnet-4-6",
         system: expect.stringContaining("Oracle system prompt"),
         messages: [
           {
