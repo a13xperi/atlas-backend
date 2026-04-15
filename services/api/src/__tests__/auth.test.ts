@@ -152,7 +152,7 @@ describe("GET /api/auth/me", () => {
     expect(data.user.id).toBe("user-123");
     expect(data.user.voiceProfile).toBeDefined();
     expect(data.user.xBio).toBe("Crypto analyst");
-    expect(data.user.xAvatarUrl).toBe("https://example.com/avatar.jpg");
+    expect(data.user.avatarUrl).toBe("https://example.com/avatar.jpg");
     expect(data.user.xFollowerCount).toBe(12345);
     expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
       where: { id: "user-123" },
