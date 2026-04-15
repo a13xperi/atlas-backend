@@ -73,7 +73,10 @@ export async function isJtiRevoked(jti: string | undefined): Promise<boolean> {
     const value = await r.get(key(jti));
     return value !== null;
   } catch (err: any) {
-    logger.error({ err: err?.message, jti: jti.slice(0, 8) }, "jti lookup failed");
+    logger.warn(
+      { err: err?.message, jti: jti.slice(0, 8) },
+      "jti lookup failed — treating as not-revoked (fail-open)",
+    );
     return false;
   }
 }
