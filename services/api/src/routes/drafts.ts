@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { DraftStatus, Prisma, TweetDraft } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
@@ -74,6 +75,184 @@ const updateDraftSchema = z.object({
   status: z.enum(["DRAFT", "APPROVED", "POSTED", "ARCHIVED"]).optional(),
   feedback: z.string().optional(),
 });
+
+const draftHistoryStatusValues = ["DRAFT", "APPROVED", "SCHEDULED", "POSTED", "ARCHIVED"] as const;
+const draftHistoryStatusSet = new Set<string>(draftHistoryStatusValues);
+
+type DraftHistoryCursorPayload = {
+  id: string;
+  createdAt: string;
+};
+
+type DraftHistoryCursor = {
+  id: string;
+  createdAt: Date;
+};
+
+export type DraftHistorySort = "newest" | "oldest";
+
+export type DraftHistoryQuery = {
+  status?: DraftStatus[];
+  from?: Date;
+  to?: Date;
+  limit: number;
+  cursor?: DraftHistoryCursor;
+  sort: DraftHistorySort;
+};
+
+export type DraftHistoryResponse = {
+  drafts: TweetDraft[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  total: number | null;
+};
+
+const emptyStringToUndefined = (value: unknown) => value === "" ? undefined : value;
+
+const draftHistoryCursorSchema = z.object({
+  id: z.string().min(1),
+  createdAt: z.string().datetime({ offset: true }),
+});
+
+function encodeDraftHistoryCursor(draft: Pick<TweetDraft, "id" | "createdAt">): string {
+  const payload: DraftHistoryCursorPayload = {
+    id: draft.id,
+    createdAt: draft.createdAt.toISOString(),
+  };
+
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
+}
+
+function decodeDraftHistoryCursor(cursor: string): DraftHistoryCursor {
+  let decoded: unknown;
+
+  try {
+    decoded = JSON.parse(Buffer.from(cursor, "base64").toString("utf8"));
+  } catch {
+    throw new Error("Invalid cursor");
+  }
+
+  const parsed = draftHistoryCursorSchema.safeParse(decoded);
+  if (!parsed.success) {
+    throw new Error("Invalid cursor");
+  }
+
+  return {
+    id: parsed.data.id,
+    createdAt: new Date(parsed.data.createdAt),
+  };
+}
+
+const draftHistoryQuerySchema = z
+  .object({
+    status: z.preprocess(emptyStringToUndefined, z.string().optional()),
+    from: z.preprocess(emptyStringToUndefined, z.string().datetime({ offset: true }).optional()),
+    to: z.preprocess(emptyStringToUndefined, z.string().datetime({ offset: true }).optional()),
+    limit: z
+      .preprocess(emptyStringToUndefined, z.coerce.number().int().positive().default(50))
+      .transform((value) => Math.min(value, 200)),
+    cursor: z.preprocess(emptyStringToUndefined, z.string().optional()),
+    sort: z.preprocess(emptyStringToUndefined, z.enum(["newest", "oldest"]).default("newest")),
+  })
+  .superRefine((value, ctx) => {
+    const statuses = value.status
+      ?.split(",")
+      .map((status) => status.trim())
+      .filter(Boolean);
+
+    if (value.status && (!statuses || statuses.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "At least one status is required",
+      });
+    }
+
+    for (const status of statuses ?? []) {
+      if (!draftHistoryStatusSet.has(status)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["status"],
+          message: `Invalid draft status: ${status}`,
+        });
+      }
+    }
+
+    if (value.from && value.to && new Date(value.from) > new Date(value.to)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["from"],
+        message: "`from` must be before or equal to `to`",
+      });
+    }
+
+    if (value.cursor) {
+      try {
+        decodeDraftHistoryCursor(value.cursor);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["cursor"],
+          message: "Invalid cursor",
+        });
+      }
+    }
+  })
+  .transform(
+    (value): DraftHistoryQuery => ({
+      status: value.status
+        ? value.status
+            .split(",")
+            .map((status) => status.trim())
+            .filter(Boolean) as DraftStatus[]
+        : undefined,
+      from: value.from ? new Date(value.from) : undefined,
+      to: value.to ? new Date(value.to) : undefined,
+      limit: value.limit,
+      cursor: value.cursor ? decodeDraftHistoryCursor(value.cursor) : undefined,
+      sort: value.sort,
+    }),
+  );
+
+function buildDraftHistoryWhere(userId: string, query: DraftHistoryQuery): Prisma.TweetDraftWhereInput {
+  const where: Prisma.TweetDraftWhereInput = {
+    userId,
+  };
+
+  if (query.status?.length) {
+    where.status = { in: query.status };
+  }
+
+  if (query.from || query.to) {
+    where.createdAt = {
+      ...(query.from ? { gte: query.from } : {}),
+      ...(query.to ? { lte: query.to } : {}),
+    };
+  }
+
+  return where;
+}
+
+function buildDraftHistoryCursorWhere(
+  cursor: DraftHistoryCursor,
+  sort: DraftHistorySort,
+): Prisma.TweetDraftWhereInput {
+  if (sort === "oldest") {
+    return {
+      OR: [
+        { createdAt: { gt: cursor.createdAt } },
+        { createdAt: cursor.createdAt, id: { gt: cursor.id } },
+      ],
+    };
+  }
+
+  return {
+    OR: [
+      { createdAt: { lt: cursor.createdAt } },
+      { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+    ],
+  };
+}
 
 // Generate a tweet from source content using AI
 draftsRouter.post("/generate", aiGenerationLimiter, async (req: AuthRequest, res) => {
@@ -346,6 +525,55 @@ draftsRouter.get("/", async (req: AuthRequest, res) => {
     res.json(success({ drafts }));
   } catch (err: any) {
     res.status(500).json(buildErrorResponse(req, "Failed to load drafts"));
+  }
+});
+
+// Paginated draft history
+draftsRouter.get("/history", async (req: AuthRequest, res) => {
+  try {
+    const query = draftHistoryQuerySchema.parse(req.query);
+    const baseWhere = buildDraftHistoryWhere(req.userId!, query);
+    const where: Prisma.TweetDraftWhereInput = query.cursor
+      ? {
+          AND: [baseWhere, buildDraftHistoryCursorWhere(query.cursor, query.sort)],
+        }
+      : baseWhere;
+    const orderBy: Prisma.TweetDraftOrderByWithRelationInput[] =
+      query.sort === "oldest"
+        ? [{ createdAt: "asc" }, { id: "asc" }]
+        : [{ createdAt: "desc" }, { id: "desc" }];
+
+    const [rows, totalCount] = await Promise.all([
+      prisma.tweetDraft.findMany({
+        where,
+        orderBy,
+        take: query.limit + 1,
+      }),
+      prisma.tweetDraft.count({ where: baseWhere }),
+    ]);
+
+    const hasMore = rows.length > query.limit;
+    const drafts = rows.slice(0, query.limit);
+    const nextCursor = hasMore && drafts.length > 0
+      ? encodeDraftHistoryCursor(drafts[drafts.length - 1])
+      : null;
+    const response: DraftHistoryResponse = {
+      drafts,
+      nextCursor,
+      hasMore,
+      total: totalCount > 1000 ? null : totalCount,
+    };
+
+    res.json(success(response));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json(buildErrorResponse(req, "Invalid request", { details: err.errors }));
+    }
+
+    logger.error({ err: err.message }, "Failed to load draft history");
+    res.status(500).json(buildErrorResponse(req, "Failed to load draft history"));
   }
 });
 
