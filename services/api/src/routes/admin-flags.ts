@@ -1,10 +1,11 @@
 import { Router, Response } from "express";
+import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { logger } from "../lib/logger";
 
-export const adminFlagsRouter = Router();
+export const adminFlagsRouter: Router = Router();
 adminFlagsRouter.use(authenticate);
 
 /** Require ADMIN role — returns true if admin, sends 403 and returns false otherwise */
@@ -37,6 +38,25 @@ const FLAG_DEFAULTS: Array<{ key: string; enabled: boolean; rolloutRole: string 
 ];
 
 const VALID_ROLES = ["everyone", "managers", "admins"] as const;
+
+/**
+ * PATCH /api/admin/feature-flags/:key body schema.
+ *
+ * Both fields are optional individually but the payload must carry at
+ * least one of them — an empty body is a pointless write that used to
+ * upsert with defaults, which silently flipped newly-created flags to
+ * `enabled: true, rolloutRole: "everyone"`. `.refine()` rejects that.
+ */
+const flagPatchSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    rolloutRole: z.enum(VALID_ROLES).optional(),
+  })
+  .strict()
+  .refine(
+    (value) => value.enabled !== undefined || value.rolloutRole !== undefined,
+    { message: "Provide at least one of `enabled` or `rolloutRole`" },
+  );
 
 // GET /api/admin/feature-flags
 adminFlagsRouter.get("/", async (req: AuthRequest, res) => {
@@ -71,17 +91,13 @@ adminFlagsRouter.patch("/:key", async (req: AuthRequest, res) => {
     if (!(await requireAdmin(req, res))) return;
 
     const key = String(req.params.key);
-    const { enabled, rolloutRole } = req.body as {
-      enabled?: boolean;
-      rolloutRole?: string;
-    };
-
-    if (rolloutRole !== undefined && !VALID_ROLES.includes(rolloutRole as any)) {
-      return res.status(400).json(error("Invalid rolloutRole", 400));
+    const parsed = flagPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json(error("Validation failed", 400, parsed.error.flatten()));
     }
-    if (enabled !== undefined && typeof enabled !== "boolean") {
-      return res.status(400).json(error("Invalid enabled value", 400));
-    }
+    const { enabled, rolloutRole } = parsed.data;
 
     const flag = await prisma.featureFlag.upsert({
       where: { key },

@@ -1,9 +1,10 @@
 import "./lib/sentry"; // Must be first — initializes Sentry before other imports
 import { Sentry } from "./lib/sentry";
 import { createServer } from "http";
-import express from "express";
+import express, { type Express } from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import helmet from "helmet";
 import dotenv from "dotenv";
 import { config } from "./lib/config";
 import { authRouter } from "./routes/auth";
@@ -22,6 +23,7 @@ import { docsRouter } from "./routes/docs";
 import { xAuthRouter, twitterLoginRouter } from "./routes/x-auth";
 import { oracleRouter } from "./routes/oracle";
 import { campaignsRouter } from "./routes/campaigns";
+import { campaignsPdfRouter } from "./routes/campaigns-pdf";
 import { monitorsRouter } from "./routes/monitors";
 import { paperclipRouter } from "./routes/paperclip";
 import { telegramRouter } from "./routes/telegram";
@@ -38,15 +40,17 @@ import { rateLimit, rateLimitByUser } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
 import { logger } from "./lib/logger";
 import { formatErrorResponse } from "./lib/errors";
+import { assertCorsConfig, buildCorsOptions } from "./lib/cors";
 import { prisma } from "./lib/prisma";
 import { getRedis } from "./lib/redis";
 import { initBot } from "./lib/telegram";
 import { initSocket } from "./lib/socket";
 import { startScheduler } from "./lib/scheduler";
+import { startCronServices } from "../../cron";
 
 dotenv.config();
 
-const app = express();
+const app: Express = express();
 // Railway terminates TLS and forwards one hop. With trust proxy set,
 // Express parses X-Forwarded-For safely and exposes the validated client
 // IP as req.ip — so rate limiters can key on a value the client cannot spoof.
@@ -57,20 +61,18 @@ const allowedOrigins = config.FRONTEND_URL.split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+// Refuse to boot a production API with an empty CORS allowlist. Under the
+// old middleware an empty list silently rejected every browser request —
+// fail loudly instead so the bad deploy is caught before traffic hits it.
+assertCorsConfig({ allowedOrigins, nodeEnv: config.NODE_ENV });
+
 app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      const allowed = allowedOrigins.some((ao) =>
-        ao.includes("*")
-          ? new RegExp("^" + ao.replace(/\*/g, ".*") + "$").test(origin)
-          : ao === origin
-      );
-      callback(null, allowed || undefined);
-    },
-    credentials: true,
-  })
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+  }),
 );
+app.use(cors(buildCorsOptions(allowedOrigins)));
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 app.use(requestIdMiddleware);
@@ -144,6 +146,11 @@ app.use("/api/briefing", briefingRouter);
 app.use("/api/auth/twitter", twitterLoginRouter);
 app.use("/api/oracle", oracleRouter);
 app.use("/api/campaigns", campaignsRouter);
+// Second mount at /api/campaigns — adds POST /api/campaigns/generate-from-pdf.
+// Split into its own router because routes/campaigns.ts was under concurrent
+// edit from another session when this feature landed; keeping it isolated
+// avoids merge conflicts and lets the other session's work land cleanly.
+app.use("/api/campaigns", campaignsPdfRouter);
 app.use("/api/monitors", monitorsRouter);
 app.use("/api/telegram", telegramRouter);
 app.use("/api/paperclip", paperclipRouter);
@@ -153,7 +160,6 @@ app.use("/api/qa", qaRouter);
 app.use("/api/admin/feature-flags", adminFlagsRouter);
 app.use("/api/admin/backup", adminBackupRouter);
 app.use("/api/admin", adminRouter);
-app.use("/api/admin/backup", adminBackupRouter);
 app.use("/api/twitter", twitterRouter);
 app.use("/api/queue", queueRouter);
 
@@ -186,7 +192,6 @@ initBot();
 server.listen(PORT, () => {
   logger.info({ port: PORT }, `Atlas API running on port ${PORT}`);
   startScheduler();
-
   // 2026-04-11: Enable queue + campaigns feature flags
   void (async () => {
     try {
@@ -202,6 +207,7 @@ server.listen(PORT, () => {
       logger.error({ err: err.message }, "Failed to enable feature flags on startup");
     }
   })();
+  startCronServices();
 });
 
 export default app;

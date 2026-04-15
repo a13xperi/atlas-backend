@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { logger } from "./logger";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "staging", "test"]).default("development"),
@@ -65,6 +66,15 @@ const envSchema = z.object({
   // Monitoring
   SENTRY_DSN: z.string().optional(),
 
+  // GitHub — used by the AutoResearch loop PR creation flow in
+  // routes/loop.ts. Values are still read from process.env at request
+  // time (so tests that set them per-test keep working), but the
+  // fallback values live here via the exported constants below so the
+  // hardcoded defaults don't drift away from the documented .env.example.
+  GITHUB_TOKEN: z.string().optional(),
+  GITHUB_OWNER: z.string().optional(),
+  GITHUB_REPO: z.string().optional(),
+
   // Backup — R2 (Cloudflare) logical dumps
   R2_ENDPOINT: z.string().optional(),
   R2_BUCKET: z.string().optional(),
@@ -85,7 +95,15 @@ function validateEnv(): Env {
     const missing = result.error.issues
       .map((i) => `  ${i.path.join(".")}: ${i.message}`)
       .join("\n");
-    console.error(`\n❌ Environment validation failed:\n${missing}\n`);
+    // logger.ts reads NODE_ENV directly so it resolves before this file
+    // runs — safe to use here even though config hasn't finished loading.
+    // We prefer structured output over a bare console.error so Railway and
+    // other log aggregators can index the failure; the CLI smoke-test
+    // scripts are the only places that still talk to the raw console.
+    logger.error(
+      { missing: result.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) },
+      `Environment validation failed:\n${missing}`,
+    );
     if (process.env.NODE_ENV === "production") {
       process.exit(1);
     }
@@ -101,3 +119,24 @@ function validateEnv(): Env {
 }
 
 export const config = validateEnv();
+
+/**
+ * Default values for GitHub integration envs.
+ *
+ * These live in `config.ts` so the fallback used by `routes/loop.ts` and
+ * any future consumer comes from one place — instead of an inline
+ * `process.env.X || "string"` scattered across handlers. The values
+ * mirror the defaults documented in `.env.example`.
+ *
+ * Why defaults-as-constants and not zod `.default()`?
+ *
+ * The loop handlers read `process.env.GITHUB_*` at REQUEST time (not
+ * module-load time) so the Jest suite can swap envs between tests.
+ * Putting these into the zod schema as `.default()` would freeze them
+ * at module-load and silently break `loop.test.ts`'s per-test env
+ * mutation. Exported constants preserve the test ergonomics while still
+ * centralising the canonical value — bump them here and the next
+ * request picks them up.
+ */
+export const DEFAULT_GITHUB_OWNER = "a13xperi";
+export const DEFAULT_GITHUB_REPO = "atlas-portal";

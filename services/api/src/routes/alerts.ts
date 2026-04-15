@@ -1,6 +1,7 @@
-import { Router } from "express";
+import { Router, Response } from "express";
 import { z } from "zod";
 import { parsePagination } from "../lib/pagination";
+import { emptyBodySchema, validationFailResponse } from "../lib/schemas";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
@@ -8,7 +9,7 @@ import { logger } from "../lib/logger";
 import { emitToUser } from "../lib/socket";
 import { success } from "../lib/response";
 
-export const alertsRouter = Router();
+export const alertsRouter: Router = Router();
 alertsRouter.use(authenticate);
 
 const deliverySchema = z.array(z.enum(["PORTAL", "TELEGRAM"])).optional();
@@ -24,13 +25,47 @@ const updateSubscriptionSchema = z.object({
   delivery: deliverySchema,
 });
 
+/**
+ * Defense-in-depth userId guard.
+ *
+ * `authenticate` already rejects unauthenticated requests with 401, so in
+ * normal operation `req.userId` is guaranteed to be set before any handler
+ * here runs. This helper exists for two reasons:
+ *
+ *   1. TypeScript narrowing. `AuthRequest.userId` is declared as
+ *      `string | undefined`, so every query used to carry a `req.userId!`
+ *      non-null assertion. A silent middleware-ordering regression could
+ *      then compile cleanly and leak every user's alert data to anonymous
+ *      callers. Narrowing to `string` at the top of each handler makes
+ *      the compiler refuse any query that forgets to scope.
+ *
+ *   2. Layered defense. If a future refactor ever moves `alertsRouter.use(
+ *      authenticate)` or introduces a pre-middleware that bypasses it, the
+ *      handler's own 401 response stops the request before it reaches a
+ *      Prisma query. This is the "alert security — add userId filter" fix
+ *      tracked as atlas-backend #3947.
+ *
+ * Returns the userId string on success, or `null` after having written a
+ * 401 response to `res`. Callers must early-return on `null`.
+ */
+function requireUserId(req: AuthRequest, res: Response): string | null {
+  if (!req.userId) {
+    res.status(401).json(buildErrorResponse(req, "Unauthorized"));
+    return null;
+  }
+  return req.userId;
+}
+
 // Get user's alert subscriptions
 alertsRouter.get("/subscriptions", async (req: AuthRequest, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) return;
+
   try {
     const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
 
     const subscriptions = await prisma.alertSubscription.findMany({
-      where: { userId: req.userId },
+      where: { userId },
       take,
       skip,
     });
@@ -45,16 +80,19 @@ alertsRouter.get("/subscriptions", async (req: AuthRequest, res) => {
 
 // Add subscription
 alertsRouter.post("/subscriptions", async (req: AuthRequest, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) return;
+
   try {
     const body = subscriptionSchema.parse(req.body);
 
     const subscription = await prisma.alertSubscription.upsert({
       where: {
-        userId_type_value: { userId: req.userId!, type: body.type, value: body.value },
+        userId_type_value: { userId, type: body.type, value: body.value },
       },
       update: { isActive: true, delivery: body.delivery || ["PORTAL"] },
       create: {
-        userId: req.userId!,
+        userId,
         type: body.type,
         value: body.value,
         delivery: body.delivery || ["PORTAL"],
@@ -79,11 +117,18 @@ alertsRouter.post("/subscriptions", async (req: AuthRequest, res) => {
 
 // Toggle subscription
 alertsRouter.patch("/subscriptions/:id", async (req: AuthRequest, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) return;
+
   try {
     const body = updateSubscriptionSchema.parse(req.body);
 
+    // Ownership check — scoped to this user. If another user owns the row
+    // (or no row exists), findFirst returns null and we 404 before the
+    // update ever runs. The subsequent update is keyed by primary id only,
+    // but it's protected by the prior check.
     const sub = await prisma.alertSubscription.findFirst({
-      where: { id: req.params.id as string, userId: req.userId },
+      where: { id: req.params.id as string, userId },
     });
     if (!sub) return res.status(404).json(buildErrorResponse(req, "Subscription not found"));
 
@@ -110,9 +155,14 @@ alertsRouter.patch("/subscriptions/:id", async (req: AuthRequest, res) => {
 
 // Delete subscription
 alertsRouter.delete("/subscriptions/:id", async (req: AuthRequest, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) return;
+
   try {
+    // Ownership check — see PATCH handler for why we scope findFirst by
+    // userId and only then delete by primary id.
     const sub = await prisma.alertSubscription.findFirst({
-      where: { id: req.params.id as string, userId: req.userId },
+      where: { id: req.params.id as string, userId },
     });
     if (!sub) return res.status(404).json(buildErrorResponse(req, "Subscription not found"));
 
@@ -127,11 +177,14 @@ alertsRouter.delete("/subscriptions/:id", async (req: AuthRequest, res) => {
 
 // Get recent alerts (feed) — must be before /:id to avoid matching "feed" as an ID
 alertsRouter.get("/feed", async (req: AuthRequest, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) return;
+
   try {
     const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
 
     const category = req.query.category as string | undefined;
-    const where: any = { userId: req.userId };
+    const where: any = { userId };
     if (category) {
       where.category = category;
     }
@@ -157,10 +210,13 @@ alertsRouter.get("/feed", async (req: AuthRequest, res) => {
 
 // Get single alert (ownership verified)
 alertsRouter.get("/:id", async (req: AuthRequest, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) return;
+
   try {
     const alertId = req.params.id as string;
     const alert = await prisma.alert.findFirst({
-      where: { id: alertId, userId: req.userId },
+      where: { id: alertId, userId },
     });
     if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
     res.json(success({ alert }));
@@ -171,10 +227,21 @@ alertsRouter.get("/:id", async (req: AuthRequest, res) => {
 
 // Dismiss/acknowledge alert (set expiresAt to now, ownership verified)
 alertsRouter.patch("/:id", async (req: AuthRequest, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) return;
+
+  // Dismiss carries no body — reject anything the caller sends so a typo'd
+  // field (e.g. `{ status: "read" }`) can't silently become a no-op PATCH.
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
+
   try {
     const alertId = req.params.id as string;
+    // Ownership check — scoped to this user before the update.
     const alert = await prisma.alert.findFirst({
-      where: { id: alertId, userId: req.userId },
+      where: { id: alertId, userId },
     });
     if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
 
@@ -190,10 +257,14 @@ alertsRouter.patch("/:id", async (req: AuthRequest, res) => {
 
 // Delete alert (ownership verified)
 alertsRouter.delete("/:id", async (req: AuthRequest, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) return;
+
   try {
     const alertId = req.params.id as string;
+    // Ownership check — scoped to this user before the delete.
     const alert = await prisma.alert.findFirst({
-      where: { id: alertId, userId: req.userId },
+      where: { id: alertId, userId },
     });
     if (!alert) return res.status(404).json(buildErrorResponse(req, "Alert not found"));
 

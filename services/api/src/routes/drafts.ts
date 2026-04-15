@@ -13,8 +13,15 @@ import { extractInsights } from "../lib/content-extraction";
 import { batchGenerateDrafts } from "../lib/batch-generate";
 import { config } from "../lib/config";
 import { rateLimitByUser } from "../middleware/rateLimit";
+import { emptyBodySchema, validationFailResponse } from "../lib/schemas";
+import {
+  buildTokenWrite,
+  readAccessToken,
+  readRefreshToken,
+  TOKEN_READ_SELECT,
+} from "../lib/crypto";
 
-export const draftsRouter = Router();
+export const draftsRouter: Router = Router();
 draftsRouter.use(authenticate);
 const aiGenerationLimiter = rateLimitByUser(
   config.RATE_LIMIT_AI_GENERATION_MAX_REQUESTS,
@@ -656,6 +663,10 @@ draftsRouter.get("/queue", async (req: AuthRequest, res) => {
 
 // Enqueue a draft — mark as APPROVED and ready for the queue
 draftsRouter.post("/:id/enqueue", async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const draft = await prisma.tweetDraft.findFirst({
       where: { id: req.params.id as string, userId: req.userId },
@@ -808,6 +819,10 @@ draftsRouter.delete("/:id", async (req: AuthRequest, res) => {
 
 // Auto-fetch metrics from X for a posted draft
 draftsRouter.post("/:id/fetch-metrics", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const draftId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const draft = await prisma.tweetDraft.findUnique({ where: { id: draftId } });
@@ -905,8 +920,66 @@ draftsRouter.post("/:id/engagement", async (req: AuthRequest, res) => {
   }
 });
 
+// Performance breakdown for a posted draft (predicted vs actual + percentile)
+draftsRouter.get("/:id/performance", authenticate, async (req: AuthRequest, res) => {
+  try {
+    const draftId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const draft = await prisma.tweetDraft.findFirst({
+      where: { id: draftId, userId: req.userId! },
+    });
+    if (!draft) {
+      return res.status(404).json(buildErrorResponse(req, "Draft not found"));
+    }
+
+    const predicted = draft.predictedEngagement ?? 0;
+    const actual = draft.actualEngagement ?? 0;
+    const deltaPct = predicted > 0 ? ((actual - predicted) / predicted) * 100 : 0;
+
+    // Percentile: what % of this user's posted drafts does this one beat?
+    const allPosted = await prisma.tweetDraft.findMany({
+      where: { userId: req.userId!, status: "POSTED", actualEngagement: { not: null } },
+      select: { id: true, actualEngagement: true },
+    });
+
+    let percentile = 0;
+    if (allPosted.length > 1 && actual > 0) {
+      const below = allPosted.filter(
+        (d) => (d.actualEngagement ?? 0) < actual
+      ).length;
+      percentile = Math.round((below / (allPosted.length - 1)) * 100);
+    } else if (allPosted.length === 1) {
+      percentile = 50;
+    }
+
+    const em = (draft.engagementMetrics ?? {}) as Record<string, number>;
+
+    res.json(success({
+      performance: {
+        predicted,
+        actual,
+        deltaPct: Math.round(deltaPct * 10) / 10,
+        percentile,
+        metrics: {
+          impressions: em.impressions ?? actual,
+          likes: em.likes ?? 0,
+          retweets: em.retweets ?? 0,
+          replies: em.replies ?? 0,
+          bookmarks: em.bookmarks ?? 0,
+        },
+      },
+    }));
+  } catch (err: any) {
+    logger.error({ err: err.message }, "Failed to compute draft performance");
+    res.status(500).json(buildErrorResponse(req, "Failed to compute performance"));
+  }
+});
+
 // Split a draft into a numbered thread
 draftsRouter.post("/:id/thread", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const draftId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const draft = await prisma.tweetDraft.findUnique({
@@ -942,6 +1015,10 @@ draftsRouter.post("/:id/thread", authenticate, async (req: AuthRequest, res) => 
 
 // Post a draft to X (accepts both /post and /post-to-x for backwards compat)
 draftsRouter.post("/:id/post", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const { postTweet, refreshAccessToken } = await import("../lib/twitter");
 
@@ -953,25 +1030,26 @@ draftsRouter.post("/:id/post", authenticate, async (req: AuthRequest, res) => {
 
     const user = await prisma.user.findUnique({
       where: { id: req.userId! },
-      select: { xAccessToken: true, xRefreshToken: true, xTokenExpiresAt: true },
+      select: { ...TOKEN_READ_SELECT, xTokenExpiresAt: true },
     });
 
-    if (!user?.xAccessToken) {
+    let accessToken = readAccessToken(user);
+    if (!accessToken) {
       return res.status(400).json(buildErrorResponse(req, "X account not linked. Connect your X account first."));
     }
 
     // Refresh token if expired
-    let accessToken = user.xAccessToken;
-    if (user.xTokenExpiresAt && user.xTokenExpiresAt < new Date() && user.xRefreshToken) {
-      const refreshed = await refreshAccessToken(user.xRefreshToken);
+    const currentRefreshToken = readRefreshToken(user);
+    if (user?.xTokenExpiresAt && user.xTokenExpiresAt < new Date() && currentRefreshToken) {
+      const refreshed = await refreshAccessToken(currentRefreshToken);
       accessToken = refreshed.accessToken;
       await prisma.user.update({
         where: { id: req.userId! },
-        data: {
-          xAccessToken: refreshed.accessToken,
-          xRefreshToken: refreshed.refreshToken,
-          xTokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
-        },
+        data: buildTokenWrite({
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+        }),
       });
     }
 
@@ -1061,11 +1139,15 @@ draftsRouter.post("/:id/schedule", authenticate, async (req: AuthRequest, res) =
 
 // Process scheduled drafts (called by cron or manually)
 draftsRouter.post("/process-scheduled", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const now = new Date();
     const dueDrafts = await prisma.tweetDraft.findMany({
       where: { status: "SCHEDULED", scheduledAt: { lte: now } },
-      include: { user: { select: { id: true, xAccessToken: true, xRefreshToken: true, xTokenExpiresAt: true } } },
+      include: { user: { select: { id: true, xTokenExpiresAt: true, ...TOKEN_READ_SELECT } } },
     });
 
     if (dueDrafts.length === 0) {
@@ -1078,23 +1160,24 @@ draftsRouter.post("/process-scheduled", authenticate, async (req: AuthRequest, r
 
     for (const draft of dueDrafts) {
       try {
-        if (!draft.user.xAccessToken) {
+        let accessToken = readAccessToken(draft.user);
+        if (!accessToken) {
           logger.warn({ draftId: draft.id, userId: draft.userId }, "Scheduled draft skipped — no X token");
           failed++;
           continue;
         }
 
-        let accessToken = draft.user.xAccessToken;
-        if (draft.user.xTokenExpiresAt && draft.user.xTokenExpiresAt < now && draft.user.xRefreshToken) {
-          const refreshed = await refreshAccessToken(draft.user.xRefreshToken);
+        const draftRefreshToken = readRefreshToken(draft.user);
+        if (draft.user.xTokenExpiresAt && draft.user.xTokenExpiresAt < now && draftRefreshToken) {
+          const refreshed = await refreshAccessToken(draftRefreshToken);
           accessToken = refreshed.accessToken;
           await prisma.user.update({
             where: { id: draft.userId },
-            data: {
-              xAccessToken: refreshed.accessToken,
-              xRefreshToken: refreshed.refreshToken,
-              xTokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
-            },
+            data: buildTokenWrite({
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken,
+              expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+            }),
           });
         }
 
@@ -1161,6 +1244,10 @@ draftsRouter.patch("/queue/reorder", authenticate, async (req: AuthRequest, res)
 
 // Reset queue to algorithm order
 draftsRouter.post("/queue/reset-order", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     await prisma.tweetDraft.updateMany({
       where: { userId: req.userId!, sortOrder: { not: null } },

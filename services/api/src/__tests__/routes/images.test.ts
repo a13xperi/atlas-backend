@@ -42,13 +42,31 @@ jest.mock("../../lib/gemini", () => ({
   generateVisualConcept: jest.fn(),
 }));
 
-const mockConfig = {
-  GOOGLE_AI_API_KEY: "test-key",
-  GEMINI_MODEL: "gemini-2.5-flash",
-};
+// Mock factory must be self-contained — `jest.mock` is hoisted ABOVE any
+// `const`/`let` declarations in this file, so a closure-captured `mockConfig`
+// is undefined at the moment the route module is imported (which happens
+// before the test body runs). Routes/images.ts now triggers the rate-limit
+// middleware load on import, which reads `config.NODE_ENV` synchronously,
+// so the factory must hand back a fully populated object on the first read.
 jest.mock("../../lib/config", () => ({
-  get config() { return mockConfig; },
+  config: {
+    GOOGLE_AI_API_KEY: "test-key",
+    GEMINI_MODEL: "gemini-2.5-flash",
+    // NODE_ENV = "test" so the cleanup interval in middleware/rateLimiter.ts
+    // doesn't register and leak open handles into the Jest worker.
+    NODE_ENV: "test",
+    // RATE_LIMIT_AI_GENERATION_* are read by the per-user limiter wired
+    // onto POST /generate and POST /generate-for-draft (#88075). Pinned
+    // high so existing behavior tests don't accidentally trip the limit.
+    RATE_LIMIT_AI_GENERATION_MAX_REQUESTS: 1000,
+    RATE_LIMIT_AI_GENERATION_WINDOW_MS: 60_000,
+  },
 }));
+
+// Mutable reference to the same config object the route sees — tests below
+// flip GOOGLE_AI_API_KEY to exercise the "service not configured" branch.
+const mockConfig = (jest.requireMock("../../lib/config") as { config: any })
+  .config;
 
 import { prisma } from "../../lib/prisma";
 import { generateImage, generateVisualConcept } from "../../lib/gemini";

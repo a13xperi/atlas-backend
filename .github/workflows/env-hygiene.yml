@@ -1,0 +1,103 @@
+name: Env Hygiene
+
+on:
+  pull_request:
+    paths:
+      - "**"
+
+permissions:
+  contents: read
+
+jobs:
+  env-hygiene:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install ripgrep
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
+      - name: Check for skip marker
+        id: skip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}"
+
+          if git log --format=%B "origin/${GITHUB_BASE_REF}..HEAD" | rg -q '\[skip-env-hygiene\]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Found [skip-env-hygiene] in PR commits; bypassing env hygiene."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Scan pull request diff for dev URLs
+        if: steps.skip.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pattern_parts=(
+            'http://local''host'
+            '127\.0\.0''\.1'
+            '\.ng''rok\.'
+            '-dev\.up\.railway\.''app'
+            'vercel\.app/_pre''view'
+            'staging\.delphi''digital'
+          )
+          env_hygiene_regex="$(IFS='|'; echo "${pattern_parts[*]}")"
+
+          mapfile -t changed_files < <(
+            git diff --name-only --diff-filter=AMRT "origin/${GITHUB_BASE_REF}...HEAD" |
+              rg -v '(^|/)(__tests__/|docs/)|(^|/)[^/]+\.test\.ts$|(^|/)[^/]+\.spec\.ts$|(^|/)README\.md$'
+          )
+
+          if [ "${#changed_files[@]}" -eq 0 ]; then
+            echo "No eligible changed files to scan."
+            exit 0
+          fi
+
+          added_lines_file="$(mktemp)"
+          offending_lines_file="$(mktemp)"
+          trap 'rm -f "$added_lines_file" "$offending_lines_file"' EXIT
+
+          git diff --no-color --unified=0 "origin/${GITHUB_BASE_REF}...HEAD" -- "${changed_files[@]}" | awk '
+            /^\+\+\+ b\// {
+              file = substr($0, 7)
+              next
+            }
+            /^@@/ {
+              if (match($0, /\+([0-9]+)/, match_line)) {
+                line = match_line[1] + 0
+              }
+              next
+            }
+            /^\+/ && !/^\+\+\+/ {
+              print file ":" line ":" substr($0, 2)
+              line++
+              next
+            }
+            /^ / {
+              line++
+            }
+          ' > "$added_lines_file"
+
+          if [ ! -s "$added_lines_file" ]; then
+            echo "No added lines to scan."
+            exit 0
+          fi
+
+          if rg --no-filename --color=never "$env_hygiene_regex" "$added_lines_file" > "$offending_lines_file"; then
+            echo "Dev-only URL fragments detected in this pull request:"
+            cat "$offending_lines_file"
+            exit 1
+          fi
+
+          echo "Env hygiene passed: no blocked dev URLs found in added lines."

@@ -1,10 +1,17 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import jwt from "jsonwebtoken";
+import { z } from "zod";
 import { OnboardingTrack } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { generateOAuthUrl, generateLoginOAuthUrl, exchangeCodeForTokens, exchangeLoginCodeForTokens, lookupUser, fetchTwitterUserProfile } from "../lib/twitter";
+import {
+  buildTokenClear,
+  buildTokenWrite,
+  readAccessToken,
+  TOKEN_READ_SELECT,
+} from "../lib/crypto";
 import { config } from "../lib/config";
 import { logger } from "../lib/logger";
 import { error } from "../lib/response";
@@ -13,8 +20,18 @@ import { success } from "../lib/response";
 import { setAuthCookies } from "../lib/cookies";
 import { getCached, setCache, delCache } from "../lib/redis";
 import { rateLimit } from "../middleware/rateLimit";
+import { emptyBodySchema, validationFailResponse } from "../lib/schemas";
 
-export const xAuthRouter = Router();
+// POST /callback is the only body-carrying handler in this router — it
+// receives the OAuth `code` + `state` from the frontend after X redirects
+// the user back. Everything else (authorize, disconnect) is an action
+// endpoint with an empty body.
+const xCallbackSchema = z.object({
+  code: z.string().min(1),
+  state: z.string().min(1),
+});
+
+export const xAuthRouter: Router = Router();
 xAuthRouter.use(rateLimit(20, 60 * 1000)); // 20 req/min for auth routes
 
 // ── PKCE state storage ─────────────────────────────────────────────
@@ -63,6 +80,10 @@ async function getPendingOAuth(state: string): Promise<PendingOAuthData | null> 
  * Returns the X OAuth consent URL. Frontend redirects the user there.
  */
 xAuthRouter.post("/authorize", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     const state = `atlas_${req.userId}_${Date.now()}`;
     const { url, codeVerifier } = generateOAuthUrl(state);
@@ -130,9 +151,11 @@ xAuthRouter.get("/callback", async (req, res) => {
         where: { id: user.id },
         data: {
           xHandle,
-          xAccessToken: accessToken,
-          xRefreshToken: refreshToken,
-          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          ...buildTokenWrite({
+            accessToken,
+            refreshToken,
+            expiresAt: new Date(Date.now() + expiresIn * 1000),
+          }),
           displayName: displayName || user.displayName,
           avatarUrl: avatarUrl || user.avatarUrl,
           xBio: xBio ?? user.xBio,
@@ -148,9 +171,11 @@ xAuthRouter.get("/callback", async (req, res) => {
           displayName,
           avatarUrl,
           xHandle,
-          xAccessToken: accessToken,
-          xRefreshToken: refreshToken,
-          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          ...buildTokenWrite({
+            accessToken,
+            refreshToken,
+            expiresAt: new Date(Date.now() + expiresIn * 1000),
+          }),
           xBio,
           xAvatarUrl,
           xFollowerCount,
@@ -163,7 +188,10 @@ xAuthRouter.get("/callback", async (req, res) => {
 
     const token = signLoginToken(user.id);
     setAuthCookies(res, token, refreshToken);
-    res.redirect(`${frontendUrl}/auth/callback?token=${encodeURIComponent(token)}&provider=twitter`);
+    // SECURITY (C-5): do NOT put JWT in query string. HttpOnly cookies
+    // set via setAuthCookies() already carry the session; query-string
+    // tokens leak via Referer headers, browser history, and upstream logs.
+    res.redirect(`${frontendUrl}/auth/callback?provider=twitter`);
   } catch (err: any) {
     logger.error({ err: err.message, stack: err.stack }, "Twitter login callback failed");
     res.redirect(`${frontendUrl}/?error=callback_failed`);
@@ -175,12 +203,13 @@ xAuthRouter.get("/callback", async (req, res) => {
  * Frontend sends the code + state after X redirects back.
  */
 xAuthRouter.post("/callback", authenticate, async (req: AuthRequest, res) => {
-  try {
-    const { code, state } = req.body;
-    if (!code || !state) {
-      return res.status(400).json(buildErrorResponse(req, "Missing code or state"));
-    }
+  const parsed = xCallbackSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
+  const { code, state } = parsed.data;
 
+  try {
     // Retrieve and validate PKCE verifier
     const pending = await getPendingOAuth(state);
     if (!pending || pending.expiresAt < Date.now()) {
@@ -203,9 +232,11 @@ xAuthRouter.post("/callback", authenticate, async (req: AuthRequest, res) => {
     await prisma.user.update({
       where: { id: req.userId! },
       data: {
-        xAccessToken: accessToken,
-        xRefreshToken: refreshToken,
-        xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+        ...buildTokenWrite({
+          accessToken,
+          refreshToken,
+          expiresAt: new Date(Date.now() + expiresIn * 1000),
+        }),
         xHandle,
         xBio,
         xAvatarUrl,
@@ -229,11 +260,11 @@ xAuthRouter.get("/status", authenticate, async (req: AuthRequest, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.userId! },
-      select: { xHandle: true, xAccessToken: true, xTokenExpiresAt: true },
+      select: { xHandle: true, xTokenExpiresAt: true, ...TOKEN_READ_SELECT },
     });
 
     res.json(success({
-      linked: !!user?.xAccessToken,
+      linked: !!readAccessToken(user),
       xHandle: user?.xHandle || null,
       tokenExpired: user?.xTokenExpiresAt ? user.xTokenExpiresAt < new Date() : true,
     }));
@@ -248,10 +279,14 @@ xAuthRouter.get("/status", authenticate, async (req: AuthRequest, res) => {
  * Remove X account link.
  */
 xAuthRouter.post("/disconnect", authenticate, async (req: AuthRequest, res) => {
+  const parsed = emptyBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
   try {
     await prisma.user.update({
       where: { id: req.userId! },
-      data: { xAccessToken: null, xRefreshToken: null, xTokenExpiresAt: null, xHandle: null },
+      data: { ...buildTokenClear(), xHandle: null },
     });
     res.json(success({ linked: false }));
   } catch (err: any) {
@@ -287,7 +322,7 @@ xAuthRouter.get("/login", async (_req, res) => {
 // Per DM-324: "Authorize my Twitter. Boom."
 // ═══════════════════════════════════════════════════════════════════════
 
-export const twitterLoginRouter = Router();
+export const twitterLoginRouter: Router = Router();
 
 function signLoginToken(userId: string): string {
   // C-6: every issued token carries a UUID `jti` so it can be individually
@@ -376,9 +411,11 @@ twitterLoginRouter.get("/callback", async (req, res) => {
         where: { id: user.id },
         data: {
           xHandle,
-          xAccessToken: accessToken,
-          xRefreshToken: refreshToken,
-          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          ...buildTokenWrite({
+            accessToken,
+            refreshToken,
+            expiresAt: new Date(Date.now() + expiresIn * 1000),
+          }),
           displayName: displayName || user.displayName,
           avatarUrl: avatarUrl || user.avatarUrl,
           xBio: xBio ?? user.xBio,
@@ -395,9 +432,11 @@ twitterLoginRouter.get("/callback", async (req, res) => {
           displayName,
           avatarUrl,
           xHandle,
-          xAccessToken: accessToken,
-          xRefreshToken: refreshToken,
-          xTokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+          ...buildTokenWrite({
+            accessToken,
+            refreshToken,
+            expiresAt: new Date(Date.now() + expiresIn * 1000),
+          }),
           xBio,
           xAvatarUrl,
           xFollowerCount,
@@ -412,8 +451,9 @@ twitterLoginRouter.get("/callback", async (req, res) => {
     const token = signLoginToken(user.id);
     setAuthCookies(res, token, refreshToken);
 
-    // Redirect to frontend with token in query (frontend stores it)
-    res.redirect(`${frontendUrl}/auth/callback?token=${encodeURIComponent(token)}&provider=twitter`);
+    // SECURITY (C-5): HttpOnly cookies carry the session — no token in query.
+    // Query-string JWTs leak via Referer, browser history, and upstream logs.
+    res.redirect(`${frontendUrl}/auth/callback?provider=twitter`);
   } catch (err: any) {
     logger.error({ err: err.message, stack: err.stack }, "Twitter login callback failed");
     res.redirect(`${frontendUrl}/?error=callback_failed`);

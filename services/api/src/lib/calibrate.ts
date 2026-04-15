@@ -6,6 +6,7 @@
  */
 
 import { getAnthropicClient } from "./anthropic";
+import { logger } from "./logger";
 
 export interface CalibrationResult {
   // All dimensions stored as 0-100 scale
@@ -71,6 +72,7 @@ Be precise. Base your scores on patterns across ALL tweets, not individual outli
 
 export async function calibrateFromTweets(
   tweets: string[],
+  signal?: AbortSignal,
 ): Promise<CalibrationResult> {
   if (tweets.length === 0) {
     throw new Error("No tweets provided for calibration");
@@ -83,23 +85,55 @@ export async function calibrateFromTweets(
     .map((t, i) => `[${i + 1}] ${t}`)
     .join("\n\n");
 
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 500,
-    system: CALIBRATION_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: `Analyze these ${tweets.length} tweets:\n\n${tweetBlock}`,
-      },
-    ],
-  });
+  const response = await client.messages.create(
+    {
+      model: "claude-sonnet-4-6",
+      max_tokens: 500,
+      system: CALIBRATION_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: `Analyze these ${tweets.length} tweets:\n\n${tweetBlock}`,
+        },
+      ],
+    },
+    {
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(25_000)])
+        : AbortSignal.timeout(25_000),
+    }
+  );
 
   const textBlock = response.content.find((b) => b.type === "text");
   const content = textBlock?.text?.trim();
   if (!content) throw new Error("Empty response from Claude during calibration");
 
-  const result = JSON.parse(content);
+  let result: any;
+  try {
+    result = JSON.parse(content);
+  } catch {
+    logger.warn(
+      { contentPreview: content.slice(0, 200) },
+      "Calibration JSON parse failed, using neutral fallback profile",
+    );
+    return {
+      humor: 50,
+      formality: 50,
+      brevity: 50,
+      contrarianTone: 50,
+      directness: 50,
+      warmth: 50,
+      technicalDepth: 50,
+      confidence: 50,
+      evidenceOrientation: 50,
+      solutionOrientation: 50,
+      socialPosture: 50,
+      selfPromotionalIntensity: 50,
+      calibrationConfidence: 0,
+      analysis: "Could not parse model output — using defaults.",
+      tweetsAnalyzed: tweets.length,
+    };
+  }
 
   const clamp100 = (v: number) => Math.min(Math.max(Math.round(v ?? 50), 0), 100);
   /** AI returns 0-10 for extended dims; multiply by 10 for 0-100 storage */

@@ -12,8 +12,31 @@ import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { deliverAlertToUser } from "../lib/telegram";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { rateLimit } from "../middleware/rateLimit";
 
-export const paperclipRouter = Router();
+export const paperclipRouter: Router = Router();
+
+/**
+ * IP-based rate limiter for the public Paperclip webhook endpoint.
+ *
+ * The webhook is "public" in that it carries no `Authorization` header —
+ * it's protected by a shared `x-paperclip-secret`, which stops external
+ * attackers but does nothing about an upstream Paperclip bug looping on
+ * digest.ready events, nor about a leaked secret being blasted at the
+ * endpoint. Each successful hit creates a `briefing` row and fans out a
+ * Telegram alert, so the blast radius of "too many valid hits" is real.
+ *
+ * 30 req/min per IP is tighter than the general `/api` limiter
+ * (100/min) and leaves enough headroom for normal Paperclip traffic,
+ * which in practice sends a handful of digests per user per day. The
+ * `"paperclip-webhook"` namespace prevents counter collision with any
+ * other route-level limiter that might stack on the same path.
+ *
+ * This limiter is ONLY wired into the `/webhook` route (see below) —
+ * `/trigger` is authenticated + admin-gated and already benefits from
+ * the per-user general limiter.
+ */
+const paperclipWebhookRateLimiter = rateLimit(30, 60 * 1000, "paperclip-webhook");
 
 const supportedEventTypes = [
   "task.completed",
@@ -121,7 +144,7 @@ function normalizeDigestPayload(input: unknown) {
   };
 }
 
-paperclipRouter.post("/webhook", async (req, res) => {
+paperclipRouter.post("/webhook", paperclipWebhookRateLimiter, async (req, res) => {
   try {
     const expectedSecret = config.PAPERCLIP_WEBHOOK_SECRET?.trim();
     if (!expectedSecret) {

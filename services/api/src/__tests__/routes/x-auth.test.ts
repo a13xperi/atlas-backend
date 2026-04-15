@@ -25,14 +25,18 @@ jest.mock("../../lib/prisma", () => ({
   prisma: {
     user: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       update: jest.fn(),
+      create: jest.fn(),
     },
   },
 }));
 
 jest.mock("../../lib/twitter", () => ({
   generateOAuthUrl: jest.fn(),
+  generateLoginOAuthUrl: jest.fn(),
   exchangeCodeForTokens: jest.fn(),
+  exchangeLoginCodeForTokens: jest.fn(),
   fetchTwitterUserProfile: jest.fn(),
   lookupUser: jest.fn(),
 }));
@@ -43,18 +47,25 @@ const setIntervalSpy = jest.spyOn(global, "setInterval").mockImplementation(
 );
 
 import { prisma } from "../../lib/prisma";
-import { generateOAuthUrl, exchangeCodeForTokens, fetchTwitterUserProfile } from "../../lib/twitter";
-import { xAuthRouter } from "../../routes/x-auth";
+import {
+  generateOAuthUrl,
+  exchangeCodeForTokens,
+  exchangeLoginCodeForTokens,
+  fetchTwitterUserProfile,
+} from "../../lib/twitter";
+import { xAuthRouter, twitterLoginRouter } from "../../routes/x-auth";
 
 const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 const mockGenerateOAuthUrl = generateOAuthUrl as jest.MockedFunction<typeof generateOAuthUrl>;
 const mockExchangeCodeForTokens = exchangeCodeForTokens as jest.MockedFunction<typeof exchangeCodeForTokens>;
+const mockExchangeLoginCodeForTokens = exchangeLoginCodeForTokens as jest.MockedFunction<typeof exchangeLoginCodeForTokens>;
 const mockFetchTwitterUserProfile = fetchTwitterUserProfile as jest.MockedFunction<typeof fetchTwitterUserProfile>;
 
 const app = express();
 app.use(express.json());
 app.use(requestIdMiddleware);
 app.use("/api/auth/x", xAuthRouter);
+app.use("/api/auth/twitter", twitterLoginRouter);
 
 const AUTH = { Authorization: "Bearer mock_token" };
 
@@ -93,8 +104,16 @@ beforeEach(() => {
     },
   });
 
+  mockExchangeLoginCodeForTokens.mockResolvedValue({
+    accessToken: "access-token",
+    refreshToken: "refresh-token",
+    expiresIn: 3600,
+  });
+
   (mockPrisma.user.findUnique as jest.Mock).mockResolvedValue(null);
   (mockPrisma.user.update as jest.Mock).mockResolvedValue({ id: "user-123" });
+  (mockPrisma.user.findFirst as jest.Mock).mockResolvedValue(null);
+  (mockPrisma.user.create as jest.Mock).mockResolvedValue({ id: "user-456" });
 });
 
 describe("POST /api/auth/x/authorize", () => {
@@ -142,8 +161,8 @@ describe("POST /api/auth/x/callback", () => {
       .send({});
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Missing code or state");
-    expect(res.body.message).toBe("Missing code or state");
+    expect(res.body.error).toBe("Validation failed");
+    expect(res.body.details).toBeDefined();
     expect(mockExchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
@@ -199,6 +218,8 @@ describe("POST /api/auth/x/callback", () => {
       data: {
         xAccessToken: "access-token",
         xRefreshToken: "refresh-token",
+        xAccessTokenEnc: null,
+        xRefreshTokenEnc: null,
         xTokenExpiresAt: expect.any(Date),
         xHandle: "atlas_handle",
         xBio: "Crypto analyst",
@@ -214,6 +235,9 @@ describe("GET /api/auth/x/status", () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
       xHandle: null,
       xAccessToken: null,
+      xRefreshToken: null,
+      xAccessTokenEnc: null,
+      xRefreshTokenEnc: null,
       xTokenExpiresAt: null,
     });
 
@@ -235,7 +259,14 @@ describe("GET /api/auth/x/status", () => {
     });
     expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
       where: { id: "user-123" },
-      select: { xHandle: true, xAccessToken: true, xTokenExpiresAt: true },
+      select: {
+        xHandle: true,
+        xTokenExpiresAt: true,
+        xAccessToken: true,
+        xRefreshToken: true,
+        xAccessTokenEnc: true,
+        xRefreshTokenEnc: true,
+      },
     });
   });
 
@@ -243,6 +274,9 @@ describe("GET /api/auth/x/status", () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
       xHandle: "atlas_handle",
       xAccessToken: "access-token",
+      xRefreshToken: "refresh-token",
+      xAccessTokenEnc: null,
+      xRefreshTokenEnc: null,
       xTokenExpiresAt: new Date(Date.now() + 60_000),
     });
 
@@ -268,6 +302,9 @@ describe("GET /api/auth/x/status", () => {
     (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
       xHandle: "atlas_handle",
       xAccessToken: "access-token",
+      xRefreshToken: "refresh-token",
+      xAccessTokenEnc: null,
+      xRefreshTokenEnc: null,
       xTokenExpiresAt: new Date(Date.now() - 60_000),
     });
 
@@ -305,9 +342,83 @@ describe("POST /api/auth/x/disconnect", () => {
       data: {
         xAccessToken: null,
         xRefreshToken: null,
+        xAccessTokenEnc: null,
+        xRefreshTokenEnc: null,
         xTokenExpiresAt: null,
         xHandle: null,
       },
     });
+  });
+});
+
+describe("GET callback — C-5 JWT leak regression", () => {
+  // Regression for C-5: JWT must not appear in redirect query string.
+  // HttpOnly cookies set via setAuthCookies() already carry the session;
+  // query-string tokens leak via Referer, browser history, and upstream logs.
+
+  it("GET /api/auth/x/callback does not leak JWT in redirect URL, sets auth cookies", async () => {
+    // Initiate login to seed a login-flow PKCE state via GET /login
+    const loginRes = await request(app).get("/api/auth/x/login");
+    expect(loginRes.status).toBe(302);
+    const location = loginRes.headers.location as string;
+    const url = new URL(location);
+    const state = url.searchParams.get("state");
+    expect(state).toBeTruthy();
+
+    // Drive the GET callback
+    const res = await request(app)
+      .get("/api/auth/x/callback")
+      .query({ code: "oauth-code", state });
+
+    expect(res.status).toBe(302);
+
+    const redirect = res.headers.location as string;
+    expect(redirect).toContain("provider=twitter");
+    expect(redirect).not.toContain("token=");
+    // Defense in depth: no raw JWT fragment should appear in the query
+    expect(redirect).not.toMatch(/[?&]token=/);
+
+    // HttpOnly auth cookies must be set so the portal has the session
+    const setCookie = res.headers["set-cookie"] as unknown as string[] | string;
+    const cookies = Array.isArray(setCookie) ? setCookie : [setCookie ?? ""];
+    expect(cookies.some((c) => c.includes("atlas_access_token="))).toBe(true);
+    expect(cookies.some((c) => c.includes("atlas_refresh_token="))).toBe(true);
+    expect(cookies.some((c) => /atlas_access_token=.+HttpOnly/i.test(c))).toBe(true);
+
+    // Confirm token exchange + profile fetch actually happened
+    expect(mockExchangeCodeForTokens).toHaveBeenCalledWith("oauth-code", "verifier-123");
+    expect(mockFetchTwitterUserProfile).toHaveBeenCalledWith("access-token");
+  });
+
+  it("GET /api/auth/twitter/callback does not leak JWT in redirect URL, sets auth cookies", async () => {
+    // Initiate twitter login to seed PKCE state via GET /api/auth/twitter
+    const loginRes = await request(app).get("/api/auth/twitter");
+    expect(loginRes.status).toBe(302);
+    const location = loginRes.headers.location as string;
+    const url = new URL(location);
+    const state = url.searchParams.get("state");
+    expect(state).toBeTruthy();
+
+    // Drive the callback
+    const res = await request(app)
+      .get("/api/auth/twitter/callback")
+      .query({ code: "oauth-code", state });
+
+    expect(res.status).toBe(302);
+
+    const redirect = res.headers.location as string;
+    expect(redirect).toContain("provider=twitter");
+    expect(redirect).not.toContain("token=");
+    expect(redirect).not.toMatch(/[?&]token=/);
+
+    const setCookie = res.headers["set-cookie"] as unknown as string[] | string;
+    const cookies = Array.isArray(setCookie) ? setCookie : [setCookie ?? ""];
+    expect(cookies.some((c) => c.includes("atlas_access_token="))).toBe(true);
+    expect(cookies.some((c) => c.includes("atlas_refresh_token="))).toBe(true);
+    expect(cookies.some((c) => /atlas_access_token=.+HttpOnly/i.test(c))).toBe(true);
+
+    // twitterLoginRouter uses the login-specific exchange
+    expect(mockExchangeLoginCodeForTokens).toHaveBeenCalledWith("oauth-code", "verifier-123");
+    expect(mockFetchTwitterUserProfile).toHaveBeenCalledWith("access-token");
   });
 });

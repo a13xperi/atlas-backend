@@ -8,6 +8,7 @@
     "build": "rm -rf dist && npx prisma generate && npx tsc",
     "start": "npx prisma db push --accept-data-loss && node dist/services/api/src/index.js",
     "seed:demo": "npx ts-node scripts/seed-demo.ts",
+    "seed:anil": "npx tsx scripts/seed-anil.ts",
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
     "db:migrate": "npx prisma migrate dev",
@@ -16,6 +17,7 @@
     "db:backup": "./scripts/backup-db.sh",
     "db:backup:r2": "npx tsx scripts/backup-to-r2.ts",
     "smoke": "npx tsx services/api/src/scripts/smoke-test.ts",
+    "db:encrypt-xoauth": "npx tsx services/api/src/scripts/encrypt-xoauth-tokens.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"
@@ -34,6 +36,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "helmet": "^8.1.0",
     "ioredis": "^5.6.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.1.1",

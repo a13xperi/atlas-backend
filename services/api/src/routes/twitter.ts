@@ -6,8 +6,14 @@ import { logger } from "../lib/logger";
 import { success, error } from "../lib/response";
 import { buildErrorResponse } from "../middleware/requestId";
 import { getCached, setCache } from "../lib/redis";
+import {
+  buildTokenWrite,
+  readAccessToken,
+  readRefreshToken,
+  TOKEN_READ_SELECT,
+} from "../lib/crypto";
 
-export const twitterRouter = Router();
+export const twitterRouter: Router = Router();
 
 const TWITTER_API_BASE = "https://api.twitter.com/2";
 const CACHE_TTL_SECONDS = 3600; // 1 hour
@@ -47,45 +53,43 @@ async function writeToCache<T>(key: string, data: T): Promise<void> {
 
 // ── Token helpers ────────────────────────────────────────────────────
 
-interface UserXTokens {
-  xAccessToken: string;
-  xRefreshToken: string | null;
-  xTokenExpiresAt: Date | null;
-}
-
 /**
  * Retrieve the user's X access token, refreshing if expired.
  * Returns null if user has no linked X account.
+ *
+ * Transparently handles the C-3 encrypted token columns — reads prefer
+ * the encrypted column, fall back to plaintext, and refreshed tokens
+ * are persisted via buildTokenWrite so they honor the active mode.
  */
 async function getValidAccessToken(userId: string): Promise<string | null> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { xAccessToken: true, xRefreshToken: true, xTokenExpiresAt: true },
+    select: { ...TOKEN_READ_SELECT, xTokenExpiresAt: true },
   });
 
-  if (!user?.xAccessToken) return null;
-
-  const tokens = user as UserXTokens;
+  const accessToken = readAccessToken(user);
+  if (!accessToken) return null;
 
   // Check if token is expired (with 60s buffer)
-  const isExpired = tokens.xTokenExpiresAt
-    ? tokens.xTokenExpiresAt.getTime() < Date.now() + 60_000
+  const isExpired = user?.xTokenExpiresAt
+    ? user.xTokenExpiresAt.getTime() < Date.now() + 60_000
     : false;
 
-  if (!isExpired) return tokens.xAccessToken;
+  if (!isExpired) return accessToken;
 
   // Attempt refresh
-  if (!tokens.xRefreshToken) return null;
+  const currentRefreshToken = readRefreshToken(user);
+  if (!currentRefreshToken) return null;
 
   try {
-    const refreshed = await refreshAccessToken(tokens.xRefreshToken);
+    const refreshed = await refreshAccessToken(currentRefreshToken);
     await prisma.user.update({
       where: { id: userId },
-      data: {
-        xAccessToken: refreshed.accessToken,
-        xRefreshToken: refreshed.refreshToken,
-        xTokenExpiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
-      },
+      data: buildTokenWrite({
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken,
+        expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
+      }),
     });
     return refreshed.accessToken;
   } catch (err: any) {

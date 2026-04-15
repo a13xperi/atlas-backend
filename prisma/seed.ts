@@ -3,8 +3,6 @@ import * as bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-const SEED_PASSWORD = "atlas-demo-2026";
-
 function daysAgo(n: number): Date {
   const d = new Date();
   d.setDate(d.getDate() - n);
@@ -16,7 +14,12 @@ function randomBetween(min: number, max: number): number {
 }
 
 async function main() {
-  const passwordHash = await bcrypt.hash(SEED_PASSWORD, 10);
+  const seedPassword = process.env.SEED_PASSWORD;
+  if (!seedPassword || seedPassword.length < 12) {
+    throw new Error("SEED_PASSWORD env var required (min 12 chars). Set it before running this seed.");
+  }
+
+  const passwordHash = await bcrypt.hash(seedPassword, 10);
 
   // --- 1. Users ---
   const users = await Promise.all([

@@ -1,9 +1,28 @@
 import { Router } from "express";
+import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { success, error } from "../lib/response";
+import { validationFailResponse } from "../lib/schemas";
 import { logger } from "../lib/logger";
+
+const createQaRunSchema = z.object({
+  tester_name: z.string().min(1),
+  tester_initials: z.string().min(1).max(6),
+});
+
+// Mirrors the downstream Supabase update — every field is optional so
+// partial updates are valid. `results` and `summary` are arbitrary JSON
+// blobs (rendered client-side), so we stay permissive on their inner
+// shape and only enforce the top-level object.
+const updateQaRunSchema = z
+  .object({
+    results: z.record(z.unknown()).optional(),
+    summary: z.record(z.unknown()).optional(),
+    status: z.string().min(1).optional(),
+  })
+  .strict();
 
 // QA data lives in the Sage/capacity Supabase project (separate from auth)
 const QA_SUPABASE_URL = process.env.QA_SUPABASE_URL || "https://zoirudjyqfqvpxsrxepr.supabase.co";
@@ -20,7 +39,7 @@ const qaSupabase: any = QA_SUPABASE_KEY
     })
   : null;
 
-export const qaRouter = Router();
+export const qaRouter: Router = Router();
 qaRouter.use(authenticate);
 qaRouter.use((_req, res, next) => {
   if (!qaSupabase) {
@@ -67,12 +86,13 @@ qaRouter.get("/runs/:id", async (req: AuthRequest, res) => {
 
 // Create test run
 qaRouter.post("/runs", async (req: AuthRequest, res) => {
-  try {
-    const { tester_name, tester_initials } = req.body;
-    if (!tester_name || !tester_initials) {
-      return res.status(400).json(error("tester_name and tester_initials required"));
-    }
+  const parsed = createQaRunSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
+  const { tester_name, tester_initials } = parsed.data;
 
+  try {
     const { data, error: dbErr } = await qaSupabase
       .from(TABLE)
       .insert({
@@ -97,6 +117,11 @@ qaRouter.post("/runs", async (req: AuthRequest, res) => {
 
 // Update test run (owner or MANAGER)
 qaRouter.patch("/runs/:id", async (req: AuthRequest, res) => {
+  const parsed = updateQaRunSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(validationFailResponse(parsed.error));
+  }
+
   try {
     const { data: run, error: fetchErr } = await qaSupabase
       .from(TABLE)
@@ -114,7 +139,7 @@ qaRouter.patch("/runs/:id", async (req: AuthRequest, res) => {
       }
     }
 
-    const { results, summary, status } = req.body;
+    const { results, summary, status } = parsed.data;
     const { data, error: dbErr } = await qaSupabase
       .from(TABLE)
       .update({

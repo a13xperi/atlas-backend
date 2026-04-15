@@ -7,7 +7,7 @@ import { authenticate, AuthRequest } from "../middleware/auth";
 import { calculateStreak, calculateStreakFromDates } from "../lib/streak";
 import { logger } from "../lib/logger";
 
-export const analyticsRouter = Router();
+export const analyticsRouter: Router = Router();
 analyticsRouter.use(authenticate);
 
 const emptyQuerySchema = z.object({}).passthrough();

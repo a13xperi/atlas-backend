@@ -4,8 +4,9 @@ import { readFile } from "fs/promises";
 import { resolve } from "path";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { buildErrorResponse } from "../middleware/requestId";
+import { DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO } from "../lib/config";
 
-export const loopRouter = Router();
+export const loopRouter: Router = Router();
 loopRouter.use(authenticate);
 
 const RALPH_STATE_PATH = process.env.RALPH_STATE_PATH || ".ralph/state.json";
@@ -65,8 +66,11 @@ loopRouter.post("/create-pr", async (req: AuthRequest, res) => {
       return res.status(503).json(buildErrorResponse(req, "GitHub token not configured"));
     }
 
-    const owner = process.env.GITHUB_OWNER || "a13xperi";
-    const repo = process.env.GITHUB_REPO || "atlas-portal";
+    // Defaults come from lib/config so they don't drift from .env.example.
+    // We still read process.env at request time so the existing jest tests
+    // can mutate env-per-test without reloading the module.
+    const owner = process.env.GITHUB_OWNER || DEFAULT_GITHUB_OWNER;
+    const repo = process.env.GITHUB_REPO || DEFAULT_GITHUB_REPO;
 
     const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
       method: "POST",

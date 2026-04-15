@@ -3,6 +3,7 @@ import { z } from "zod";
 import { VoiceMaturity } from "@prisma/client";
 import { parsePagination } from "../lib/pagination";
 import { prisma } from "../lib/prisma";
+import { withSafeReferenceVoice } from "../lib/reference-accounts";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { fetchTweetsByHandle } from "../lib/twitter";
@@ -10,9 +11,11 @@ import { calibrateFromTweets, type CalibrationResult } from "../lib/calibrate";
 import { getVoiceInsights } from "../lib/voice-insights";
 import { blendVoices } from "../lib/voice-blend";
 import { logger } from "../lib/logger";
+import { config } from "../lib/config";
+import { rateLimitByUser } from "../middleware/rateLimit";
 
 // Public router — no auth required
-export const referenceAccountsRouter = Router();
+export const referenceAccountsRouter: Router = Router();
 
 referenceAccountsRouter.get("/reference-accounts", async (_req, res) => {
   try {
@@ -93,8 +96,12 @@ referenceAccountsRouter.post("/reference-accounts/seed", async (req, res) => {
   }
 });
 
-export const voiceRouter = Router();
+export const voiceRouter: Router = Router();
 voiceRouter.use(authenticate);
+const aiGenerationLimiter = rateLimitByUser(
+  config.RATE_LIMIT_AI_GENERATION_MAX_REQUESTS,
+  config.RATE_LIMIT_AI_GENERATION_WINDOW_MS,
+);
 
 const profileSchema = z.object({
   humor: z.number().min(0).max(100).optional(),
@@ -293,6 +300,10 @@ const blendSchema = z.object({
   voices: z.array(blendVoiceSchema).min(1),
 });
 
+const updateBlendSchema = z.object({
+  name: z.string().min(1),
+});
+
 const updateBlendVoiceSchema = z.object({
   label: z.string().min(1).optional(),
   percentage: z.number().min(0).max(100).optional(),
@@ -435,13 +446,34 @@ voiceRouter.get("/blends", async (req: AuthRequest, res) => {
   try {
     const { take, skip } = parsePagination(req.query, { limit: 20, offset: 0 });
 
-    const blends = await prisma.savedBlend.findMany({
-      where: { userId: req.userId },
-      take,
-      skip,
-      include: { voices: { include: { referenceVoice: true } } },
-    });
-    res.json(success({ blends }));
+    const [user, blends] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { id: true, displayName: true, handle: true, avatarUrl: true },
+      }),
+      prisma.savedBlend.findMany({
+        where: { userId: req.userId },
+        take,
+        skip,
+        include: { voices: { include: { referenceVoice: true } } },
+      }),
+    ]);
+
+    const fallbackUser = user ?? {
+      id: req.userId!,
+      displayName: null,
+      handle: null,
+      avatarUrl: null,
+    };
+
+    res.json(
+      success({
+        blends: blends.map((blend) => ({
+          ...blend,
+          voices: blend.voices.map((voice) => withSafeReferenceVoice(voice, fallbackUser)),
+        })),
+      }),
+    );
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to load blends");
     res.status(500).json(error("Failed to load blends", 500, { message: err.message }));
@@ -474,6 +506,52 @@ voiceRouter.post("/blends", async (req: AuthRequest, res) => {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
     res.status(500).json(error("Failed to create blend"));
+  }
+});
+
+// Rename a saved blend
+voiceRouter.patch("/blends/:id", async (req: AuthRequest, res) => {
+  try {
+    const blendId = req.params.id as string;
+    const body = updateBlendSchema.parse(req.body);
+
+    const existingBlend = await prisma.savedBlend.findFirst({
+      where: { id: blendId, userId: req.userId },
+    });
+    if (!existingBlend) return res.status(404).json(error("Blend not found"));
+
+    const blend = await prisma.savedBlend.update({
+      where: { id: blendId },
+      data: { name: body.name },
+      include: { voices: { include: { referenceVoice: true } } },
+    });
+
+    res.json(success({ blend }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    res.status(500).json(error("Failed to update blend"));
+  }
+});
+
+// Delete a saved blend
+voiceRouter.delete("/blends/:id", async (req: AuthRequest, res) => {
+  try {
+    const blendId = req.params.id as string;
+
+    const existingBlend = await prisma.savedBlend.findFirst({
+      where: { id: blendId, userId: req.userId },
+    });
+    if (!existingBlend) return res.status(404).json(error("Blend not found"));
+
+    await prisma.savedBlend.delete({
+      where: { id: blendId },
+    });
+
+    res.json(success({ success: true }));
+  } catch (err: any) {
+    res.status(500).json(error("Failed to delete blend"));
   }
 });
 
@@ -541,56 +619,94 @@ const calibrateSchema = z.object({
   handle: z.string().min(1).max(50),
 });
 
-voiceRouter.post("/calibrate", async (req: AuthRequest, res) => {
+voiceRouter.post("/calibrate", aiGenerationLimiter, async (req: AuthRequest, res) => {
+  let timeout: NodeJS.Timeout | undefined;
+  const abort = new AbortController();
   try {
     const body = calibrateSchema.parse(req.body);
+    const userId = req.userId!;
     const normalizedHandle = normalizeReferenceHandle(body.handle);
 
-    // Fetch tweets from Twitter/X
-    const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle);
+    const RACE_MS = 40_000;
 
-    if (tweets.length === 0) {
-      return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
-    }
+    const workPromise = (async () => {
+      // Fail fast at 40s so the client gets a retryable timeout before Railway's 90s cap.
+      const { user: twitterUser, tweets } = await fetchTweetsByHandle(normalizedHandle, 50, abort.signal);
+      if (abort.signal.aborted) return;
 
-    // Claude calibration can take tens of seconds on larger tweet sets, so Railway deploys
-    // need RAILWAY_SERVICE_TIMEOUT=90000 for this endpoint.
-    const calibration = await calibrateFromTweets(tweets.map((t) => t.text));
+      if (tweets.length === 0) {
+        return res.status(400).json(error(`No tweets found for @${normalizedHandle}`));
+      }
 
-    // Update voice profile with all 12 calibrated dimensions
-    const dimensionData = buildVoiceProfileUpdate(calibration);
+      const calibration = await calibrateFromTweets(
+        tweets.map((t) => t.text),
+        abort.signal,
+      );
+      if (abort.signal.aborted) return;
 
-    const profile = await prisma.voiceProfile.upsert({
-      where: { userId: req.userId! },
-      update: dimensionData,
-      create: { userId: req.userId!, ...dimensionData },
+      // Railway deploys still need RAILWAY_SERVICE_TIMEOUT=90000 for long Anthropic calls.
+      const dimensionData = buildVoiceProfileUpdate(calibration);
+
+      const profile = await prisma.voiceProfile.upsert({
+        where: { userId },
+        update: dimensionData,
+        create: { userId, ...dimensionData },
+      });
+      if (abort.signal.aborted) return;
+
+      // Log analytics
+      await prisma.analyticsEvent.create({
+        data: { userId, type: "VOICE_REFINEMENT" },
+      });
+      if (abort.signal.aborted) return;
+
+      await prisma.user.update({
+        where: { id: userId },
+        data: { xAvatarUrl: twitterUser.profile_image_url ?? null },
+      });
+      if (abort.signal.aborted) return;
+
+      return res.json(success({
+        profile,
+        calibration: {
+          confidence: calibration.calibrationConfidence,
+          analysis: calibration.analysis,
+          tweetsAnalyzed: calibration.tweetsAnalyzed,
+          twitterUser: { username: twitterUser.username, name: twitterUser.name },
+        },
+      }));
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        abort.abort();
+        reject(new Error("calibration_timeout"));
+      }, RACE_MS);
     });
 
-    // Log analytics
-    await prisma.analyticsEvent.create({
-      data: { userId: req.userId!, type: "VOICE_REFINEMENT" },
-    });
-
-    res.json(success({
-      profile,
-      calibration: {
-        confidence: calibration.calibrationConfidence,
-        analysis: calibration.analysis,
-        tweetsAnalyzed: calibration.tweetsAnalyzed,
-        twitterUser: { username: twitterUser.username, name: twitterUser.name },
-      },
-    }));
+    await Promise.race([
+      workPromise,
+      timeoutPromise,
+    ]);
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json(error("Invalid request", 400, err.errors));
     }
-    logger.error({ err: err.message }, "Calibration failed");
-    // Surface Twitter API errors to the client so the frontend can show a useful message
     const msg = err.message ?? "";
+    if (msg === "calibration_timeout" || abort.signal.aborted) {
+      if (!res.headersSent) {
+        return res.status(503).json({ error: "calibration_timeout", retryable: true });
+      }
+      return;
+    }
+    logger.error({ err: msg }, "Calibration failed");
+    // Surface Twitter API errors to the client so the frontend can show a useful message
     if (msg.includes("429")) return res.status(429).json(error(`Twitter API rate limit: ${msg}`));
     if (msg.includes("404") || msg.includes("not found")) return res.status(404).json(error(msg));
     if (msg.includes("403")) return res.status(403).json(error(msg));
     res.status(502).json(error(`Voice calibration failed: ${msg}`));
+  } finally {
+    clearTimeout(timeout);
   }
 });
 

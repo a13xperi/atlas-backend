@@ -5,7 +5,7 @@ import YAML from "yamljs";
 import { logger } from "../lib/logger";
 import { buildErrorResponse } from "../middleware/requestId";
 
-export const docsRouter = Router();
+export const docsRouter: Router = Router();
 
 const OPENAPI_SPEC_PATH = path.resolve(process.cwd(), "docs", "openapi.yaml");
 

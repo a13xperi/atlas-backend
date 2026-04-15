@@ -5,7 +5,7 @@ import { authenticate, AuthRequest } from "../middleware/auth";
 import { logger } from "../lib/logger";
 import { success, error } from "../lib/response";
 
-export const monitorsRouter = Router();
+export const monitorsRouter: Router = Router();
 monitorsRouter.use(authenticate);
 
 function paramId(req: AuthRequest): string {

@@ -4,18 +4,30 @@ import { parsePagination } from "../lib/pagination";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { rateLimitByUser } from "../middleware/rateLimit";
+import { config } from "../lib/config";
 import { conductResearch } from "../lib/research";
 import { logger } from "../lib/logger";
 
-export const researchRouter = Router();
+export const researchRouter: Router = Router();
 researchRouter.use(authenticate);
+
+// Per-user rate limit for the Anthropic-backed research endpoint. Each
+// call burns through tokens — without a per-user cap a single account
+// can blow through the project's monthly LLM budget in minutes during
+// a customer demo. Mirrors drafts.ts/aiGenerationLimiter so we get one
+// knob in config (RATE_LIMIT_AI_GENERATION_*) for every AI cost path.
+const aiGenerationLimiter = rateLimitByUser(
+  config.RATE_LIMIT_AI_GENERATION_MAX_REQUESTS,
+  config.RATE_LIMIT_AI_GENERATION_WINDOW_MS,
+);
 
 const researchSchema = z.object({
   query: z.string().min(1).max(100000),
 });
 
 // Standalone research endpoint
-researchRouter.post("/", async (req: AuthRequest, res) => {
+researchRouter.post("/", aiGenerationLimiter, async (req: AuthRequest, res) => {
   try {
     const body = researchSchema.parse(req.body);
 

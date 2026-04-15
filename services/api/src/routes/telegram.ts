@@ -9,7 +9,7 @@ import {
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
 
-export const telegramRouter = Router();
+export const telegramRouter: Router = Router();
 telegramRouter.use(authenticate);
 
 const connectSchema = z.object({

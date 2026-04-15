@@ -9,7 +9,7 @@ import { matchMonitorKeywords } from "./monitors";
 import { emitToUser } from "../lib/socket";
 import { dispatchAlert } from "../lib/alertDelivery";
 
-export const trendingRouter = Router();
+export const trendingRouter: Router = Router();
 trendingRouter.use(authenticate);
 
 const scanSchema = z.object({}).passthrough();
