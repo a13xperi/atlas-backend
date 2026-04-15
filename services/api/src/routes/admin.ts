@@ -54,6 +54,52 @@ adminRouter.post("/promote", rateLimit(10, 60 * 1000, "promote"), async (req, re
   }
 });
 
+const resetOnboardingSchema = z.object({
+  handle: z.string().min(1),
+  secret: z.string().min(1),
+  clearX: z.boolean().default(false),
+});
+
+// POST /api/admin/reset-onboarding — secret-gated onboarding reset (no JWT required)
+// Clears onboardingTrack so the user re-enters the full onboarding flow.
+// Set clearX: true to also wipe xHandle (forces X reconnect step).
+adminRouter.post("/reset-onboarding", rateLimit(20, 60 * 1000, "reset-onboarding"), async (req, res) => {
+  try {
+    const demoSecret = process.env.DEMO_ADMIN_SECRET;
+    if (!demoSecret) {
+      return res.status(404).json(error("Not found", 404));
+    }
+
+    const body = resetOnboardingSchema.parse(req.body);
+    if (body.secret !== demoSecret) {
+      return res.status(401).json(error("Unauthorized", 401));
+    }
+
+    const user = await prisma.user.findUnique({ where: { handle: body.handle } });
+    if (!user) {
+      return res.status(404).json(error("User not found", 404));
+    }
+
+    const updateData: Record<string, null> = { onboardingTrack: null };
+    if (body.clearX) updateData.xHandle = null;
+
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: updateData,
+      select: { handle: true, onboardingTrack: true, xHandle: true },
+    });
+
+    logger.info({ handle: updated.handle, clearX: body.clearX }, "Onboarding reset via demo endpoint");
+    return res.json(success({ handle: updated.handle, onboardingTrack: updated.onboardingTrack, xHandle: updated.xHandle, message: "Onboarding reset. User will re-enter onboarding on next login." }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    logger.error({ err: err.message }, "Reset onboarding failed");
+    return res.status(500).json(error("Failed to reset onboarding", 500));
+  }
+});
+
 adminRouter.use(authenticate);
 
 /** Require ADMIN role — returns the user or sends 403 */
