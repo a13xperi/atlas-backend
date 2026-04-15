@@ -26,7 +26,10 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 const ANIL_EMAIL = "anil@delphidigital.io";
-const ANIL_PASSWORD = "AtlasDemo2026!";
+const ANIL_PASSWORD = process.env.ANIL_SEED_PASSWORD;
+if (!ANIL_PASSWORD || ANIL_PASSWORD.length < 12) {
+  throw new Error("ANIL_SEED_PASSWORD env var required (min 12 chars). Set it before running this seed.");
+}
 const ANIL_HANDLE = "anil";
 
 async function main() {
