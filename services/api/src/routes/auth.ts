@@ -188,10 +188,28 @@ authRouter.post("/login", loginRateLimiter, async (req, res) => {
 
         if (user) {
           // Re-fetch with explicit select so lazy-migration update doesn't
-          // slip through with a stale user object missing onboardingTrack
+          // slip through with a stale user object missing onboardingTrack.
+          // SAFE WHITELIST — never expose passwordHash, xAccessToken*,
+          // xRefreshToken*, supabaseId, email, or telegramChatId to clients.
           const freshUser = await prisma.user.findUnique({
             where: { id: user.id },
-            include: { voiceProfile: true },
+            select: {
+              id: true,
+              handle: true,
+              role: true,
+              onboardingTrack: true,
+              displayName: true,
+              avatarUrl: true,
+              xHandle: true,
+              xBio: true,
+              xAvatarUrl: true,
+              xFollowerCount: true,
+              tourCompleted: true,
+              tourStep: true,
+              createdAt: true,
+              updatedAt: true,
+              voiceProfile: { select: { id: true, userId: true } },
+            },
           });
           if (!freshUser) return res.status(500).json(error("User not found after login"));
           setAuthCookies(res, session.session.access_token, session.session.refresh_token);
