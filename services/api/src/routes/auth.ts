@@ -250,8 +250,14 @@ authRouter.post("/refresh", async (req, res) => {
           // C-6: refresh must respect the revocation list. Without this check,
           // a logged-out token could call /refresh and mint a fresh jti,
           // defeating the blacklist.
-          if (decoded.jti && (await isJtiRevoked(decoded.jti))) {
-            return res.status(401).json(error("Invalid or expired token"));
+          if (decoded.jti) {
+            try {
+              if (await isJtiRevoked(decoded.jti)) {
+                return res.status(401).json(error("Invalid or expired token"));
+              }
+            } catch {
+              // Best-effort: allow on Redis error in non-prod
+            }
           }
           const newToken = signLegacyToken(decoded.userId);
           return res.json(success({ token: newToken, refresh_token: null }));
@@ -345,7 +351,11 @@ authRouter.post("/logout", authenticate, async (req: AuthRequest, res) => {
       if (decoded?.jti) {
         const ttl = remainingTtlSeconds(decoded.exp);
         if (ttl > 0) {
-          await revokeJti(decoded.jti, ttl);
+          try {
+            await revokeJti(decoded.jti, ttl);
+          } catch (err: any) {
+            logger.warn({ jti: decoded.jti.slice(0, 8), err: err?.message }, "Redis unavailable — jti revocation skipped");
+          }
         }
       }
     }

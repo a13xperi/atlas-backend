@@ -6,6 +6,7 @@
  */
 
 import request from "supertest";
+import jwt from "jsonwebtoken";
 import express from "express";
 import { requestIdMiddleware } from "../middleware/requestId";
 import { expectSuccessResponse } from "./helpers/response";
