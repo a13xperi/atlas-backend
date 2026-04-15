@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import {
   checkAnthropic,
   checkDb,
@@ -12,8 +12,25 @@ import {
 } from "../lib/health-checks";
 import { prisma } from "../lib/prisma";
 import { getRedis } from "../lib/redis";
+import { rateLimit } from "../middleware/rateLimit";
+import { logger } from "../lib/logger";
 
 const FULL_CHECK_TIMEOUT_MS = 2_000;
+
+const fullHealthRateLimiter = rateLimit(6, 60 * 1000, "health-full");
+
+function requireAdminToken(req: Request, res: Response, next: NextFunction) {
+  const token = process.env.ADMIN_HEALTH_TOKEN;
+  if (!token) {
+    logger.warn("ADMIN_HEALTH_TOKEN is not set; /health/full is inaccessible");
+    return res.status(503).json({ error: "Health diagnostics unavailable" });
+  }
+  const header = req.headers["x-admin-token"];
+  if (header !== token) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+}
 
 function settledResultToCheck(result: PromiseSettledResult<HealthCheckResult>): HealthCheckResult {
   if (result.status === "fulfilled") {
@@ -28,6 +45,12 @@ function settledResultToCheck(result: PromiseSettledResult<HealthCheckResult>): 
 }
 
 export const healthRouter = Router();
+
+healthRouter.use((_req, res, next) => {
+  res.setHeader("X-Robots-Tag", "noindex");
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
 
 healthRouter.get("/health", async (_req, res) => {
   try {
@@ -66,7 +89,7 @@ healthRouter.get("/health", async (_req, res) => {
   }
 });
 
-healthRouter.get("/health/full", async (_req, res) => {
+healthRouter.get("/health/full", fullHealthRateLimiter, requireAdminToken, async (_req, res) => {
   try {
     const settledChecks = await Promise.allSettled([
       checkDb(FULL_CHECK_TIMEOUT_MS),

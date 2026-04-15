@@ -3,6 +3,7 @@ import * as fsPromises from "fs/promises";
 import path from "path";
 import { prisma } from "./prisma";
 import { getRedis } from "./redis";
+import { logger } from "./logger";
 
 export type HealthCheckStatus = "ok" | "error" | "skipped";
 
@@ -84,17 +85,36 @@ export async function runCheck<T extends Record<string, unknown>>(
   }
 }
 
-export function checkDb(timeoutMs = 2_000): Promise<HealthCheckResult> {
-  return runCheck("db", async () => {
-    await prisma.$queryRaw`SELECT 1`;
-    return {};
-  }, timeoutMs);
+export async function checkDb(timeoutMs = 2_000): Promise<HealthCheckResult> {
+  const startedAt = Date.now();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    await Promise.race([
+      prisma.$queryRaw`SELECT 1`,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+      }),
+    ]);
+
+    return { status: "ok", latencyMs: Date.now() - startedAt };
+  } catch (error) {
+    logger.error({ err: error instanceof Error ? error.message : String(error) }, "Database health check failed");
+    return { status: "error", latencyMs: Date.now() - startedAt, error: "db_unreachable" };
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
-export function checkRedis(timeoutMs = 2_000): Promise<HealthCheckResult> {
-  return runCheck("redis", async () => {
+export async function checkRedis(timeoutMs = 2_000): Promise<HealthCheckResult> {
+  const startedAt = Date.now();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  try {
     if (!process.env.REDIS_URL) {
-      return { status: "skipped" };
+      return { status: "skipped", latencyMs: Date.now() - startedAt };
     }
 
     const redis = getRedis();
@@ -102,9 +122,22 @@ export function checkRedis(timeoutMs = 2_000): Promise<HealthCheckResult> {
       throw new Error("Redis client unavailable");
     }
 
-    await redis.ping();
-    return {};
-  }, timeoutMs);
+    await Promise.race([
+      redis.ping(),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+      }),
+    ]);
+
+    return { status: "ok", latencyMs: Date.now() - startedAt };
+  } catch (error) {
+    logger.error({ err: error instanceof Error ? error.message : String(error) }, "Redis health check failed");
+    return { status: "error", latencyMs: Date.now() - startedAt, error: "redis_unreachable" };
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 export function checkOpenAI(timeoutMs = 2_000): Promise<HealthCheckResult> {

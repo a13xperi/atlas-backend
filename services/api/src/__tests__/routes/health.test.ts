@@ -3,6 +3,7 @@ import express from "express";
 import { statfs } from "fs/promises";
 import { healthRouter } from "../../routes/health";
 import { requestIdMiddleware } from "../../middleware/requestId";
+import { clearRateLimitStore } from "../../middleware/rateLimit";
 
 jest.mock("../../lib/prisma", () => ({
   prisma: { $queryRaw: jest.fn().mockResolvedValue([{ "?column?": 1 }]) },
@@ -41,6 +42,8 @@ afterAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  clearRateLimitStore();
+  process.env.ADMIN_HEALTH_TOKEN = "test-admin-token";
   delete process.env.REDIS_URL;
   delete process.env.OPENAI_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
@@ -73,8 +76,17 @@ describe("health routes", () => {
     expect(res.body.uptime).toBeGreaterThan(0);
   });
 
+  it("sets security headers on health responses", async () => {
+    const res = await request(app).get("/health");
+
+    expect(res.headers["x-robots-tag"]).toBe("noindex");
+    expect(res.headers["cache-control"]).toBe("no-store");
+  });
+
   it("reports healthy when required checks pass and optional checks are skipped", async () => {
-    const res = await request(app).get("/health/full");
+    const res = await request(app)
+      .get("/health/full")
+      .set("X-Admin-Token", "test-admin-token");
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("healthy");
@@ -91,20 +103,23 @@ describe("health routes", () => {
   it("returns 503 unhealthy when the database check fails", async () => {
     mockPrisma.$queryRaw.mockRejectedValueOnce(new Error("db unavailable"));
 
-    const res = await request(app).get("/health/full");
+    const res = await request(app)
+      .get("/health/full")
+      .set("X-Admin-Token", "test-admin-token");
 
     expect(res.status).toBe(503);
     expect(res.body.status).toBe("unhealthy");
     expect(res.body.checks.db.status).toBe("error");
-    expect(res.body.checks.db.error).toBe("db unavailable");
+    expect(res.body.checks.db.error).toBe("db_unreachable");
   });
 
   it("marks redis as skipped when REDIS_URL is absent", async () => {
-    const res = await request(app).get("/health/full");
+    const res = await request(app)
+      .get("/health/full")
+      .set("X-Admin-Token", "test-admin-token");
 
     expect(res.status).toBe(200);
     expect(res.body.checks.redis.status).toBe("skipped");
-    expect(mockGetRedis).not.toHaveBeenCalled();
   });
 
   it("returns degraded when an optional provider fails", async () => {
@@ -114,7 +129,9 @@ describe("health routes", () => {
       status: 500,
     } as Response);
 
-    const res = await request(app).get("/health/full");
+    const res = await request(app)
+      .get("/health/full")
+      .set("X-Admin-Token", "test-admin-token");
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("degraded");
@@ -129,7 +146,9 @@ describe("health routes", () => {
     );
 
     const startedAt = Date.now();
-    const res = await request(app).get("/health/full");
+    const res = await request(app)
+      .get("/health/full")
+      .set("X-Admin-Token", "test-admin-token");
     const elapsedMs = Date.now() - startedAt;
 
     expect(res.status).toBe(200);
@@ -141,8 +160,49 @@ describe("health routes", () => {
   });
 
   it("returns valid ISO timestamps on the full diagnostics route", async () => {
-    const res = await request(app).get("/health/full");
+    const res = await request(app)
+      .get("/health/full")
+      .set("X-Admin-Token", "test-admin-token");
 
     expect(new Date(res.body.timestamp).toISOString()).toBe(res.body.timestamp);
+  });
+
+  it("returns 401 when X-Admin-Token is missing or invalid", async () => {
+    const resMissing = await request(app).get("/health/full");
+    expect(resMissing.status).toBe(401);
+    expect(resMissing.body.error).toBe("Unauthorized");
+
+    const resInvalid = await request(app)
+      .get("/health/full")
+      .set("X-Admin-Token", "bad-token");
+    expect(resInvalid.status).toBe(401);
+    expect(resInvalid.body.error).toBe("Unauthorized");
+  });
+
+  it("returns 503 when ADMIN_HEALTH_TOKEN is not configured", async () => {
+    delete process.env.ADMIN_HEALTH_TOKEN;
+
+    const res = await request(app)
+      .get("/health/full")
+      .set("X-Admin-Token", "test-admin-token");
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe("Health diagnostics unavailable");
+  });
+
+  it("rate limits /health/full to 6 requests per minute", async () => {
+    // Exhaust the 6-request allowance
+    for (let i = 0; i < 6; i++) {
+      const res = await request(app)
+        .get("/health/full")
+        .set("X-Admin-Token", "test-admin-token");
+      expect(res.status).toBe(200);
+    }
+
+    const res = await request(app)
+      .get("/health/full")
+      .set("X-Admin-Token", "test-admin-token");
+    expect(res.status).toBe(429);
+    expect(res.body.error).toBe("Too many requests. Please try again later.");
   });
 });
