@@ -388,7 +388,8 @@ authRouter.get("/me", authenticate, async (req: AuthRequest, res) => {
     });
     if (!user) return res.status(404).json(error("User not found"));
 
-    res.json(success({ user }));
+    const { xAvatarUrl, ...rest } = user;
+    res.json(success({ user: { ...rest, avatarUrl: xAvatarUrl } }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Me error:", err.message);
     res.status(500).json(error("Failed to get user"));
