@@ -31,7 +31,7 @@ const envSchema = z.object({
   RATE_LIMIT_DOCS_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_AI_GENERATION_MAX_REQUESTS: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_AI_GENERATION_WINDOW_MS: z.coerce.number().int().positive().default(60 * 60 * 1000),
-  RATE_LIMIT_GENERAL_MAX_REQUESTS: z.coerce.number().int().positive().default(100),
+  RATE_LIMIT_GENERAL_MAX_REQUESTS: z.coerce.number().int().positive().default(500),
   RATE_LIMIT_GENERAL_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
 
   // AI providers
