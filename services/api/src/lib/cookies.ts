@@ -14,7 +14,7 @@ const COOKIE_OPTIONS = {
   path: "/",
 };
 
-const ACCESS_TOKEN_MAX_AGE = 60 * 60 * 1000; // 1 hour
+const ACCESS_TOKEN_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 const REFRESH_TOKEN_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export function setAuthCookies(res: Response, accessToken: string, refreshToken: string): void {
