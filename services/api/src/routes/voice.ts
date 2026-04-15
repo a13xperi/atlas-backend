@@ -9,7 +9,7 @@ import { authenticate, AuthRequest } from "../middleware/auth";
 import { fetchTweetsByHandle } from "../lib/twitter";
 import { calibrateFromTweets, type CalibrationResult } from "../lib/calibrate";
 import { getVoiceInsights } from "../lib/voice-insights";
-import { blendVoices } from "../lib/voice-blend";
+import { blendVoices, applySwipeHeuristics, type SwipeSignal } from "../lib/voice-blend";
 import { logger } from "../lib/logger";
 import { config } from "../lib/config";
 import { rateLimitByUser } from "../middleware/rateLimit";
@@ -707,6 +707,132 @@ voiceRouter.post("/calibrate", aiGenerationLimiter, async (req: AuthRequest, res
     res.status(502).json(error(`Voice calibration failed: ${msg}`));
   } finally {
     clearTimeout(timeout);
+  }
+});
+
+// Get voice dimension insights (engagement feedback loop)
+// Persist swipe signals and calibrate voice profile from likes + reasons
+const swipeSignalItemSchema = z.object({
+  tweetId: z.string().min(1),
+  text: z.string().min(1),
+  reasons: z.array(z.string()).default([]),
+  handle: z.string().optional(),
+});
+
+const swipeSignalsSchema = z.object({
+  ownLikes: z.array(swipeSignalItemSchema).default([]),
+  ownDislikes: z.array(swipeSignalItemSchema).default([]),
+  refLikes: z.array(swipeSignalItemSchema).default([]),
+  refDislikes: z.array(swipeSignalItemSchema).default([]),
+});
+
+voiceRouter.post("/swipe-signals", aiGenerationLimiter, async (req: AuthRequest, res) => {
+  try {
+    const body = swipeSignalsSchema.parse(req.body);
+    const userId = req.userId!;
+
+    // Flatten and persist all signals
+    const rawSignals = [
+      ...body.ownLikes.map((s) => ({ ...s, direction: "like" as const, source: "OWN" as const })),
+      ...body.ownDislikes.map((s) => ({ ...s, direction: "dislike" as const, source: "OWN" as const })),
+      ...body.refLikes.map((s) => ({ ...s, direction: "like" as const, source: "REF" as const })),
+      ...body.refDislikes.map((s) => ({ ...s, direction: "dislike" as const, source: "REF" as const })),
+    ];
+
+    if (rawSignals.length > 0) {
+      await prisma.voiceSwipeSignal.createMany({
+        data: rawSignals.map((s) => ({
+          userId,
+          tweetId: s.tweetId,
+          text: s.text,
+          direction: s.direction,
+          source: s.source,
+          handle: s.handle ?? null,
+          reasons: s.reasons,
+        })),
+      });
+    }
+
+    const likedTexts = [
+      ...body.ownLikes.map((s) => s.text),
+      ...body.refLikes.map((s) => s.text),
+    ];
+
+    let calibration: CalibrationResult;
+    if (likedTexts.length > 0) {
+      calibration = await calibrateFromTweets(likedTexts);
+    } else {
+      calibration = {
+        humor: 50,
+        formality: 50,
+        brevity: 50,
+        contrarianTone: 50,
+        directness: 50,
+        warmth: 50,
+        technicalDepth: 50,
+        confidence: 50,
+        evidenceOrientation: 50,
+        solutionOrientation: 50,
+        socialPosture: 50,
+        selfPromotionalIntensity: 50,
+        calibrationConfidence: 0,
+        analysis: "No liked tweets to analyze.",
+        tweetsAnalyzed: 0,
+      };
+    }
+
+    // Apply heuristic deltas from liked signals with reason chips
+    const likedSignals: SwipeSignal[] = rawSignals
+      .filter((s) => s.direction === "like")
+      .map((s) => ({
+        tweetId: s.tweetId,
+        text: s.text,
+        direction: s.direction,
+        source: s.source,
+        handle: s.handle ?? null,
+        reasons: s.reasons,
+      }));
+
+    const heuristicDeltas = applySwipeHeuristics(likedSignals);
+    const baseDimensions = buildCalibrationDimensions(calibration);
+
+    const adjustedDimensions = { ...baseDimensions };
+    for (const [key, delta] of Object.entries(heuristicDeltas)) {
+      const dimKey = key as keyof typeof adjustedDimensions;
+      adjustedDimensions[dimKey] = Math.min(100, Math.max(0, adjustedDimensions[dimKey] + delta));
+    }
+
+    const profileUpdate = {
+      ...adjustedDimensions,
+      tweetsAnalyzed: calibration.tweetsAnalyzed,
+      maturity: resolveVoiceMaturity(calibration.tweetsAnalyzed),
+      analysis: calibration.analysis,
+    };
+
+    const profile = await prisma.voiceProfile.upsert({
+      where: { userId },
+      update: profileUpdate,
+      create: { userId, ...profileUpdate },
+    });
+
+    await prisma.analyticsEvent.create({
+      data: { userId, type: "VOICE_REFINEMENT" },
+    });
+
+    res.json(success({
+      profile,
+      calibration: {
+        confidence: calibration.calibrationConfidence,
+        analysis: calibration.analysis,
+        tweetsAnalyzed: calibration.tweetsAnalyzed,
+      },
+    }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    logger.error({ err: err.message }, "Swipe signals failed");
+    res.status(502).json(error(`Swipe signals failed: ${err.message}`));
   }
 });
 
