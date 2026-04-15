@@ -134,6 +134,7 @@ describe("POST /api/voice/reference-accounts/seed", () => {
         { id: "t1", text: "Do things that don't scale." },
         { id: "t2", text: "Great founders notice what other people ignore." },
       ],
+      stats: { pool: 30, topN: 0, recentN: 30 },
     });
     mockCalibrateFromTweets.mockResolvedValueOnce({
       ...seededProfile,
@@ -212,6 +213,7 @@ describe("POST /api/voice/reference-accounts/seed", () => {
         profile_image_url: "https://example.com/new-paul.jpg",
       },
       tweets: [{ id: "t1", text: "Build for the future." }],
+      stats: { pool: 30, topN: 0, recentN: 30 },
     });
     mockCalibrateFromTweets.mockResolvedValueOnce({
       ...seededProfile,
@@ -254,6 +256,7 @@ describe("POST /api/voice/reference-accounts/seed", () => {
         name: "Paul Graham",
       },
       tweets: [],
+      stats: { pool: 30, topN: 0, recentN: 30 },
     });
 
     const res = await request(app)

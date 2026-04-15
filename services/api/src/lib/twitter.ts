@@ -7,10 +7,18 @@ import { config } from "./config";
 
 const TWITTER_API_BASE = "https://api.twitter.com/2";
 
-interface Tweet {
+export interface Tweet {
   id: string;
   text: string;
   created_at?: string;
+  public_metrics?: {
+    like_count: number;
+    retweet_count: number;
+    reply_count: number;
+    quote_count?: number;
+    impression_count?: number;
+    bookmark_count?: number;
+  };
 }
 
 interface UserLookupResult {
@@ -74,12 +82,12 @@ export async function lookupUser(username: string, signal?: AbortSignal): Promis
  */
 export async function fetchUserTweets(
   userId: string,
-  maxResults = 50,
+  maxResults = 100,
   signal?: AbortSignal,
 ): Promise<Tweet[]> {
   const params = new URLSearchParams({
     max_results: String(Math.min(maxResults, 100)),
-    "tweet.fields": "created_at",
+    "tweet.fields": "created_at,public_metrics",
     exclude: "retweets,replies",
   });
 
@@ -92,16 +100,83 @@ export async function fetchUserTweets(
 }
 
 /**
+ * Fetch top-engaged + most-recent tweets for a user.
+ */
+export async function fetchTopAndRecentTweets(
+  userId: string,
+  opts: { poolSize?: number; topN?: number; recentN?: number; signal?: AbortSignal } = {}
+): Promise<Tweet[]> {
+  const pool = await fetchUserTweets(userId, opts.poolSize ?? 100, opts.signal);
+  const topN = opts.topN ?? 25;
+  const recentN = opts.recentN ?? 25;
+
+  const scored = pool.map((t) => {
+    const m = t.public_metrics;
+    const engagement =
+      (m?.like_count ?? 0) +
+      (m?.retweet_count ?? 0) * 2 +
+      (m?.reply_count ?? 0) +
+      (m?.bookmark_count ?? 0);
+    return { tweet: t, engagement };
+  });
+
+  const topEngaged = [...scored]
+    .sort((a, b) => b.engagement - a.engagement)
+    .slice(0, topN)
+    .map((s) => s.tweet);
+
+  const recent = [...pool]
+    .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))
+    .slice(0, recentN);
+
+  const seen = new Set<string>();
+  const blended: Tweet[] = [];
+  for (const t of [...topEngaged, ...recent]) {
+    if (!seen.has(t.id)) {
+      seen.add(t.id);
+      blended.push(t);
+    }
+  }
+  return blended;
+}
+
+/**
  * Convenience: fetch tweets by handle (combines lookup + fetch).
  */
 export async function fetchTweetsByHandle(
   handle: string,
-  maxResults = 50,
-  signal?: AbortSignal,
-): Promise<{ user: UserLookupResult; tweets: Tweet[] }> {
-  const user = await lookupUser(handle, signal);
-  const tweets = await fetchUserTweets(user.id, maxResults, signal);
-  return { user, tweets };
+  opts:
+    | { mode?: "recent" | "blended"; maxResults?: number; signal?: AbortSignal }
+    | number = {},
+): Promise<{
+  user: UserLookupResult;
+  tweets: Tweet[];
+  stats: { pool: number; topN: number; recentN: number };
+}> {
+  // Backwards compatibility: if opts is a number, treat it as maxResults
+  const options: { mode?: "recent" | "blended"; maxResults?: number; signal?: AbortSignal } =
+    typeof opts === "number" ? { mode: "recent", maxResults: opts } : opts;
+
+  const user = await lookupUser(handle, options.signal);
+  if (options.mode === "blended" || options.mode === undefined) {
+    const blended = await fetchTopAndRecentTweets(user.id, {
+      poolSize: 100,
+      topN: 25,
+      recentN: 25,
+      signal: options.signal,
+    });
+    return {
+      user,
+      tweets: blended,
+      stats: { pool: 100, topN: 25, recentN: 25 },
+    };
+  }
+  const tweets = await fetchUserTweets(user.id, options.maxResults ?? 50, options.signal);
+  return {
+    user,
+    tweets,
+    stats: { pool: tweets.length, topN: 0, recentN: tweets.length },
+  };
 }
 
 // --- Tweet Metrics ---
