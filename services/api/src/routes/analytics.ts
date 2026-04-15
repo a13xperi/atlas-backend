@@ -10,7 +10,7 @@ import { logger } from "../lib/logger";
 export const analyticsRouter: Router = Router();
 analyticsRouter.use(authenticate);
 
-const emptyQuerySchema = z.object({}).passthrough();
+const emptyQuerySchema = z.object({}).strict();
 
 type EngagementMetricsSummary = {
   likes: number;
