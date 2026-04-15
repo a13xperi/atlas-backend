@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { error, success } from "../lib/response";
 import { authenticate, AuthRequest } from "../middleware/auth";
+import { rateLimit } from "../middleware/rateLimit";
 import { getAnthropicClient } from "../lib/anthropic";
 import {
   getPromptCatalog,
@@ -16,11 +17,11 @@ export const adminRouter: Router = Router();
 const promoteSchema = z.object({
   handle: z.string().min(1),
   secret: z.string().min(1),
-  role: z.enum(["ANALYST", "MANAGER", "ADMIN"]).default("MANAGER"),
+  role: z.enum(["ANALYST", "MANAGER"]).default("MANAGER"),
 });
 
 // POST /api/admin/promote — secret-gated role promotion (demo utility, no JWT required)
-adminRouter.post("/promote", async (req, res) => {
+adminRouter.post("/promote", rateLimit(10, 60 * 1000, "promote"), async (req, res) => {
   try {
     const demoSecret = process.env.DEMO_ADMIN_SECRET;
     if (!demoSecret) {
@@ -42,6 +43,7 @@ adminRouter.post("/promote", async (req, res) => {
       data: { role: body.role },
     });
 
+    logger.info({ handle: updated.handle, role: updated.role, id: updated.id }, "User promoted via demo endpoint");
     return res.json(success({ handle: updated.handle, role: updated.role, id: updated.id }));
   } catch (err: any) {
     if (err instanceof z.ZodError) {
