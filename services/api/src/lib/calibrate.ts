@@ -139,7 +139,7 @@ export async function calibrateFromTweets(
   /** AI returns 0-10 for extended dims; multiply by 10 for 0-100 storage */
   const tenToHundred = (v: number) => clamp100(Math.round((v ?? 5) * 10));
 
-  return {
+  const dims = {
     // Core voice (already 0-100)
     humor: clamp100(result.humor),
     formality: clamp100(result.formality),
@@ -155,6 +155,19 @@ export async function calibrateFromTweets(
     solutionOrientation: tenToHundred(result.solutionOrientation),
     socialPosture: tenToHundred(result.socialPosture),
     selfPromotionalIntensity: tenToHundred(result.selfPromotionalIntensity),
+  };
+
+  // Reject degenerate all-zero output (model degraded or hit the scale floor).
+  // The caller's catch block will return neutral defaults instead of persisting zeros.
+  const coreValues = [dims.humor, dims.formality, dims.brevity, dims.contrarianTone];
+  if (coreValues.every((v) => v <= 4)) {
+    throw new Error(
+      "Calibration returned degenerate output — all core dimensions <= 4. Using defaults.",
+    );
+  }
+
+  return {
+    ...dims,
     // Meta
     calibrationConfidence: Math.min(Math.max(result.calibrationConfidence ?? 0.5, 0), 1),
     analysis: result.analysis || "Voice profile calibrated from tweet analysis.",
