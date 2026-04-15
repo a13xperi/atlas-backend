@@ -456,15 +456,17 @@ adminRouter.get("/feed", async (req: AuthRequest, res) => {
 });
 
 const resetUserSchema = z.object({
-  userId: z.string().min(1),
+  userId: z.string().min(1).optional(),
 });
 
 // POST /api/admin/reset-user — reset a user back to "new user" state
+// If userId is omitted, resets the calling admin's own account (self-reset for QA).
 adminRouter.post("/reset-user", async (req: AuthRequest, res) => {
   try {
     if (!(await requireAdmin(req, res))) return;
 
-    const { userId } = resetUserSchema.parse(req.body);
+    const body = resetUserSchema.parse(req.body);
+    const userId = body.userId ?? req.userId!;
 
     await prisma.$transaction(async (tx) => {
       // 1. Reset VoiceProfile to defaults
@@ -508,11 +510,12 @@ adminRouter.post("/reset-user", async (req: AuthRequest, res) => {
       // 6. Delete all Session records (force re-login)
       await tx.session.deleteMany({ where: { userId } });
 
-      // 7. Reset User onboarding fields if they exist, and clear xHandle link
+      // 7. Reset User onboarding fields and clear xHandle link
       await tx.user.update({
         where: { id: userId },
         data: {
           xHandle: null,
+          onboardingTrack: null,
         },
       });
     });
