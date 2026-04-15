@@ -21,12 +21,10 @@ dotenv.config();
 
 import { PrismaClient, OnboardingTrack } from "@prisma/client";
 import { createClient } from "@supabase/supabase-js";
-import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
 const ANIL_EMAIL = "anil@delphidigital.io";
-const ANIL_PASSWORD = "AtlasDemo2026!";
 const ANIL_HANDLE = "anil";
 
 async function main() {
@@ -59,7 +57,6 @@ async function main() {
     } else {
       const { data, error } = await supabase.auth.admin.createUser({
         email: ANIL_EMAIL,
-        password: ANIL_PASSWORD,
         email_confirm: true,
       });
       if (error) {
@@ -75,13 +72,11 @@ async function main() {
   }
 
   // --- Prisma User + Voice Profile ---
-  const passwordHash = await bcrypt.hash(ANIL_PASSWORD, 10);
   const user = await prisma.user.create({
     data: {
       handle: ANIL_HANDLE,
       email: ANIL_EMAIL,
       displayName: "Anil",
-      passwordHash,
       supabaseId,
       role: "MANAGER",
       onboardingTrack: OnboardingTrack.TRACK_A,
@@ -292,9 +287,6 @@ async function main() {
 
   // --- Summary ---
   console.log("\n🎉 Demo user seeded successfully!\n");
-  console.log("  Login credentials:");
-  console.log(`    Email:    ${ANIL_EMAIL}`);
-  console.log(`    Password: ${ANIL_PASSWORD}`);
   console.log(`    Handle:   @${ANIL_HANDLE}`);
   console.log(`    Role:     MANAGER`);
   console.log(`\n  Data seeded:`);

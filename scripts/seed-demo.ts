@@ -1,6 +1,5 @@
 import "dotenv/config";
 
-import bcrypt from "bcryptjs";
 import {
   AlertDelivery,
   AlertType,
@@ -19,7 +18,6 @@ import { prisma } from "../services/api/src/lib/prisma";
  * this seed creates one primary VoiceProfile plus multiple reference voices and saved blends.
  */
 
-const DEMO_PASSWORD = "AtlasDemo2026!";
 const SEED_TAG = "atlas-demo-seed-v1";
 
 type VoiceProfileSeed = {
@@ -995,7 +993,7 @@ async function resetDemoData(userIds: string[]) {
   ]);
 }
 
-async function seedUser(userSeed: DemoUserSeed, passwordHash: string) {
+async function seedUser(userSeed: DemoUserSeed) {
   const user = await prisma.user.upsert({
     where: { handle: userSeed.handle },
     update: {
@@ -1004,7 +1002,6 @@ async function seedUser(userSeed: DemoUserSeed, passwordHash: string) {
       role: userSeed.role,
       onboardingTrack: userSeed.onboardingTrack ?? null,
       telegramChatId: userSeed.telegramChatId ?? null,
-      passwordHash,
     },
     create: {
       handle: userSeed.handle,
@@ -1013,7 +1010,6 @@ async function seedUser(userSeed: DemoUserSeed, passwordHash: string) {
       role: userSeed.role,
       onboardingTrack: userSeed.onboardingTrack,
       telegramChatId: userSeed.telegramChatId,
-      passwordHash,
     },
   });
 
@@ -1271,8 +1267,6 @@ async function seedUser(userSeed: DemoUserSeed, passwordHash: string) {
 async function main() {
   console.log("Seeding Atlas demo data for development and UAT...");
 
-  const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
-
   const users = await Promise.all(
     demoUsers.map((user) =>
       prisma.user.upsert({
@@ -1283,7 +1277,6 @@ async function main() {
           role: user.role,
           onboardingTrack: user.onboardingTrack ?? null,
           telegramChatId: user.telegramChatId ?? null,
-          passwordHash,
         },
         create: {
           handle: user.handle,
@@ -1292,7 +1285,6 @@ async function main() {
           role: user.role,
           onboardingTrack: user.onboardingTrack,
           telegramChatId: user.telegramChatId,
-          passwordHash,
         },
       })
     )
@@ -1302,7 +1294,7 @@ async function main() {
 
   const seededUsers = [];
   for (const userSeed of demoUsers) {
-    const seeded = await seedUser(userSeed, passwordHash);
+    const seeded = await seedUser(userSeed);
     seededUsers.push(seeded);
   }
 
@@ -1313,7 +1305,6 @@ async function main() {
 
   console.log(`Seeded ${analystCount} analysts and ${managerCount} manager.`);
   console.log(`Seeded ${totalDrafts} drafts and ${totalSubscriptions} alert subscriptions.`);
-  console.log(`Demo password for all seeded users: ${DEMO_PASSWORD}`);
   console.log("Seed complete.");
 }
 
