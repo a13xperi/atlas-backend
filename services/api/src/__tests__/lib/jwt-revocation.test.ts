@@ -5,7 +5,7 @@
  *   - revokeJti writes the key with the requested TTL
  *   - revokeJti is a no-op for empty/expired entries
  *   - isJtiRevoked returns true when the key is present, false when absent
- *   - isJtiRevoked fails closed when the live Redis call throws
+ *   - isJtiRevoked fails open when the live Redis call throws
  *   - remainingTtlSeconds clamps to 0 for already-expired exp claims
  *
  * Mocks: ../redis (so we never touch a real ioredis client) and ../logger.
@@ -81,9 +81,9 @@ describe("isJtiRevoked", () => {
     expect(await isJtiRevoked("abc123")).toBe(true);
   });
 
-  it("fails CLOSED when the Redis lookup throws", async () => {
+  it("fails OPEN when the Redis lookup throws", async () => {
     getMock.mockRejectedValueOnce(new Error("connection lost"));
-    expect(await isJtiRevoked("abc123")).toBe(true);
+    expect(await isJtiRevoked("abc123")).toBe(false);
   });
 });
 

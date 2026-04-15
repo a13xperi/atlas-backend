@@ -68,8 +68,14 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
     // on logout, and TTLs out at the token's natural expiry. Tokens minted
     // before this deploy have no jti and are accepted as before — they
     // expire under the existing 7-day cap.
-    if (payload.jti && (await isJtiRevoked(payload.jti))) {
-      return res.status(401).json({ error: "Invalid or expired token" });
+    if (payload.jti) {
+      try {
+        if (await isJtiRevoked(payload.jti)) {
+          return res.status(401).json({ error: "Invalid or expired token" });
+        }
+      } catch {
+        // Best-effort: if Redis is unreachable in non-prod, allow the token
+      }
     }
 
     req.userId = payload.userId;

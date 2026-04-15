@@ -6,13 +6,11 @@
  * rejects any token whose `jti` is present in the blacklist, even though
  * the JWT itself is still cryptographically valid.
  *
- * Fail-open vs. fail-closed:
- *   - This module fails CLOSED on Redis errors during the lookup
- *     (`isJtiRevoked`) — if we cannot prove a token is safe we treat it
- *     as revoked. This is the conservative posture for a security check.
- *   - It fails OPEN on Redis errors during insertion (`revokeJti`) — a
- *     failed logout still clears cookies and returns success, but logs
- *     the failure. The follow-up alert is the operator's job.
+ * Fail-open behavior:
+ *   - `revokeJti` is best-effort. Logout should still clear cookies and
+ *     return success if Redis is unavailable.
+ *   - `isJtiRevoked` also fails OPEN on Redis errors so auth does not
+ *     break during a transient Redis outage. Operators still get logs.
  */
 
 import { getRedis } from "./redis";
@@ -57,9 +55,8 @@ export async function revokeJti(jti: string, ttlSeconds: number): Promise<boolea
 /**
  * Check whether a jti has been revoked.
  *
- * Fail-closed: if Redis is unreachable we return TRUE (treat as revoked)
- * so that a Redis outage cannot be used as a bypass. Routes that need a
- * different posture should not call this helper.
+ * Fail-open: if Redis is unreachable we return FALSE (treat as not revoked)
+ * and log the failure so auth and refresh flows continue to work.
  */
 export async function isJtiRevoked(jti: string | undefined): Promise<boolean> {
   if (!jti) return false;
@@ -77,8 +74,7 @@ export async function isJtiRevoked(jti: string | undefined): Promise<boolean> {
     return value !== null;
   } catch (err: any) {
     logger.error({ err: err?.message, jti: jti.slice(0, 8) }, "jti lookup failed");
-    // Fail closed on a live-Redis error path.
-    return true;
+    return false;
   }
 }
 

@@ -8,6 +8,9 @@ export function getRedis(): Redis | null {
   if (!redis && config.REDIS_URL) {
     try {
       redis = new Redis(config.REDIS_URL);
+      redis.on("error", (err) => {
+        logger.warn({ err: err.message }, "Redis connection error — caching disabled");
+      });
     } catch {
       logger.warn("Redis connection failed — caching disabled");
       return null;
