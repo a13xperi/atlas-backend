@@ -42,6 +42,7 @@ jest.mock("../../lib/prisma", () => ({
       count: jest.fn(),
       findUnique: jest.fn(),
       findMany: jest.fn(),
+      update: jest.fn(),
     },
     analyticsEvent: {
       count: jest.fn(),
@@ -849,5 +850,103 @@ describe("GET /api/admin/feed", () => {
     const res = await request(app).get("/api/admin/feed").set(AUTH);
     expect(res.status).toBe(500);
     expectErrorResponse(res.body, "Failed to load admin feed");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// POST /api/admin/promote
+// ═══════════════════════════════════════════════════════════════
+
+describe("POST /api/admin/promote", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 401 without token", async () => {
+    const res = await request(app)
+      .post("/api/admin/promote")
+      .send({ handle: "alice", role: "MANAGER" });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 403 for non-admin user", async () => {
+    mockNonAdmin();
+    const res = await request(app)
+      .post("/api/admin/promote")
+      .set(AUTH)
+      .send({ handle: "alice", role: "MANAGER" });
+    expect(res.status).toBe(403);
+    expectErrorResponse(res.body, "Admin access required");
+  });
+
+  it("returns 404 when target user not found", async () => {
+    mockAdmin();
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .post("/api/admin/promote")
+      .set(AUTH)
+      .send({ handle: "unknown", role: "MANAGER" });
+
+    expect(res.status).toBe(404);
+    expectErrorResponse(res.body, "User not found");
+  });
+
+  it("promotes user and returns updated user", async () => {
+    mockAdmin();
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-alice",
+      handle: "alice",
+    });
+    (mockPrisma.user.update as jest.Mock).mockResolvedValueOnce({
+      id: "user-alice",
+      handle: "alice",
+      role: "MANAGER",
+    });
+
+    const res = await request(app)
+      .post("/api/admin/promote")
+      .set(AUTH)
+      .send({ handle: "alice", role: "MANAGER" });
+
+    expect(res.status).toBe(200);
+    const data = expectSuccessResponse<any>(res.body);
+    expect(data.handle).toBe("alice");
+    expect(data.role).toBe("MANAGER");
+    expect(data.id).toBe("user-alice");
+    expect(mockPrisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "user-alice" },
+        data: { role: "MANAGER" },
+      }),
+    );
+  });
+
+  it("returns 400 for invalid request body", async () => {
+    mockAdmin();
+    const res = await request(app)
+      .post("/api/admin/promote")
+      .set(AUTH)
+      .send({ handle: "", role: "MANAGER" });
+
+    expect(res.status).toBe(400);
+    expectErrorResponse(res.body, "Invalid request");
+  });
+
+  it("returns 500 on prisma error", async () => {
+    mockAdmin();
+    (mockPrisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "user-alice",
+      handle: "alice",
+    });
+    (mockPrisma.user.update as jest.Mock).mockRejectedValueOnce(new Error("DB down"));
+
+    const res = await request(app)
+      .post("/api/admin/promote")
+      .set(AUTH)
+      .send({ handle: "alice", role: "MANAGER" });
+
+    expect(res.status).toBe(500);
+    expectErrorResponse(res.body, "Failed to promote user");
   });
 });
