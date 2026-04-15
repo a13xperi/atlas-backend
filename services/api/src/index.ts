@@ -35,6 +35,7 @@ import { adminFlagsRouter } from "./routes/admin-flags";
 import { adminBackupRouter } from "./routes/admin-backup";
 import { twitterRouter } from "./routes/twitter";
 import { queueRouter } from "./routes/queue";
+import { healthRouter } from "./routes/health";
 import { buildErrorResponse, requestIdMiddleware } from "./middleware/requestId";
 import { rateLimit, rateLimitByUser } from "./middleware/rateLimit";
 import { requestLogger } from "./middleware/requestLogger";
@@ -42,7 +43,6 @@ import { logger } from "./lib/logger";
 import { formatErrorResponse } from "./lib/errors";
 import { assertCorsConfig, buildCorsOptions } from "./lib/cors";
 import { prisma } from "./lib/prisma";
-import { getRedis } from "./lib/redis";
 import { initBot } from "./lib/telegram";
 import { initSocket } from "./lib/socket";
 import { startScheduler } from "./lib/scheduler";
@@ -92,39 +92,7 @@ const docsRateLimiter = rateLimit(
   "docs",
 );
 
-// Health check
-app.get("/health", async (_req, res) => {
-  let database: "ok" | "error" = "ok";
-  let cache: "ok" | "unavailable" = "unavailable";
-
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    database = "ok";
-  } catch {
-    database = "error";
-  }
-
-  try {
-    const redis = getRedis();
-    if (!redis) {
-      throw new Error("Redis unavailable");
-    }
-
-    await redis.ping();
-    cache = "ok";
-  } catch {
-    cache = "unavailable";
-  }
-
-  res.status(database === "error" ? 503 : 200).json({
-    status: "ok",
-    version: process.env.npm_package_version || "unknown",
-    uptime: process.uptime(),
-    database,
-    cache,
-    timestamp: new Date().toISOString(),
-  });
-});
+app.use(healthRouter);
 
 // Routes
 app.use("/api/docs", docsRateLimiter, docsRouter);
