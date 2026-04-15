@@ -115,6 +115,7 @@ beforeEach(() => {
   mockFetchTweetsByHandle.mockResolvedValue({
     user: { id: "twitter-user-1", username: "atlasanalyst", name: "Atlas Analyst" },
     tweets: [{ id: "tweet-1", text: "BTC structure still matters." }],
+    stats: { pool: 1, topN: 0, recentN: 1 },
   });
   mockCalibrateFromTweets.mockResolvedValue({
     humor: 55,

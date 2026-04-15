@@ -56,6 +56,7 @@ model User {
   voiceDimensionInsight VoiceDimensionInsight?
   blendedVoiceProfile   BlendedVoiceProfile?
   tweetExemplars        TweetExemplar[]
+  voiceSwipeSignals     VoiceSwipeSignal[]
   voiceArchetype        VoiceArchetype?
 
   @@index([supabaseId])
@@ -399,14 +400,17 @@ model ResearchResult {
 }
 
 model BriefingPreference {
-  id           String   @id @default(cuid())
-  userId       String   @unique
-  deliveryTime String   @default("08:00")
-  topics       String[]
-  sources      String[]
-  channel      String   @default("PORTAL")
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  updatedAt    DateTime @updatedAt
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  deliveryTime    String    @default("08:00")
+  topics          String[]
+  sources         String[]
+  channel         String    @default("PORTAL")
+  lastDeliveredAt DateTime?
+  timezone        String?
+  briefType       String   @default("morning")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  updatedAt       DateTime  @updatedAt
 
   @@map("briefing_preferences")
 }
@@ -596,6 +600,65 @@ model BlendedVoiceProfile {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("blended_voice_profiles")
+}
+
+model TrendingTopic {
+  id        String   @id @default(cuid())
+  title     String
+  content   String   @db.Text
+  keywords  String[]
+  score     Float    @default(0)
+  category  String
+  source    String
+  url       String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("trending_topics")
+}
+
+model Bug {
+  id              String    @id @default(cuid())
+  bugNumber       Int       @default(autoincrement())
+  title           String
+  description     String
+  pageRoute       String?
+  pageUrl         String?
+  severity        String    @default("medium")
+  status          String    @default("open")
+  source          String?
+  project         String?
+  foundBy         String?
+  fixedBy         String?
+  tags            String[]  @default([])
+  notes           String?
+  fingerprint     String?
+  occurrenceCount Int       @default(1)
+  userAgent       String?
+  lastSeenAt      DateTime?
+  fixedAt         DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("bugs")
+}
+
+model VoiceSwipeSignal {
+  id        String   @id @default(cuid())
+  userId    String
+  tweetId   String
+  text      String
+  direction String
+  source    String
+  handle    String?
+  reasons   String[] @default([])
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("voice_swipe_signals")
 }
 
 model FeatureFlag {
