@@ -1,238 +1,239 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
-import { createClient } from "@supabase/supabase-js";
+import { prisma } from "../lib/prisma";
 import { authenticate, AuthRequest } from "../middleware/auth";
-import { success, error } from "../lib/response";
-import { validationFailResponse } from "../lib/schemas";
 import { logger } from "../lib/logger";
+import { success, error } from "../lib/response";
 
-// ---------------------------------------------------------------------------
-// Supabase client (same project as QA — the capacity/ops Supabase)
-// ---------------------------------------------------------------------------
+export const bugsRouter: Router = Router({ mergeParams: true });
 
-const BUGS_SUPABASE_URL = process.env.QA_SUPABASE_URL || "https://zoirudjyqfqvpxsrxepr.supabase.co";
-const BUGS_SUPABASE_KEY = process.env.QA_SUPABASE_KEY ?? "";
-
-if (!BUGS_SUPABASE_KEY) {
-  logger.warn("QA_SUPABASE_KEY not set — Bug routes will fail");
+function paramId(req: Request, name = "id"): string {
+  return req.params[name] as string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const bugsSupabase: any = BUGS_SUPABASE_KEY
-  ? createClient(BUGS_SUPABASE_URL, BUGS_SUPABASE_KEY, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    })
-  : null;
+// Map Prisma row (camelCase) → BugRecord (snake_case) for the portal.
+function serializeBug(bug: {
+  id: string;
+  bugNumber: number;
+  title: string;
+  description: string;
+  pageRoute: string | null;
+  pageUrl: string | null;
+  severity: string;
+  status: string;
+  source: string | null;
+  project: string | null;
+  foundBy: string | null;
+  fixedBy: string | null;
+  tags: string[];
+  notes: string | null;
+  fingerprint: string | null;
+  occurrenceCount: number;
+  userAgent: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  lastSeenAt: Date | null;
+  fixedAt: Date | null;
+}) {
+  return {
+    id: bug.id,
+    bug_number: bug.bugNumber,
+    title: bug.title,
+    description: bug.description,
+    page_route: bug.pageRoute,
+    page_url: bug.pageUrl,
+    severity: bug.severity,
+    status: bug.status,
+    source: bug.source,
+    project: bug.project,
+    found_by: bug.foundBy,
+    fixed_by: bug.fixedBy,
+    tags: bug.tags,
+    notes: bug.notes,
+    fingerprint: bug.fingerprint,
+    occurrence_count: bug.occurrenceCount,
+    user_agent: bug.userAgent,
+    created_at: bug.createdAt.toISOString(),
+    updated_at: bug.updatedAt.toISOString(),
+    last_seen_at: bug.lastSeenAt ? bug.lastSeenAt.toISOString() : null,
+    fixed_at: bug.fixedAt ? bug.fixedAt.toISOString() : null,
+  };
+}
 
-// ---------------------------------------------------------------------------
-// Schemas
-// ---------------------------------------------------------------------------
-
-const createBugSchema = z.object({
+const createSchema = z.object({
   title: z.string().min(1).max(500),
-  description: z.string().min(1),
-  severity: z.enum(["critical", "high", "medium", "low", "cosmetic"]).default("medium"),
-  page_route: z.string().optional().nullable(),
-  page_url: z.string().optional().nullable(),
-  source: z.enum(["manual", "console", "session"]).default("manual"),
-  tags: z.array(z.string()).optional(),
+  description: z.string().max(20000).optional(),
+  page_route: z.string().max(500).nullable().optional(),
+  page_url: z.string().max(2000).nullable().optional(),
+  severity: z.enum(["critical", "high", "medium", "low"]).optional(),
+  status: z.enum(["open", "fixed", "wont_fix"]).optional(),
+  source: z.string().max(100).nullable().optional(),
+  project: z.string().max(100).nullable().optional(),
+  found_by: z.string().max(200).nullable().optional(),
+  fixed_by: z.string().max(200).nullable().optional(),
+  tags: z.array(z.string().max(100)).optional(),
+  notes: z.string().max(20000).nullable().optional(),
+  fingerprint: z.string().max(500).nullable().optional(),
+  occurrence_count: z.number().int().min(0).optional(),
+  user_agent: z.string().max(1000).nullable().optional(),
+  last_seen_at: z.string().datetime().nullable().optional(),
+  fixed_at: z.string().datetime().nullable().optional(),
 });
 
-const updateBugSchema = z.object({
-  status: z.enum(["open", "fixed", "in-progress", "closed", "wontfix", "archived"]).optional(),
-  notes: z.string().optional().nullable(),
-  severity: z.enum(["critical", "high", "medium", "low", "cosmetic"]).optional(),
+const updateSchema = z.object({
   title: z.string().min(1).max(500).optional(),
-  description: z.string().optional(),
-  fixed_by: z.string().optional().nullable(),
-  tags: z.array(z.string()).optional(),
+  description: z.string().max(20000).optional(),
+  page_route: z.string().max(500).nullable().optional(),
+  page_url: z.string().max(2000).nullable().optional(),
+  severity: z.enum(["critical", "high", "medium", "low"]).optional(),
+  status: z.enum(["open", "fixed", "wont_fix"]).optional(),
+  source: z.string().max(100).nullable().optional(),
+  project: z.string().max(100).nullable().optional(),
+  found_by: z.string().max(200).nullable().optional(),
+  fixed_by: z.string().max(200).nullable().optional(),
+  tags: z.array(z.string().max(100)).optional(),
+  notes: z.string().max(20000).nullable().optional(),
+  fingerprint: z.string().max(500).nullable().optional(),
+  occurrence_count: z.number().int().min(0).optional(),
+  user_agent: z.string().max(1000).nullable().optional(),
+  last_seen_at: z.string().datetime().nullable().optional(),
+  fixed_at: z.string().datetime().nullable().optional(),
 });
 
-// ---------------------------------------------------------------------------
-// Router
-// ---------------------------------------------------------------------------
+const listQuerySchema = z.object({
+  status: z.enum(["open", "fixed", "wont_fix"]).optional(),
+});
 
-export const bugsRouter = Router();
-bugsRouter.use(authenticate);
-bugsRouter.use((_req, res, next) => {
-  if (!bugsSupabase) {
-    return res
-      .status(503)
-      .json({ success: false, error: "Bug service unavailable — QA_SUPABASE_KEY not configured" });
+// POST /api/bugs — create bug.
+// NOT gated on auth: the portal's auto-reporter posts bugs without a user
+// token. Register this route before the authenticate middleware below.
+bugsRouter.post("/", async (req: Request, res) => {
+  try {
+    const body = createSchema.parse(req.body);
+    const bug = await prisma.bug.create({
+      data: {
+        title: body.title,
+        description: body.description ?? "",
+        pageRoute: body.page_route ?? null,
+        pageUrl: body.page_url ?? null,
+        severity: body.severity ?? "medium",
+        status: body.status ?? "open",
+        source: body.source ?? null,
+        project: body.project ?? null,
+        foundBy: body.found_by ?? null,
+        fixedBy: body.fixed_by ?? null,
+        tags: body.tags ?? [],
+        notes: body.notes ?? null,
+        fingerprint: body.fingerprint ?? null,
+        occurrenceCount: body.occurrence_count ?? 1,
+        userAgent: body.user_agent ?? null,
+        lastSeenAt: body.last_seen_at ? new Date(body.last_seen_at) : null,
+        fixedAt: body.fixed_at ? new Date(body.fixed_at) : null,
+      },
+    });
+    logger.info({ bugId: bug.id, bugNumber: bug.bugNumber }, "Bug created");
+    res.status(201).json(success({ bug: serializeBug(bug) }));
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
+    logger.error({ err: err.message }, "Failed to create bug");
+    res.status(500).json(error("Failed to create bug"));
   }
-  next();
 });
 
-const TABLE = "bugs";
+// All remaining routes require authentication.
+bugsRouter.use(authenticate);
 
-// GET /api/bugs — list all bugs, filterable by status
+// GET /api/bugs — list all bugs, optional ?status=open filter, newest first.
 bugsRouter.get("/", async (req: AuthRequest, res) => {
   try {
-    const { status: statusParam } = req.query;
-
-    let query = bugsSupabase
-      .from(TABLE)
-      .select("*")
-      .eq("project", "atlas")
-      .order("last_seen_at", { ascending: false });
-
-    // Filter by status if provided
-    if (statusParam && typeof statusParam === "string") {
-      const statuses = statusParam.split(",").map((s: string) => s.trim());
-      if (statuses.length === 1) {
-        query = query.eq("status", statuses[0]);
-      } else {
-        query = query.in("status", statuses);
-      }
-    }
-
-    // Exclude archived by default unless explicitly requested
-    const statusStr = typeof statusParam === "string" ? statusParam : "";
-    if (!statusStr || !statusStr.includes("archived")) {
-      query = query.neq("status", "archived");
-    }
-
-    const { data, error: dbErr } = await query;
-
-    if (dbErr) throw dbErr;
-    res.json(success({ bugs: data || [] }));
+    const query = listQuerySchema.parse(req.query);
+    const bugs = await prisma.bug.findMany({
+      where: query.status ? { status: query.status } : undefined,
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(success({ bugs: bugs.map(serializeBug) }));
   } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
     logger.error({ err: err.message }, "Failed to list bugs");
     res.status(500).json(error("Failed to list bugs"));
   }
 });
 
-// GET /api/bugs/:id — single bug detail
+// GET /api/bugs/:id — single bug.
 bugsRouter.get("/:id", async (req: AuthRequest, res) => {
   try {
-    const { data, error: dbErr } = await bugsSupabase
-      .from(TABLE)
-      .select("*")
-      .eq("id", req.params.id)
-      .single();
-
-    if (dbErr || !data) return res.status(404).json(error("Bug not found"));
-    res.json(success({ bug: data }));
+    const bug = await prisma.bug.findUnique({ where: { id: paramId(req) } });
+    if (!bug) {
+      return res.status(404).json(error("Bug not found", 404));
+    }
+    res.json(success({ bug: serializeBug(bug) }));
   } catch (err: any) {
     logger.error({ err: err.message }, "Failed to get bug");
     res.status(500).json(error("Failed to get bug"));
   }
 });
 
-// POST /api/bugs — manual bug creation
-bugsRouter.post("/", async (req: AuthRequest, res) => {
-  const parsed = createBugSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json(validationFailResponse(parsed.error));
-  }
-
-  const { title, description, severity, page_route, page_url, source, tags } = parsed.data;
-
-  try {
-    const { data, error: dbErr } = await bugsSupabase
-      .from(TABLE)
-      .insert({
-        title,
-        description,
-        severity,
-        status: "open",
-        source: source || "manual",
-        project: "atlas",
-        page_route: page_route || null,
-        page_url: page_url || null,
-        tags: tags || [],
-        found_by: req.userId,
-        last_seen_at: new Date().toISOString(),
-        occurrence_count: 1,
-      })
-      .select()
-      .single();
-
-    if (dbErr) throw dbErr;
-    res.status(201).json(success({ bug: data }));
-  } catch (err: any) {
-    logger.error({ err: err.message }, "Failed to create bug");
-    res.status(500).json(error("Failed to create bug"));
-  }
-});
-
-// PATCH /api/bugs/:id — update status, notes, etc.
+// PATCH /api/bugs/:id — update bug fields.
 bugsRouter.patch("/:id", async (req: AuthRequest, res) => {
-  const parsed = updateBugSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json(validationFailResponse(parsed.error));
-  }
-
   try {
-    // Verify bug exists
-    const { data: existing, error: fetchErr } = await bugsSupabase
-      .from(TABLE)
-      .select("id")
-      .eq("id", req.params.id)
-      .single();
+    const body = updateSchema.parse(req.body);
 
-    if (fetchErr || !existing) return res.status(404).json(error("Bug not found"));
-
-    const updateData: Record<string, unknown> = {
-      updated_at: new Date().toISOString(),
-    };
-
-    const { status, notes, severity, title, description, fixed_by, tags } = parsed.data;
-
-    if (status !== undefined) {
-      updateData.status = status;
-      // Set fixed_at timestamp when marking as fixed/closed
-      if (status === "fixed" || status === "closed") {
-        updateData.fixed_at = new Date().toISOString();
-      }
+    const data: Record<string, unknown> = {};
+    if (body.title !== undefined) data.title = body.title;
+    if (body.description !== undefined) data.description = body.description;
+    if (body.page_route !== undefined) data.pageRoute = body.page_route;
+    if (body.page_url !== undefined) data.pageUrl = body.page_url;
+    if (body.severity !== undefined) data.severity = body.severity;
+    if (body.status !== undefined) data.status = body.status;
+    if (body.source !== undefined) data.source = body.source;
+    if (body.project !== undefined) data.project = body.project;
+    if (body.found_by !== undefined) data.foundBy = body.found_by;
+    if (body.fixed_by !== undefined) data.fixedBy = body.fixed_by;
+    if (body.tags !== undefined) data.tags = body.tags;
+    if (body.notes !== undefined) data.notes = body.notes;
+    if (body.fingerprint !== undefined) data.fingerprint = body.fingerprint;
+    if (body.occurrence_count !== undefined) data.occurrenceCount = body.occurrence_count;
+    if (body.user_agent !== undefined) data.userAgent = body.user_agent;
+    if (body.last_seen_at !== undefined) {
+      data.lastSeenAt = body.last_seen_at ? new Date(body.last_seen_at) : null;
     }
-    if (notes !== undefined) updateData.notes = notes;
-    if (severity !== undefined) updateData.severity = severity;
-    if (title !== undefined) updateData.title = title;
-    if (description !== undefined) updateData.description = description;
-    if (fixed_by !== undefined) updateData.fixed_by = fixed_by;
-    if (tags !== undefined) updateData.tags = tags;
+    if (body.fixed_at !== undefined) {
+      data.fixedAt = body.fixed_at ? new Date(body.fixed_at) : null;
+    }
 
-    const { data, error: dbErr } = await bugsSupabase
-      .from(TABLE)
-      .update(updateData)
-      .eq("id", req.params.id)
-      .select()
-      .single();
+    const existing = await prisma.bug.findUnique({ where: { id: paramId(req) } });
+    if (!existing) {
+      return res.status(404).json(error("Bug not found", 404));
+    }
 
-    if (dbErr) throw dbErr;
-    res.json(success({ bug: data }));
+    const bug = await prisma.bug.update({
+      where: { id: paramId(req) },
+      data,
+    });
+    res.json(success({ bug: serializeBug(bug) }));
   } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json(error("Invalid request", 400, err.errors));
+    }
     logger.error({ err: err.message }, "Failed to update bug");
     res.status(500).json(error("Failed to update bug"));
   }
 });
 
-// DELETE /api/bugs/:id — soft delete (set status='archived')
+// DELETE /api/bugs/:id — remove bug.
 bugsRouter.delete("/:id", async (req: AuthRequest, res) => {
   try {
-    const { data: existing, error: fetchErr } = await bugsSupabase
-      .from(TABLE)
-      .select("id")
-      .eq("id", req.params.id)
-      .single();
-
-    if (fetchErr || !existing) return res.status(404).json(error("Bug not found"));
-
-    const { data, error: dbErr } = await bugsSupabase
-      .from(TABLE)
-      .update({
-        status: "archived",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", req.params.id)
-      .select()
-      .single();
-
-    if (dbErr) throw dbErr;
-    res.json(success({ bug: data }));
+    const deleted = await prisma.bug.deleteMany({ where: { id: paramId(req) } });
+    if (deleted.count === 0) {
+      return res.status(404).json(error("Bug not found", 404));
+    }
+    res.json(success({ deleted: true }));
   } catch (err: any) {
-    logger.error({ err: err.message }, "Failed to archive bug");
-    res.status(500).json(error("Failed to archive bug"));
+    logger.error({ err: err.message }, "Failed to delete bug");
+    res.status(500).json(error("Failed to delete bug"));
   }
 });
